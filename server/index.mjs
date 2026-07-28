@@ -234,7 +234,7 @@ app.get(
         Math.floor(config.sessionTtlMs / 1000),
       );
 
-      const successUrl = new URL(config.appOrigin);
+      const successUrl = new URL("/login", config.appOrigin);
       successUrl.searchParams.set("auth", "success");
       response.redirect(303, successUrl.toString());
     } catch (authError) {
