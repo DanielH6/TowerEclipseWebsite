@@ -1,3 +1,4 @@
+# FIRST THINGS FIRST - DONT PUBLISH .ENV, CLIENT SECRET OR COOKIE SECRET ON ANYWHERE. USE OTHER APPS TO SHARE IT.
 ## Run locally
 
 Requirements:
@@ -6,10 +7,16 @@ Requirements:
 Node.js 20 or newer
 npm
 ```
-
-From the extracted project directory:
-
+#### GENERATE A COOKIE SECRET
+run 
 ```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+from any directory. This is your cookie secret. check .env.example for understanding.
+From the extracted project directory:
+paste the env you got from atomic's account into the directory with .env.example (the main directory)
+```bash
+cd /directory/of/ur/local/project
 npm install
 npm run dev
 ```
@@ -45,3 +52,4 @@ server/session-store.mjs    in-memory session storage
 src/App.tsx                 login and authenticated UI
 README.md                   this setup guide
 ```
+
