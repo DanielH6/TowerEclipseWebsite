@@ -13,8 +13,10 @@ run
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 from any directory. This is your cookie secret. check .env.example for understanding.
+
+
 From the extracted project directory:
-paste the env you got from atomic's account into the directory with .env.example (the main directory)
+paste the env you got from atomic's account into the directory with .env.example (the main directory), the run:
 ```bash
 cd /directory/of/ur/local/project
 npm install
