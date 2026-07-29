@@ -9,6 +9,6 @@ dist/
 secrets/
 firebase-admin*.json
 *service-account*.json
-
+sdkadmin.json
 # Encrypted local runtime sessions
 .runtime/
