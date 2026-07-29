@@ -102,7 +102,7 @@ Expected response:
 }
 ```
 
-On first successful backend startup, the API seeds starter dictionary values in Firestore. You do not need to manually create collections.
+Search "UNCOMMENT" in the project directory if ur project breaks.
 
 ## Dynamic dictionaries
 
