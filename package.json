@@ -1,36 +1,41 @@
 {
-  "name": "tower-eclipse-discord-auth",
+  "name": "tower-eclipse-bug-reports",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "concurrently -k -n API,WEB -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite",
-    "dev:server": "node --watch server/index.mjs",
+    "dev:server": "node server/index.mjs",
+    "dev:watch": "concurrently -k -n API,WEB -c magenta,cyan \"npm:dev:server:watch\" \"npm:dev:web\"",
+    "dev:server:watch": "node --watch-path=server --watch-preserve-output server/index.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "start": "node server/index.mjs"
   },
   "dependencies": {
-    "cookie": "^1.0.2",
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "express-rate-limit": "^8.0.1",
-    "helmet": "^8.1.0",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "cookie": "1.1.1",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "express-rate-limit": "8.6.1",
+    "helmet": "8.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@types/express": "^5.0.3",
-    "@types/node": "^24.3.0",
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^4.7.0",
-    "concurrently": "^9.2.1",
-    "typescript": "~5.9.2",
-    "vite": "^7.1.7"
+    "@types/express": "5.0.6",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.7.0",
+    "concurrently": "9.2.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

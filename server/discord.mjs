@@ -121,7 +121,6 @@ export async function getCurrentGuildMember(accessToken) {
 export function mapDiscordRole(roleIds) {
   const roleSet = new Set(roleIds);
 
-  // Deterministic priority if a Discord member has several mapped roles.
   if (roleSet.has(config.discord.roleIds.dev)) {
     return "dev";
   }

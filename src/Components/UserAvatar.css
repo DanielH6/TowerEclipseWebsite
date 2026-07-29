@@ -1,0 +1,26 @@
+.user-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: #1b202a;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.18);
+}
+
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.user-avatar-fallback {
+  color: #eef2ff;
+  background: linear-gradient(145deg, #5865f2, #313b9e);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}

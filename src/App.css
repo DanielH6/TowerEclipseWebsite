@@ -465,3 +465,27 @@
     text-align: center;
   }
 }
+
+.simple-page {
+  min-height: 430px;
+}
+
+.simple-panel {
+  width: min(100%, 760px);
+  padding: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(3, 4, 5, 0.78);
+  text-align: center;
+}
+
+.simple-panel h2 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  letter-spacing: 0.12em;
+}
+
+.simple-panel p {
+  margin: 18px auto 26px;
+  color: #a1a1aa;
+  line-height: 1.65;
+}

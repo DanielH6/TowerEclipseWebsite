@@ -98,6 +98,9 @@ export const config = Object.freeze({
     roleIds: Object.freeze(roleIds),
   }),
   cookieSecret,
+  firebase: Object.freeze({
+    projectId: required("FIREBASE_PROJECT_ID"),
+  }),
   sessionTtlMs:
     integer("SESSION_TTL_HOURS", 8, 1, 24) * 60 * 60 * 1000,
   roleRecheckMs:
