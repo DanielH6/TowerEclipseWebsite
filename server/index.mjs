@@ -44,23 +44,22 @@ const app = express();
 let firestoreState = "initializing";
 let firestoreInitializationError = null;
 
-// UNCOMMENT THIS IF YOU GET ERRORS IN TESTING
-// const firestoreReadyPromise = ensureDefaultDictionaries()
-//   .then(({ created }) => {
-//     firestoreState = "ready";
-//     console.log(
-//       created > 0
-//         ? `Firestore dictionaries are ready (${created} defaults created).`
-//         : "Firestore dictionaries are ready.",
-//     );
-//     return true;
-//   })
-//   .catch((error) => {
-//     firestoreState = "failed";
-//     firestoreInitializationError = error;
-//     console.error("Firestore initialization failed:", error);
-//     return false;
-//   });
+const firestoreReadyPromise = ensureDefaultDictionaries()
+  .then(({ created }) => {
+    firestoreState = "ready";
+    console.log(
+      created > 0
+        ? `Firestore dictionaries are ready (${created} defaults created).`
+        : "Firestore dictionaries are ready.",
+    );
+    return true;
+  })
+  .catch((error) => {
+    firestoreState = "failed";
+    firestoreInitializationError = error;
+    console.error("Firestore initialization failed:", error);
+    return false;
+  });
 
 async function requireFirestoreReady(_request, response, next) {
   const ready = await firestoreReadyPromise;
