@@ -34,6 +34,39 @@ import {
 
 const app = express();
 
+let firestoreState = "initializing";
+let firestoreInitializationError = null;
+
+const firestoreReadyPromise = ensureDefaultDictionaries()
+  .then(({ created }) => {
+    firestoreState = "ready";
+    console.log(
+      created > 0
+        ? `Firestore dictionaries are ready (${created} defaults created).`
+        : "Firestore dictionaries are ready.",
+    );
+    return true;
+  })
+  .catch((error) => {
+    firestoreState = "failed";
+    firestoreInitializationError = error;
+    console.error("Firestore initialization failed:", error);
+    return false;
+  });
+
+async function requireFirestoreReady(_request, response, next) {
+  const ready = await firestoreReadyPromise;
+
+  if (!ready) {
+    response.status(503).json({
+      error: "Database initialization failed. Check the API terminal for details.",
+    });
+    return;
+  }
+
+  next();
+}
+
 if (config.production) {
   app.set("trust proxy", 1);
 }
