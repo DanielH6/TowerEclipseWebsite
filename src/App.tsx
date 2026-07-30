@@ -1,37 +1,124 @@
-import type { ReactNode } from "react";
-import { Routes, Route, Link } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Navigate, NavLink, RouteParamsProvider, useLocation } from "./router";
+import { AuthProvider, useAuth } from "./AuthContext";
+import { loadRobloxStats } from "./api";
+import type { RobloxStats } from "./types";
+import ProtectedRoute from "./ProtectedRoute";
 import HomePage from "./Pages/HomePage";
 import AboutUs from "./Pages/About";
+import News from "./Pages/News";
 import Login from "./Pages/Login";
+import BugsPage from "./Pages/Bugs";
+import NewBugPage from "./Pages/NewBug";
+import BugDetailsPage from "./Pages/BugDetails";
+import AdminPage from "./Pages/Admin";
 import "./App.css";
 
 function Navigation() {
+  const { auth } = useAuth();
+  const links = [
+    { to: "/", label: "HOME", end: true },
+    { to: "/news", label: "NEWS" },
+    { to: "/about", label: "ABOUT US" },
+    { to: "/bugs", label: "BUGS" },
+  ];
+
   return (
     <nav className="top-navigation" aria-label="Primary navigation">
-      <Link to="/">HOME</Link>
-      <Link to="/news">NEWS</Link>
-      <Link to="/about">ABOUT US</Link>
-      <Link to="/bugs">BUGS</Link>
-      <Link to="/login" className="active">LOGIN</Link>
+      {links.map((link) => (
+        <NavLink
+          to={link.to}
+          end={link.end}
+          className={({ isActive }) => (isActive ? "active" : undefined)}
+          key={link.to}
+        >
+          {link.label}
+        </NavLink>
+      ))}
+      {auth?.user.role === "dev" && (
+        <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : undefined)}>ADMIN</NavLink>
+      )}
+      <NavLink to="/login" className={({ isActive }) => (isActive ? "active" : undefined)}>
+        {auth ? "ACCOUNT" : "LOGIN"}
+      </NavLink>
     </nav>
   );
 }
 
 function Stats() {
+  const [stats, setStats] = useState<RobloxStats | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let controller = new AbortController();
+
+    async function refresh() {
+      controller.abort();
+      controller = new AbortController();
+
+      try {
+        const nextStats = await loadRobloxStats(controller.signal);
+        setStats(nextStats);
+        setFailed(false);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setFailed(true);
+        }
+      }
+    }
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(interval);
+      controller.abort();
+    };
+  }, []);
+
+  const format = (value: number | null | undefined) => (
+    value === null || value === undefined
+      ? "—"
+      : new Intl.NumberFormat("en-US", {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(value)
+  );
+  const exact = (value: number | null | undefined) => (
+    value === null || value === undefined
+      ? "Unavailable"
+      : new Intl.NumberFormat("en-US").format(value)
+  );
+  const ccuLabel = stats?.ccuMode === "current"
+    ? "CURRENT CCU"
+    : "PEAK CCU (28D)";
+  const statusText = failed
+    ? "Roblox statistics are temporarily unavailable."
+    : stats
+      ? `Roblox statistics updated ${new Date(stats.updatedAt).toLocaleString()}.`
+      : "Loading Roblox statistics.";
+
   return (
-    <div className="stats-row" aria-label="Game statistics">
-      <div>
+    <div
+      className="stats-row"
+      aria-label="Live Roblox game statistics"
+      aria-busy={!stats && !failed}
+    >
+      <div title={`Total plays: ${exact(stats?.totalPlays)}`}>
         <span>TOTAL PLAYS</span>
-        <strong>42K+</strong>
+        <strong>{format(stats?.totalPlays)}</strong>
       </div>
-      <div>
+      <div title={`Monthly active players: ${exact(stats?.monthlyPlayers)}`}>
         <span>MONTHLY PLAYERS</span>
-        <strong>100+</strong>
+        <strong>{format(stats?.monthlyPlayers)}</strong>
       </div>
-      <div>
-        <span>PEAK CCU</span>
-        <strong>21+</strong>
+      <div title={`${ccuLabel}: ${exact(stats?.ccu)}`}>
+        <span>{ccuLabel}</span>
+        <strong>{format(stats?.ccu)}</strong>
       </div>
+      <span className="stats-status" role="status" aria-live="polite">
+        {statusText}
+      </span>
     </div>
   );
 }
@@ -55,7 +142,8 @@ function Footer() {
             target="_blank"
             rel="noopener noreferrer"
             aria-label={socialLink.name}
-            title={socialLink.name}>
+            title={socialLink.name}
+          >
             <img src={socialLink.icon} alt="" />
           </a>
         ))}
@@ -84,14 +172,38 @@ function PageShell({ children }: { children: ReactNode }) {
   );
 }
 
+function AppRoutes() {
+  const { pathname } = useLocation();
+  let element: ReactNode;
+  let params: Record<string, string> = {};
+
+  if (pathname === "/") element = <HomePage />;
+  else if (pathname === "/news") element = <News />;
+  else if (pathname === "/about") element = <AboutUs />;
+  else if (pathname === "/login") element = <Login />;
+  else if (pathname === "/bugs") element = <ProtectedRoute><BugsPage /></ProtectedRoute>;
+  else if (pathname === "/bugs/new") element = <ProtectedRoute><NewBugPage /></ProtectedRoute>;
+  else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
+  else {
+    const bugMatch = pathname.match(/^\/bugs\/([^/]+)$/);
+    const reportId = bugMatch?.[1];
+    if (reportId) {
+      params = { reportId: decodeURIComponent(reportId) };
+      element = <ProtectedRoute><BugDetailsPage /></ProtectedRoute>;
+    } else {
+      element = <Navigate to="/" replace />;
+    }
+  }
+
+  return <RouteParamsProvider params={params}>{element}</RouteParamsProvider>;
+}
+
 export default function App() {
   return (
-    <PageShell>
-      <Routes>
-        <Route path="/" element={<HomePage/>} />
-        <Route path="/about" element={<AboutUs />} />
-        <Route path="/login" element={<Login/>} />
-      </Routes>
-    </PageShell>
+    <AuthProvider>
+      <PageShell>
+        <AppRoutes />
+      </PageShell>
+    </AuthProvider>
   );
 }

@@ -56,6 +56,38 @@ function privateSecret(name, minimumLength = 16) {
   return value;
 }
 
+function optionalPrivateSecret(name, minimumLength = 16) {
+  const value = process.env[name]?.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  if (/PASTE_|REPLACE_|YOUR_/i.test(value)) {
+    throw new Error(
+      `${name} still contains a placeholder. Add the real value to .env.`,
+    );
+  }
+
+  if (value.length < minimumLength) {
+    throw new Error(
+      `${name} must contain at least ${minimumLength} characters.`,
+    );
+  }
+
+  return value;
+}
+
+function numericId(name, fallback = null) {
+  const value = process.env[name]?.trim() || fallback;
+
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a numeric Roblox ID.`);
+  }
+
+  return value;
+}
+
 const nodeEnv = process.env.NODE_ENV?.trim() || "development";
 const production = nodeEnv === "production";
 const appOrigin = required("APP_ORIGIN").replace(/\/$/, "");
@@ -98,6 +130,13 @@ export const config = Object.freeze({
     roleIds: Object.freeze(roleIds),
   }),
   cookieSecret,
+  firebase: Object.freeze({
+    projectId: required("FIREBASE_PROJECT_ID"),
+  }),
+  roblox: Object.freeze({
+    universeId: numericId("ROBLOX_UNIVERSE_ID", "6466960954"),
+    openCloudApiKey: optionalPrivateSecret("ROBLOX_OPEN_CLOUD_API_KEY"),
+  }),
   sessionTtlMs:
     integer("SESSION_TTL_HOURS", 8, 1, 24) * 60 * 60 * 1000,
   roleRecheckMs:

@@ -22,7 +22,14 @@ import {
   createSession,
   deleteSession,
   getSession,
+  saveSession,
 } from "./session-store.mjs";
+import { createBugRouter } from "./bug-routes.mjs";
+import {
+  createAdminDictionaryRouter,
+  createDictionaryRouter,
+  ensureDefaultDictionaries,
+} from "./dictionaries.mjs";
 import {
   OAUTH_COOKIE,
   SESSION_COOKIE,
@@ -31,8 +38,43 @@ import {
   requireSameOrigin,
   setSignedCookie,
 } from "./security.mjs";
+import { createRobloxStatsService } from "./roblox-stats.mjs";
 
 const app = express();
+const robloxStats = createRobloxStatsService(config.roblox);
+
+let firestoreState = "initializing";
+let firestoreInitializationError = null;
+
+const firestoreReadyPromise = ensureDefaultDictionaries()
+  .then(({ created }) => {
+    firestoreState = "ready";
+    console.log(
+      created > 0
+        ? `Firestore dictionaries are ready (${created} defaults created).`
+        : "Firestore dictionaries are ready.",
+    );
+    return true;
+  })
+  .catch((error) => {
+    firestoreState = "failed";
+    firestoreInitializationError = error;
+    console.error("Firestore initialization failed:", error);
+    return false;
+  });
+
+async function requireFirestoreReady(_request, response, next) {
+  const ready = await firestoreReadyPromise;
+
+  if (!ready) {
+    response.status(503).json({
+      error: "Database initialization failed. Check the API terminal for details.",
+    });
+    return;
+  }
+
+  next();
+}
 
 if (config.production) {
   app.set("trust proxy", 1);
@@ -65,7 +107,7 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: "16kb" }));
+app.use(express.json({ limit: "32kb" }));
 
 app.use("/api", (_request, response, next) => {
   response.setHeader("Cache-Control", "no-store");
@@ -128,7 +170,7 @@ function authResponse(session) {
 }
 
 function redirectWithError(response, code) {
-  const url = new URL(config.appOrigin);
+  const url = new URL("/login", config.appOrigin);
   url.searchParams.set("authError", code);
   response.redirect(303, url.toString());
 }
@@ -152,7 +194,26 @@ function verifyCsrf(request, response, session) {
 }
 
 app.get("/api/health", (_request, response) => {
-  response.json({ ok: true });
+  const failed = firestoreState === "failed";
+
+  response.status(failed ? 503 : 200).json({
+    ok: !failed,
+    firestore: firestoreState,
+    ...(failed && config.production === false
+      ? { firestoreError: firestoreInitializationError?.message ?? "Unknown error" }
+      : {}),
+  });
+});
+
+app.get("/api/roblox/stats", async (_request, response) => {
+  try {
+    response.json({ stats: await robloxStats.getStats() });
+  } catch (error) {
+    console.error("Roblox statistics refresh failed:", error);
+    response.status(503).json({
+      error: "Roblox game statistics are temporarily unavailable.",
+    });
+  }
 });
 
 app.get(
@@ -271,6 +332,7 @@ app.get("/api/auth/me", async (request, response) => {
 
   try {
     await refreshDiscordSession(session);
+    saveSession(session);
     response.json(authResponse(session));
   } catch (error) {
     console.error("Discord session refresh failed:", error);
@@ -298,6 +360,7 @@ app.post(
 
     try {
       await refreshDiscordSession(session, true);
+      saveSession(session);
       response.json(authResponse(session));
     } catch (error) {
       console.error("Discord role re-check failed:", error);
@@ -331,6 +394,11 @@ app.post(
   },
 );
 
+
+app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
+app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
+app.use("/api/bugs", requireFirestoreReady, createBugRouter());
+
 if (config.production) {
   const currentFile = fileURLToPath(import.meta.url);
   const serverDirectory = path.dirname(currentFile);
@@ -355,8 +423,13 @@ if (config.production) {
 }
 
 app.use((error, _request, response, _next) => {
-  console.error("Unhandled server error:", error);
-  response.status(500).json({ error: "Internal server error." });
+  const status = Number.isInteger(error?.status) ? error.status : 500;
+  if (status >= 500) {
+    console.error("Unhandled server error:", error);
+  }
+  response.status(status).json({
+    error: status >= 500 ? "Internal server error." : error.message,
+  });
 });
 
 app.listen(config.port, "0.0.0.0", () => {
