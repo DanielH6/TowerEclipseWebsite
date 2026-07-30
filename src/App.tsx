@@ -129,6 +129,8 @@ function Footer() {
     { name: "Tower Eclipse Wiki", icon: "/social/fandom.png", href: "https://tower-eclipse.fandom.com/wiki/Tower_Eclipse_Wiki" },
     { name: "Discord", icon: "/social/discord.png", href: "https://discord.gg/DSs9bxTUEr" },
     { name: "YouTube", icon: "/social/youtube.png", href: "https://www.youtube.com/channel/UCcMo-YhbpBWoxZ-d2n9IS1A" },
+    { name: "Twitter", icon: "/social/twitter.png", href: "https://x.com/Superstitic" },
+    { name: "Patreon", icon: "/social/patreon.png", href: "https://www.patreon.com/cw/towereclipse" },
   ];
 
   return (
@@ -147,9 +149,7 @@ function Footer() {
             <img src={socialLink.icon} alt="" />
           </a>
         ))}
-        <span className="social-link social-link-disabled" aria-label="Twitter link coming soon" title="Twitter link coming soon">
-          <img src="/social/twitter.png" alt="" />
-        </span>
+        
       </div>
       <p>© 2026 Eclipse Development Studio. All Rights Reserved.</p>
     </footer>
