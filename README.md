@@ -62,7 +62,6 @@ COOKIE_SECRET=PASTE_THE_GENERATED_VALUE_HERE
 
 Generate it once per environment. Changing it invalidates existing login cookies and logs everyone out.
 
-<<<<<<< HEAD
 =======
 ### Configure Roblox live statistics
 
@@ -83,7 +82,6 @@ ROBLOX_OPEN_CLOUD_API_KEY=PASTE_THE_GENERATED_KEY_HERE
 The key is read only by the Node API. Never put it in React code or a `VITE_`
 environment variable.
 
->>>>>>> origin/main
 ## 5. Install and run
 
 From the project directory:
@@ -125,16 +123,12 @@ Expected response:
   "ok": true
 }
 ```
-
-<<<<<<< HEAD
-Search "UNCOMMENT" in the project directory if ur project breaks.
 =======
 Roblox statistics endpoint:
 
 ```text
 http://localhost:3001/api/roblox/stats
 ```
->>>>>>> origin/main
 
 ## Dynamic dictionaries
 
