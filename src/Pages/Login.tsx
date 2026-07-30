@@ -1,15 +1,9 @@
 import { useEffect, useState } from "react";
-import { loadAuthentication, logout, recheckDiscordRole } from "../api";
-import type { AuthenticatedResponse, AuthResponse } from "../types";
-
-type ScreenState =
-  | { type: "loading" }
-  | { type: "guest"; message: string | null }
-  | { type: "authenticated"; auth: AuthenticatedResponse }
-  | { type: "error"; message: string };
+import { useLocation, useNavigate } from "../router";
+import { useAuth } from "../AuthContext";
 
 const authenticationErrors: Record<string, string> = {
-  missing_role: "Your Discord account does not have the QA Lead, QA Tester, or Developer role.",
+  missing_role: "Your Discord account does not have access to this portal.",
   not_in_server: "Your Discord account is not a member of the configured Tower Eclipse server.",
   oauth_cancelled: "Discord authorization was cancelled.",
   oauth_failed: "Discord sign-in failed. Please try again.",
@@ -34,62 +28,22 @@ function messageFromUrl(): string | null {
 }
 
 export default function Login() {
-  const [screen, setScreen] = useState<ScreenState>({ type: "loading" });
+  const { loading, auth, error, refresh, recheck, logout } = useAuth();
   const [working, setWorking] = useState(false);
-
-  async function refreshAuthentication() {
-    const result: AuthResponse = await loadAuthentication();
-    if (result.authenticated) {
-      setScreen({ type: "authenticated", auth: result });
-    } else {
-      setScreen({ type: "guest", message: messageFromUrl() });
-    }
-  }
+  const [message, setMessage] = useState<string | null>(() => messageFromUrl());
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
-    refreshAuthentication().catch((error: unknown) => {
-      setScreen({
-        type: "error",
-        message: error instanceof Error ? error.message : "Could not contact the authentication server.",
-      });
-    });
-  }, []);
-
-  async function handleRecheck(auth: AuthenticatedResponse) {
-    setWorking(true);
-    try {
-      const result = await recheckDiscordRole(auth.csrfToken);
-      if (result.authenticated) {
-        setScreen({ type: "authenticated", auth: result });
-      } else {
-        setScreen({ type: "guest", message: "Your Discord access is no longer active." });
-      }
-    } catch (error) {
-      setScreen({
-        type: "error",
-        message: error instanceof Error ? error.message : "Could not re-check your Discord role.",
-      });
-    } finally {
-      setWorking(false);
+    const parameters = new URLSearchParams(location.search);
+    if (parameters.get("auth") === "success") {
+      refresh()
+        .then(() => navigate("/bugs", { replace: true }))
+        .catch((reason: unknown) => setMessage(reason instanceof Error ? reason.message : "Could not finish login."));
     }
-  }
+  }, [location.search]);
 
-  async function handleLogout(auth: AuthenticatedResponse) {
-    setWorking(true);
-    try {
-      await logout(auth.csrfToken);
-      setScreen({ type: "guest", message: null });
-    } catch (error) {
-      setScreen({
-        type: "error",
-        message: error instanceof Error ? error.message : "Could not sign out.",
-      });
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  if (screen.type === "loading") {
+  if (loading) {
     return (
       <section className="content-band loading-band">
         <div className="loading-spinner" aria-label="Loading authentication" />
@@ -97,10 +51,8 @@ export default function Login() {
     );
   }
 
-  if (screen.type === "authenticated") {
-    const { auth } = screen;
+  if (auth) {
     const { user } = auth;
-
     return (
       <section className="content-band" id="login">
         <article className="login-panel account-panel" aria-labelledby="account-title">
@@ -109,16 +61,11 @@ export default function Login() {
             {user.avatarUrl ? (
               <img className="avatar" src={user.avatarUrl} alt="" referrerPolicy="no-referrer" />
             ) : (
-              <div className="avatar avatar-fallback" aria-hidden="true">
-                {user.displayName.slice(0, 1).toUpperCase()}
-              </div>
+              <div className="avatar avatar-fallback" aria-hidden="true">{user.displayName.slice(0, 1).toUpperCase()}</div>
             )}
             <div>
               <h2 id="account-title">{user.displayName}</h2>
-              <p>
-                @{user.username}
-                {user.guildNickname ? ` · ${user.guildNickname}` : ""}
-              </p>
+              <p>@{user.username}{user.guildNickname ? ` · ${user.guildNickname}` : ""}</p>
             </div>
           </div>
           <div className="role-panel">
@@ -126,10 +73,26 @@ export default function Login() {
             <strong data-role={user.role}>{user.roleLabel}</strong>
           </div>
           <div className="button-row">
-            <button className="secondary-button" type="button" disabled={working} onClick={() => handleRecheck(auth)}>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={working}
+              onClick={async () => {
+                setWorking(true);
+                try { await recheck(); } finally { setWorking(false); }
+              }}
+            >
               {working ? "CHECKING…" : "RE-CHECK DISCORD ROLE"}
             </button>
-            <button className="danger-button" type="button" disabled={working} onClick={() => handleLogout(auth)}>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={working}
+              onClick={async () => {
+                setWorking(true);
+                try { await logout(); } finally { setWorking(false); }
+              }}
+            >
               SIGN OUT
             </button>
           </div>
@@ -138,20 +101,12 @@ export default function Login() {
     );
   }
 
-  const message = screen.type === "error" ? screen.message : screen.message;
-
   return (
     <section className="content-band" id="login">
       <article className="login-panel" aria-labelledby="auth-heading">
         <h2 id="auth-heading">LOGIN</h2>
-        <p className="login-description">
-          Access is granted through your role in the Tower Eclipse Discord server.
-        </p>
-        {message && (
-          <div className="message error" role="alert">
-            {message}
-          </div>
-        )}
+        <p className="login-description">Sign in with your Tower Eclipse Discord account to continue.</p>
+        {(message || error) && <div className="message error" role="alert">{message || error}</div>}
         <a className="discord-button" href="/api/auth/discord">
           <DiscordIcon />
           <span>CONTINUE WITH DISCORD</span>
