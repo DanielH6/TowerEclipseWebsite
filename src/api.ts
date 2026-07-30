@@ -7,6 +7,7 @@ import type {
   Dictionaries,
   DictionaryEntry,
   DictionaryName,
+  RobloxStats,
 } from "./types";
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -34,6 +35,15 @@ function writeHeaders(csrfToken: string): HeadersInit {
     "Content-Type": "application/json",
     "X-CSRF-Token": csrfToken,
   };
+}
+
+export async function loadRobloxStats(signal?: AbortSignal): Promise<RobloxStats> {
+  const response = await fetch("/api/roblox/stats", {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  const body = await readJson<{ stats: RobloxStats }>(response);
+  return body.stats;
 }
 
 export async function loadAuthentication(): Promise<AuthResponse> {

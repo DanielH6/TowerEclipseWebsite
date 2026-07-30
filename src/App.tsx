@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, NavLink, RouteParamsProvider, useLocation } from "./router";
 import { AuthProvider, useAuth } from "./AuthContext";
+import { loadRobloxStats } from "./api";
+import type { RobloxStats } from "./types";
 import ProtectedRoute from "./ProtectedRoute";
 import HomePage from "./Pages/HomePage";
 import AboutUs from "./Pages/About";
@@ -44,11 +46,79 @@ function Navigation() {
 }
 
 function Stats() {
+  const [stats, setStats] = useState<RobloxStats | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let controller = new AbortController();
+
+    async function refresh() {
+      controller.abort();
+      controller = new AbortController();
+
+      try {
+        const nextStats = await loadRobloxStats(controller.signal);
+        setStats(nextStats);
+        setFailed(false);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setFailed(true);
+        }
+      }
+    }
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(interval);
+      controller.abort();
+    };
+  }, []);
+
+  const format = (value: number | null | undefined) => (
+    value === null || value === undefined
+      ? "—"
+      : new Intl.NumberFormat("en-US", {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(value)
+  );
+  const exact = (value: number | null | undefined) => (
+    value === null || value === undefined
+      ? "Unavailable"
+      : new Intl.NumberFormat("en-US").format(value)
+  );
+  const ccuLabel = stats?.ccuMode === "current"
+    ? "CURRENT CCU"
+    : "PEAK CCU (28D)";
+  const statusText = failed
+    ? "Roblox statistics are temporarily unavailable."
+    : stats
+      ? `Roblox statistics updated ${new Date(stats.updatedAt).toLocaleString()}.`
+      : "Loading Roblox statistics.";
+
   return (
-    <div className="stats-row" aria-label="Game statistics">
-      <div><span>TOTAL PLAYS</span><strong>42K+</strong></div>
-      <div><span>MONTHLY PLAYERS</span><strong>100+</strong></div>
-      <div><span>PEAK CCU</span><strong>21+</strong></div>
+    <div
+      className="stats-row"
+      aria-label="Live Roblox game statistics"
+      aria-busy={!stats && !failed}
+    >
+      <div title={`Total plays: ${exact(stats?.totalPlays)}`}>
+        <span>TOTAL PLAYS</span>
+        <strong>{format(stats?.totalPlays)}</strong>
+      </div>
+      <div title={`Monthly active players: ${exact(stats?.monthlyPlayers)}`}>
+        <span>MONTHLY PLAYERS</span>
+        <strong>{format(stats?.monthlyPlayers)}</strong>
+      </div>
+      <div title={`${ccuLabel}: ${exact(stats?.ccu)}`}>
+        <span>{ccuLabel}</span>
+        <strong>{format(stats?.ccu)}</strong>
+      </div>
+      <span className="stats-status" role="status" aria-live="polite">
+        {statusText}
+      </span>
     </div>
   );
 }

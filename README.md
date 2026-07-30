@@ -7,6 +7,7 @@ Never publish or commit any of these:
 Discord Client Secret
 COOKIE_SECRET
 Firebase Admin service-account JSON
+Roblox Open Cloud API key
 ```
 
 The downloadable/project archive intentionally does not include `.env`, `.git`, `node_modules`, or `dist`.
@@ -25,6 +26,7 @@ Comments
 Developer notes
 Activity history
 Developer-only dynamic dictionary admin
+Live Roblox plays, monthly players, and CCU statistics
 ```
 
 Pages:
@@ -59,6 +61,25 @@ COOKIE_SECRET=PASTE_THE_GENERATED_VALUE_HERE
 ```
 
 Generate it once per environment. Changing it invalidates existing login cookies and logs everyone out.
+
+### Configure Roblox live statistics
+
+The Tower Eclipse universe ID is:
+
+```env
+ROBLOX_UNIVERSE_ID=6466960954
+```
+
+In Roblox Creator Dashboard, create an Open Cloud API key with access restricted
+to Tower Eclipse. Under `universe-analytics`, grant only the
+`universe.analytics:read` operation. Store the generated key in `.env`:
+
+```env
+ROBLOX_OPEN_CLOUD_API_KEY=PASTE_THE_GENERATED_KEY_HERE
+```
+
+The key is read only by the Node API. Never put it in React code or a `VITE_`
+environment variable.
 
 ## 5. Install and run
 
@@ -102,7 +123,11 @@ Expected response:
 }
 ```
 
-Search "UNCOMMENT" in the project directory if ur project breaks.
+Roblox statistics endpoint:
+
+```text
+http://localhost:3001/api/roblox/stats
+```
 
 ## Dynamic dictionaries
 
@@ -126,6 +151,7 @@ server/firebase.mjs          Firebase Admin initialization
 server/auth-context.mjs      Discord-session API authorization
 server/bug-routes.mjs        report, approval, comments, notes API
 server/dictionaries.mjs      dynamic dictionary API and seed data
+server/roblox-stats.mjs      Roblox public and Open Cloud analytics client
 server/index.mjs             Express and Discord OAuth routes
 src/Pages/Bugs.tsx           report table
 src/Pages/NewBug.tsx         report editor

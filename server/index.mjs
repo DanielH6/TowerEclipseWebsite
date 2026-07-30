@@ -38,8 +38,10 @@ import {
   requireSameOrigin,
   setSignedCookie,
 } from "./security.mjs";
+import { createRobloxStatsService } from "./roblox-stats.mjs";
 
 const app = express();
+const robloxStats = createRobloxStatsService(config.roblox);
 
 let firestoreState = "initializing";
 let firestoreInitializationError = null;
@@ -201,6 +203,17 @@ app.get("/api/health", (_request, response) => {
       ? { firestoreError: firestoreInitializationError?.message ?? "Unknown error" }
       : {}),
   });
+});
+
+app.get("/api/roblox/stats", async (_request, response) => {
+  try {
+    response.json({ stats: await robloxStats.getStats() });
+  } catch (error) {
+    console.error("Roblox statistics refresh failed:", error);
+    response.status(503).json({
+      error: "Roblox game statistics are temporarily unavailable.",
+    });
+  }
 });
 
 app.get(

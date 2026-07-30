@@ -22,6 +22,17 @@ export interface GuestResponse {
 
 export type AuthResponse = AuthenticatedResponse | GuestResponse;
 
+export interface RobloxStats {
+  totalPlays: number | null;
+  monthlyPlayers: number | null;
+  ccu: number | null;
+  ccuMode: "current" | "peak28d";
+  peakCcuWindowDays: number | null;
+  partial: boolean;
+  stale: boolean;
+  updatedAt: string;
+}
+
 export interface DictionaryEntry {
   id: string;
   code: string;
