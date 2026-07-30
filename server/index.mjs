@@ -38,8 +38,43 @@ import {
   requireSameOrigin,
   setSignedCookie,
 } from "./security.mjs";
+import { createRobloxStatsService } from "./roblox-stats.mjs";
 
 const app = express();
+const robloxStats = createRobloxStatsService(config.roblox);
+
+let firestoreState = "initializing";
+let firestoreInitializationError = null;
+
+const firestoreReadyPromise = ensureDefaultDictionaries()
+  .then(({ created }) => {
+    firestoreState = "ready";
+    console.log(
+      created > 0
+        ? `Firestore dictionaries are ready (${created} defaults created).`
+        : "Firestore dictionaries are ready.",
+    );
+    return true;
+  })
+  .catch((error) => {
+    firestoreState = "failed";
+    firestoreInitializationError = error;
+    console.error("Firestore initialization failed:", error);
+    return false;
+  });
+
+async function requireFirestoreReady(_request, response, next) {
+  const ready = await firestoreReadyPromise;
+
+  if (!ready) {
+    response.status(503).json({
+      error: "Database initialization failed. Check the API terminal for details.",
+    });
+    return;
+  }
+
+  next();
+}
 
 let firestoreState = "initializing";
 let firestoreInitializationError = null;
@@ -201,6 +236,17 @@ app.get("/api/health", (_request, response) => {
       ? { firestoreError: firestoreInitializationError?.message ?? "Unknown error" }
       : {}),
   });
+});
+
+app.get("/api/roblox/stats", async (_request, response) => {
+  try {
+    response.json({ stats: await robloxStats.getStats() });
+  } catch (error) {
+    console.error("Roblox statistics refresh failed:", error);
+    response.status(503).json({
+      error: "Roblox game statistics are temporarily unavailable.",
+    });
+  }
 });
 
 app.get(

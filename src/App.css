@@ -73,6 +73,7 @@
 }
 
 .stats-row {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(98px, 1fr));
   gap: 10px;
@@ -103,6 +104,17 @@
   color: rgba(255, 255, 255, 0.88);
   font-size: 0.72rem;
   font-weight: 900;
+}
+
+.stats-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .content-band {
