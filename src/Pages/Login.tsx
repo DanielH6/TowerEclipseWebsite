@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "../router";
 import { useAuth } from "../AuthContext";
+import RoleBadge from "../Components/RoleBadge";
 
 const authenticationErrors: Record<string, string> = {
-  missing_role: "Your Discord account does not have access to this portal.",
   not_in_server: "Your Discord account is not a member of the configured Tower Eclipse server.",
   oauth_cancelled: "Discord authorization was cancelled.",
   oauth_failed: "Discord sign-in failed. Please try again.",
@@ -70,7 +70,7 @@ export default function Login() {
           </div>
           <div className="role-panel">
             <span>WEBSITE ROLE</span>
-            <strong data-role={user.role}>{user.roleLabel}</strong>
+            <RoleBadge role={user.role} label={user.roleLabel} account />
           </div>
           <div className="button-row">
             <button

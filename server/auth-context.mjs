@@ -59,6 +59,26 @@ export async function requireAuth(request, response, next) {
   }
 }
 
+export async function optionalAuth(request, _response, next) {
+  const session = sessionFromRequest(request);
+
+  if (!session) {
+    next();
+    return;
+  }
+
+  try {
+    await refreshDiscordSession(session);
+    request.authSession = session;
+    request.authUser = publicUser(session);
+  } catch {
+    // Public routes remain available when a stale Discord session can no
+    // longer be refreshed. Protected routes still use requireAuth.
+  }
+
+  next();
+}
+
 export function requireRole(...allowedRoles) {
   const allowed = new Set(allowedRoles);
 

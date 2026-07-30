@@ -1,0 +1,36 @@
+.role-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  color: #fff;
+  background: #047857;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.role-badge[data-role="member"] {
+  border-color: #fff;
+  color: #fff;
+  background: #050505;
+}
+
+.role-badge[data-role="leadqa"] {
+  background: #7c3aed;
+}
+
+.role-badge[data-role="dev"] {
+  background: #0369a1;
+}
+
+.role-badge--account {
+  min-height: 29px;
+  padding: 7px 10px;
+  font-size: 0.7rem;
+}

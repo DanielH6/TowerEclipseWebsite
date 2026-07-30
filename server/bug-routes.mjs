@@ -1,6 +1,13 @@
 import express from "express";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
-import { actorSnapshot, requireAuth, requireCsrf, requireExactRole, requireRole } from "./auth-context.mjs";
+import {
+  actorSnapshot,
+  optionalAuth,
+  requireAuth,
+  requireCsrf,
+  requireExactRole,
+  requireRole,
+} from "./auth-context.mjs";
 import { dictionarySnapshot, getDictionaryEntry } from "./dictionaries.mjs";
 import {
   attachmentStoragePolicy,
@@ -375,17 +382,17 @@ async function getReport(request, response, next) {
     }
 
     const reportData = report.data();
-    if (
-      !reportIsSubmitted(reportData)
-      && request.authSession.role !== "dev"
-      && reportData.reporter?.discordId !== request.authSession.discordUser.id
-    ) {
+    const viewerSession = request.authSession ?? null;
+    const canViewDraft = viewerSession?.role === "dev"
+      || reportData.reporter?.discordId === viewerSession?.discordUser?.id;
+
+    if (!reportIsSubmitted(reportData) && !canViewDraft) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
 
     let developerNotes = [];
-    if (request.authSession.role === "dev" || request.authSession.role === "leadqa") {
+    if (viewerSession?.role === "dev" || viewerSession?.role === "leadqa") {
       const notes = await reference.collection("developerNotes").orderBy("createdAt", "asc").limit(300).get();
       developerNotes = notes.docs.map(serializeDocument);
     }
@@ -967,31 +974,83 @@ async function deleteReport(request, response, next) {
 
 export function createBugRouter() {
   const router = express.Router();
-  router.use(requireAuth);
+  const requireBugStaff = requireRole("qa", "leadqa", "dev");
 
-  router.get("/storage-config", getAttachmentStorageConfig);
   router.get("/", listReports);
-  router.post("/", requireCsrf, createReport);
-  router.post("/:reportId/finalize", requireCsrf, finalizeReportSubmission);
-  router.delete("/:reportId/cancel-submission", requireCsrf, cancelReportSubmission);
-  router.post("/:reportId/attachments", requireCsrf, beginAttachmentUpload);
+  router.get("/storage-config", requireAuth, requireBugStaff, getAttachmentStorageConfig);
+  router.post("/", requireAuth, requireBugStaff, requireCsrf, createReport);
+  router.post(
+    "/:reportId/finalize",
+    requireAuth,
+    requireBugStaff,
+    requireCsrf,
+    finalizeReportSubmission,
+  );
+  router.delete(
+    "/:reportId/cancel-submission",
+    requireAuth,
+    requireBugStaff,
+    requireCsrf,
+    cancelReportSubmission,
+  );
+  router.post(
+    "/:reportId/attachments",
+    requireAuth,
+    requireBugStaff,
+    requireCsrf,
+    beginAttachmentUpload,
+  );
   router.post(
     "/:reportId/attachments/:attachmentId/complete",
+    requireAuth,
+    requireBugStaff,
     requireCsrf,
     completeAttachmentUpload,
   );
   router.delete(
     "/:reportId/attachments/:attachmentId",
+    requireAuth,
+    requireBugStaff,
     requireCsrf,
     deleteAttachment,
   );
-  router.get("/:reportId", getReport);
-  router.patch("/:reportId", requireCsrf, patchReport);
-  router.delete("/:reportId", requireCsrf, requireExactRole("dev"), deleteReport);
-  router.post("/:reportId/approve", requireCsrf, requireRole("leadqa", "dev"), approveReport);
-  router.post("/:reportId/reject", requireCsrf, requireRole("leadqa", "dev"), rejectReport);
-  router.post("/:reportId/comments", requireCsrf, addComment);
-  router.post("/:reportId/developer-notes", requireCsrf, requireExactRole("dev"), addDeveloperNote);
+  router.get("/:reportId", optionalAuth, getReport);
+  router.patch("/:reportId", requireAuth, requireBugStaff, requireCsrf, patchReport);
+  router.delete(
+    "/:reportId",
+    requireAuth,
+    requireExactRole("dev"),
+    requireCsrf,
+    deleteReport,
+  );
+  router.post(
+    "/:reportId/approve",
+    requireAuth,
+    requireRole("leadqa", "dev"),
+    requireCsrf,
+    approveReport,
+  );
+  router.post(
+    "/:reportId/reject",
+    requireAuth,
+    requireRole("leadqa", "dev"),
+    requireCsrf,
+    rejectReport,
+  );
+  router.post(
+    "/:reportId/comments",
+    requireAuth,
+    requireBugStaff,
+    requireCsrf,
+    addComment,
+  );
+  router.post(
+    "/:reportId/developer-notes",
+    requireAuth,
+    requireExactRole("dev"),
+    requireCsrf,
+    addDeveloperNote,
+  );
 
   return router;
 }
