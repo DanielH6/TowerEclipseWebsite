@@ -211,7 +211,14 @@ button:disabled {
 }
 
 .reporter-name {
+  align-items: center;
+  gap: 6px;
   font-weight: 800;
+}
+
+.reporter-name,
+.actor-name-line {
+  display: flex;
 }
 
 .reporter-handle,
@@ -645,6 +652,34 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
+.read-only-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(141, 217, 255, 0.5);
+  color: #bce9ff;
+  background: rgba(3, 105, 161, 0.12);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.read-only-notice {
+  max-width: 1500px;
+  margin: 0 auto 18px;
+  padding: 11px 14px;
+  border: 1px solid rgba(141, 217, 255, 0.28);
+  color: #b9c4d3;
+  background: rgba(3, 105, 161, 0.09);
+  font-size: 0.78rem;
+}
+
+.read-only-notice a {
+  color: #8dd9ff;
+  font-weight: 800;
+}
+
 .reporter-cell,
 .actor-identity,
 .report-submitter,
@@ -661,6 +696,12 @@ button:disabled {
 .reporter-copy,
 .actor-identity-copy {
   min-width: 0;
+}
+
+.actor-name-line {
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .actor-identity {
@@ -694,6 +735,15 @@ button:disabled {
 
 .report-submitter p {
   margin: 0 !important;
+}
+
+.report-submitter .role-badge,
+.attachment-uploader .role-badge {
+  vertical-align: middle;
+}
+
+.attachment-uploader {
+  line-height: 1.75;
 }
 
 .details-summary .actor-identity {

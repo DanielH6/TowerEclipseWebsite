@@ -13,7 +13,9 @@ import {
   uploadBugAttachment,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
+import { isBugStaff } from "../roles";
 import { synchronizeReportDictionaries } from "../dictionary-sync";
 import {
   attachmentAccept,
@@ -55,7 +57,10 @@ function ActorIdentity({ actor, size = 32 }: { actor: ActorSnapshot; size?: numb
     <span className="actor-identity">
       <UserAvatar avatarUrl={actor.avatarUrl} displayName={actor.displayName} size={size} />
       <span className="actor-identity-copy">
-        <strong>{actor.displayName}</strong>
+        <span className="actor-name-line">
+          <strong>{actor.displayName}</strong>
+          <RoleBadge role={actor.role} />
+        </span>
         <small>@{actor.username}</small>
       </span>
     </span>
@@ -99,7 +104,7 @@ function DetailSelect({
 
 export default function BugDetailsPage() {
   const { reportId } = useParams();
-  const { auth } = useAuth();
+  const { auth, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [details, setDetails] = useState<BugDetailsResponse | null>(null);
   const [dictionaries, setDictionaries] = useState<Dictionaries | null>(null);
@@ -208,17 +213,20 @@ export default function BugDetailsPage() {
     return <section className="workspace-page"><div className="workspace-error">{error}</div></section>;
   }
 
-  if (!details || !dictionaries || !auth || !reportId) {
+  if (!details || !dictionaries || !reportId) {
     return <section className="workspace-page"><div className="table-message">Loading report…</div></section>;
   }
 
   const { report } = details;
-  const isApprovalStaff = auth.user.role === "leadqa" || auth.user.role === "dev";
+  const role = auth?.user.role;
+  const csrfToken = auth?.csrfToken ?? "";
+  const isStaff = isBugStaff(role);
+  const isApprovalStaff = role === "leadqa" || role === "dev";
   const canSeeDeveloperNotes = isApprovalStaff;
   const currentStatusEntry = dictionaries.statuses.find((entry) => entry.id === report.status.id);
   const reportIsTerminal = report.status.terminal === true || currentStatusEntry?.terminal === true;
-  const canReopenTerminalReport = auth.user.role === "dev";
-  const leadQaTerminalReadOnly = auth.user.role === "leadqa" && reportIsTerminal;
+  const canReopenTerminalReport = role === "dev";
+  const leadQaTerminalReadOnly = role === "leadqa" && reportIsTerminal;
   const canManageApproval = isApprovalStaff && !leadQaTerminalReadOnly;
 
   async function perform<T>(
@@ -249,13 +257,23 @@ export default function BugDetailsPage() {
           <h2>BUG REPORT DETAILS</h2>
           <div className="report-submitter">
             <UserAvatar avatarUrl={report.reporter.avatarUrl} displayName={report.reporter.displayName} size={42} />
-            <p>Submitted by {report.reporter.displayName} on {formatDate(report.submittedAt)}.</p>
+            <p>
+              Submitted by {report.reporter.displayName}{" "}
+              <RoleBadge role={report.reporter.role} /> on {formatDate(report.submittedAt)}.
+            </p>
           </div>
         </div>
         <Link className="ghost-link" to="/bugs">BACK TO REPORTS</Link>
       </div>
 
       {error && <div className="workspace-error" role="alert">{error}</div>}
+      {!authLoading && !isStaff && (
+        <div className="read-only-notice" role="status">
+          {role === "member"
+            ? "Members can view bug reports, comments, attachments, and activity in read-only mode."
+            : <>You are viewing this report in read-only mode. <Link to="/login">Log in with Discord</Link> to access your account.</>}
+        </div>
+      )}
 
       <div className="details-layout">
         <article className="details-main panel-card">
@@ -315,12 +333,12 @@ export default function BugDetailsPage() {
                     typeId,
                     deviceId,
                     ...(isApprovalStaff ? { statusId } : {}),
-                  }, auth.csrfToken),
+                  }, csrfToken),
                   (updatedReport) => {
                     setDetails((current) =>
                       current ? { ...current, report: updatedReport } : current
                     );
-                    if (auth.user.role === "leadqa" && updatedReport.status.terminal === true) {
+                    if (role === "leadqa" && updatedReport.status.terminal === true) {
                       window.requestAnimationFrame(() => {
                         document.getElementById("bug-comments")?.scrollIntoView({
                           behavior: "smooth",
@@ -361,7 +379,7 @@ export default function BugDetailsPage() {
                   <button
                     disabled={working}
                     onClick={() => perform(
-                      () => approveBug(reportId, approvalComment, auth.csrfToken),
+                      () => approveBug(reportId, approvalComment, csrfToken),
                       (updatedReport) => setDetails((current) =>
                         current ? { ...current, report: updatedReport } : current
                       ),
@@ -371,7 +389,7 @@ export default function BugDetailsPage() {
                     className="danger-action"
                     disabled={working}
                     onClick={() => perform(
-                      () => rejectBug(reportId, approvalComment, auth.csrfToken),
+                      () => rejectBug(reportId, approvalComment, csrfToken),
                       (updatedReport) => setDetails((current) =>
                         current ? { ...current, report: updatedReport } : current
                       ),
@@ -382,7 +400,7 @@ export default function BugDetailsPage() {
             )}
           </article>
 
-          {auth.user.role === "dev" && (
+          {role === "dev" && (
             <article className="panel-card danger-zone">
               <h3>DEVELOPER ACTIONS</h3>
               <button
@@ -392,7 +410,7 @@ export default function BugDetailsPage() {
                   if (!window.confirm(`Delete ${report.displayId} and all of its comments, notes, and history?`)) return;
                   setWorking(true);
                   try {
-                    await deleteBug(reportId, auth.csrfToken);
+                    await deleteBug(reportId, csrfToken);
                     navigate("/bugs");
                   } catch (reason) {
                     setError(reason instanceof Error ? reason.message : "Could not delete the report.");
@@ -475,7 +493,11 @@ export default function BugDetailsPage() {
                 <div className="attachment-card-copy">
                   <strong title={attachment.originalName}>{attachment.originalName}</strong>
                   <small>{formatFileSize(attachment.size)} · {attachment.contentType}</small>
-                  <small>Uploaded by {attachment.uploader.displayName} on {formatDate(attachment.uploadedAt || attachment.createdAt)}</small>
+                  <small className="attachment-uploader">
+                    Uploaded by {attachment.uploader.displayName}{" "}
+                    <RoleBadge role={attachment.uploader.role} /> on{" "}
+                    {formatDate(attachment.uploadedAt || attachment.createdAt)}
+                  </small>
                 </div>
                 <div className="attachment-card-actions">
                   {attachment.downloadUrl ? (
@@ -493,7 +515,7 @@ export default function BugDetailsPage() {
                       onClick={() => {
                         if (!window.confirm(`Remove ${attachment.originalName}?`)) return;
                         perform(
-                          () => deleteBugAttachment(reportId, attachment.id, auth.csrfToken),
+                          () => deleteBugAttachment(reportId, attachment.id, csrfToken),
                           () => setDetails((current) => current ? {
                             ...current,
                             attachments: current.attachments.filter((item) => item.id !== attachment.id),
@@ -546,7 +568,7 @@ export default function BugDetailsPage() {
                     const file = attachmentFiles[index];
                     if (!file) continue;
                     setUploadMessage(`Uploading image ${index + 1} of ${attachmentFiles.length}: ${file.name}`);
-                    uploaded.push(await uploadBugAttachment(reportId, file, auth.csrfToken));
+                    uploaded.push(await uploadBugAttachment(reportId, file, csrfToken));
                   }
                   setAttachmentFiles([]);
                   setDetails((current) => current ? {
@@ -592,30 +614,32 @@ export default function BugDetailsPage() {
               </article>
             ))}
           </div>
-          <form
-            className="message-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!commentBody.trim()) return;
-              perform(
-                () => addBugComment(reportId, commentBody, auth.csrfToken),
-                (comment) => {
-                  setCommentBody("");
-                  setDetails((current) => current ? {
-                    ...current,
-                    comments: [...current.comments, comment],
-                    report: {
-                      ...current.report,
-                      commentsCount: current.report.commentsCount + 1,
-                    },
-                  } : current);
-                },
-              );
-            }}
-          >
-            <textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Add a comment" />
-            <button disabled={working}>ADD COMMENT</button>
-          </form>
+          {isStaff && (
+            <form
+              className="message-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!commentBody.trim()) return;
+                perform(
+                  () => addBugComment(reportId, commentBody, csrfToken),
+                  (comment) => {
+                    setCommentBody("");
+                    setDetails((current) => current ? {
+                      ...current,
+                      comments: [...current.comments, comment],
+                      report: {
+                        ...current.report,
+                        commentsCount: current.report.commentsCount + 1,
+                      },
+                    } : current);
+                  },
+                );
+              }}
+            >
+              <textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Add a comment" />
+              <button disabled={working}>ADD COMMENT</button>
+            </form>
+          )}
         </article>
 
         {canSeeDeveloperNotes && (
@@ -633,14 +657,14 @@ export default function BugDetailsPage() {
                 </article>
               ))}
             </div>
-            {auth.user.role === "dev" && (
+            {role === "dev" && (
               <form
                 className="message-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (!developerNoteBody.trim()) return;
                   perform(
-                    () => addDeveloperNote(reportId, developerNoteBody, auth.csrfToken),
+                    () => addDeveloperNote(reportId, developerNoteBody, csrfToken),
                     (note) => {
                       setDeveloperNoteBody("");
                       setDetails((current) => current ? {
