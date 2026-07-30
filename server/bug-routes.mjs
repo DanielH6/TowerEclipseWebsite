@@ -2,6 +2,14 @@ import express from "express";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
 import { actorSnapshot, requireAuth, requireCsrf, requireExactRole, requireRole } from "./auth-context.mjs";
 import { dictionarySnapshot, getDictionaryEntry } from "./dictionaries.mjs";
+import {
+  attachmentStoragePolicy,
+  createAttachmentDownloadUrl,
+  createAttachmentUploadUrl,
+  deleteAttachmentObject,
+  headAttachmentObject,
+  normalizeAttachmentInput,
+} from "./r2.mjs";
 
 const EDITABLE_DICTIONARIES = Object.freeze({
   versionId: "versions",
@@ -80,12 +88,101 @@ function reportIsPending(report) {
   return report.approval?.state === "pending";
 }
 
+function reportIsSubmitted(report) {
+  return report.submissionState !== "uploading";
+}
+
+function requireSubmittedReport(report) {
+  if (!reportIsSubmitted(report)) {
+    throw httpError(409, "This bug report is still waiting for its attached images to finish uploading.");
+  }
+}
+
+function expectedAttachmentCount(value, policy) {
+  if (value === undefined || value === null || value === "") return 0;
+
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw httpError(400, "expectedAttachments must be a non-negative integer.");
+  }
+  if (count > 0 && !policy.enabled) {
+    throw httpError(503, "Image storage is not configured, so this report cannot include attachments.");
+  }
+  if (count > policy.maxFilesPerReport) {
+    throw httpError(400, `A report can contain at most ${policy.maxFilesPerReport} attachments.`);
+  }
+
+  return count;
+}
+
 async function statusIsTerminal(status) {
   if (!status?.id) return false;
   if (typeof status.terminal === "boolean") return status.terminal;
 
   const entry = await getDictionaryEntry("statuses", status.id, { activeOnly: false });
   return entry.terminal === true;
+}
+
+async function canModifyAttachments(session, report) {
+  if (session.role === "dev") return true;
+
+  const terminal = await statusIsTerminal(report.status);
+  if (session.role === "leadqa") return !terminal;
+
+  return session.role === "qa"
+    && report.reporter?.discordId === session.discordUser.id
+    && reportIsPending(report);
+}
+
+async function requireAttachmentAccess(session, report) {
+  if (!await canModifyAttachments(session, report)) {
+    throw httpError(
+      403,
+      session.role === "leadqa"
+        ? "Terminal bug reports are read-only for QA leads. Only comments are allowed."
+        : "You cannot modify attachments on this bug report.",
+    );
+  }
+}
+
+function attachmentIsExpired(attachment) {
+  const expiresAt = attachment.uploadExpiresAt;
+  if (!(expiresAt instanceof Timestamp)) return false;
+  return expiresAt.toDate().getTime() < Date.now();
+}
+
+async function cleanupExpiredPendingAttachments(documents) {
+  const remaining = [];
+
+  for (const document of documents) {
+    const attachment = document.data();
+    if (attachment.status !== "pending" || !attachmentIsExpired(attachment)) {
+      remaining.push(document);
+      continue;
+    }
+
+    try {
+      await deleteAttachmentObject(attachment.objectKey, { ignoreMissing: true });
+    } catch (error) {
+      console.warn(`Could not remove expired R2 object ${attachment.objectKey}:`, error);
+    }
+
+    await document.ref.delete();
+  }
+
+  return remaining;
+}
+
+function serializeAttachmentDocument(document) {
+  const value = serializeDocument(document);
+  const storage = attachmentStoragePolicy();
+  const { objectKey, ...publicValue } = value;
+  return {
+    ...publicValue,
+    downloadUrl: storage.enabled && value.status === "ready"
+      ? createAttachmentDownloadUrl(objectKey)
+      : null,
+  };
 }
 
 async function hydrateReportDictionaries(reports) {
@@ -139,7 +236,13 @@ async function hydrateReportDictionaries(reports) {
 }
 
 async function serializeReportDocuments(documents) {
-  return hydrateReportDictionaries(documents.map(serializeDocument));
+  const reports = await hydrateReportDictionaries(documents.map(serializeDocument));
+  return reports.map((report) => ({
+    ...report,
+    commentsCount: Number(report.commentsCount ?? 0),
+    developerNotesCount: Number(report.developerNotesCount ?? 0),
+    attachmentsCount: Number(report.attachmentsCount ?? 0),
+  }));
 }
 
 async function serializeReportDocument(document) {
@@ -160,6 +263,9 @@ async function addActivity(transactionOrBatch, reportReference, action, actor, d
 async function createReport(request, response, next) {
   try {
     const body = request.body ?? {};
+    const policy = attachmentStoragePolicy();
+    const expectedAttachments = expectedAttachmentCount(body.expectedAttachments, policy);
+    const uploadingAttachments = expectedAttachments > 0;
     const description = cleanText(body.description, "description", { min: 5, max: 10000 });
     const dictionaryFields = await resolveDictionaryFields(body);
     const status = await pendingStatus();
@@ -183,7 +289,9 @@ async function createReport(request, response, next) {
         ...dictionaryFields,
         description,
         reporter: actor,
-        submittedAt: FieldValue.serverTimestamp(),
+        submissionState: uploadingAttachments ? "uploading" : "submitted",
+        expectedAttachments,
+        submittedAt: uploadingAttachments ? null : FieldValue.serverTimestamp(),
         approval: {
           state: "pending",
           approvedBy: null,
@@ -194,10 +302,17 @@ async function createReport(request, response, next) {
         },
         commentsCount: 0,
         developerNotesCount: 0,
+        attachmentsCount: 0,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      await addActivity(transaction, reportReference, "report_created", actor, { displayId });
+      await addActivity(
+        transaction,
+        reportReference,
+        uploadingAttachments ? "report_draft_created" : "report_created",
+        actor,
+        { displayId, expectedAttachments },
+      );
     });
 
     const created = await reportReference.get();
@@ -223,6 +338,8 @@ async function listReports(request, response, next) {
     };
 
     reports = reports.filter((report) => {
+      if (!reportIsSubmitted(report)) return false;
+
       if (search) {
         const haystack = [
           report.displayId,
@@ -245,13 +362,24 @@ async function listReports(request, response, next) {
 async function getReport(request, response, next) {
   try {
     const reference = db.doc(`bugReports/${request.params.reportId}`);
-    const [report, comments, activity] = await Promise.all([
+    const [report, comments, activity, attachmentSnapshot] = await Promise.all([
       reference.get(),
       reference.collection("comments").orderBy("createdAt", "asc").limit(300).get(),
       reference.collection("activity").orderBy("createdAt", "desc").limit(300).get(),
+      reference.collection("attachments").orderBy("createdAt", "asc").limit(100).get(),
     ]);
 
     if (!report.exists) {
+      response.status(404).json({ error: "Bug report not found." });
+      return;
+    }
+
+    const reportData = report.data();
+    if (
+      !reportIsSubmitted(reportData)
+      && request.authSession.role !== "dev"
+      && reportData.reporter?.discordId !== request.authSession.discordUser.id
+    ) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
@@ -262,10 +390,16 @@ async function getReport(request, response, next) {
       developerNotes = notes.docs.map(serializeDocument);
     }
 
+    const attachments = attachmentSnapshot.docs
+      .filter((document) => document.data().status === "ready")
+      .map(serializeAttachmentDocument);
+
     response.json({
       report: await serializeReportDocument(report),
       comments: comments.docs.map(serializeDocument),
       developerNotes,
+      attachments,
+      attachmentPolicy: attachmentStoragePolicy(),
       activity: activity.docs.map(serializeDocument),
     });
   } catch (error) {
@@ -283,6 +417,7 @@ async function patchReport(request, response, next) {
     }
 
     const current = existing.data();
+    requireSubmittedReport(current);
     const body = request.body ?? {};
     const session = request.authSession;
     const isQaOwner = session.role === "qa" && current.reporter?.discordId === session.discordUser.id;
@@ -370,6 +505,7 @@ async function approveReport(request, response, next) {
     }
 
     const current = existing.data();
+    requireSubmittedReport(current);
     if (request.authSession.role === "leadqa" && await statusIsTerminal(current.status)) {
       throw httpError(
         403,
@@ -414,6 +550,7 @@ async function rejectReport(request, response, next) {
     }
 
     const current = existing.data();
+    requireSubmittedReport(current);
     if (request.authSession.role === "leadqa" && await statusIsTerminal(current.status)) {
       throw httpError(
         403,
@@ -456,6 +593,7 @@ async function addComment(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+    requireSubmittedReport(report.data());
 
     const body = cleanText(request.body?.body, "body", { min: 1, max: 5000 });
     const reference = reportReference.collection("comments").doc();
@@ -486,6 +624,7 @@ async function addDeveloperNote(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+    requireSubmittedReport(report.data());
 
     const body = cleanText(request.body?.body, "body", { min: 1, max: 10000 });
     const reference = reportReference.collection("developerNotes").doc();
@@ -508,6 +647,309 @@ async function addDeveloperNote(request, response, next) {
   }
 }
 
+async function removeReportAndStoredAttachments(reference) {
+  const attachments = await reference.collection("attachments").limit(1000).get();
+  for (const attachmentDocument of attachments.docs) {
+    const objectKey = attachmentDocument.data().objectKey;
+    if (objectKey) {
+      await deleteAttachmentObject(objectKey, { ignoreMissing: true });
+    }
+  }
+  await db.recursiveDelete(reference);
+}
+
+async function finalizeReportSubmission(request, response, next) {
+  try {
+    const reference = db.doc(`bugReports/${request.params.reportId}`);
+    const [reportSnapshot, attachmentSnapshot] = await Promise.all([
+      reference.get(),
+      reference.collection("attachments").limit(100).get(),
+    ]);
+
+    if (!reportSnapshot.exists) throw httpError(404, "Bug report not found.");
+    const report = reportSnapshot.data();
+    const isOwner = report.reporter?.discordId === request.authSession.discordUser.id;
+    if (!isOwner && request.authSession.role !== "dev") {
+      throw httpError(403, "Only the reporter can finish this bug report submission.");
+    }
+    if (reportIsSubmitted(report)) {
+      response.json({ report: await serializeReportDocument(reportSnapshot) });
+      return;
+    }
+
+    const expected = Number(report.expectedAttachments ?? 0);
+    const ready = attachmentSnapshot.docs.filter((document) => document.data().status === "ready");
+    const pending = attachmentSnapshot.docs.filter((document) => document.data().status === "pending");
+    if (expected < 1 || ready.length !== expected || pending.length > 0) {
+      throw httpError(
+        409,
+        `All ${expected} selected images must finish uploading before the report can be submitted.`,
+      );
+    }
+
+    const actor = actorSnapshot(request.authSession);
+    const batch = db.batch();
+    batch.update(reference, {
+      submissionState: "submitted",
+      submittedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    await addActivity(batch, reference, "report_created", actor, {
+      displayId: report.displayId,
+      attachmentsCount: ready.length,
+    });
+    await batch.commit();
+
+    response.json({ report: await serializeReportDocument(await reference.get()) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function cancelReportSubmission(request, response, next) {
+  try {
+    const reference = db.doc(`bugReports/${request.params.reportId}`);
+    const snapshot = await reference.get();
+    if (!snapshot.exists) {
+      response.sendStatus(204);
+      return;
+    }
+
+    const report = snapshot.data();
+    const isOwner = report.reporter?.discordId === request.authSession.discordUser.id;
+    if (!isOwner && request.authSession.role !== "dev") {
+      throw httpError(403, "Only the reporter can cancel this bug report submission.");
+    }
+    if (reportIsSubmitted(report)) {
+      throw httpError(409, "A submitted bug report cannot be cancelled through this endpoint.");
+    }
+
+    await removeReportAndStoredAttachments(reference);
+    response.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getAttachmentStorageConfig(_request, response) {
+  response.json({ attachmentPolicy: attachmentStoragePolicy() });
+}
+
+async function beginAttachmentUpload(request, response, next) {
+  try {
+    const policy = attachmentStoragePolicy();
+    if (!policy.enabled) {
+      throw httpError(503, "Attachment storage is not configured.");
+    }
+
+    const reportReference = db.doc(`bugReports/${request.params.reportId}`);
+    const reportSnapshot = await reportReference.get();
+    if (!reportSnapshot.exists) {
+      throw httpError(404, "Bug report not found.");
+    }
+
+    const report = reportSnapshot.data();
+    await requireAttachmentAccess(request.authSession, report);
+
+    const attachmentSnapshot = await reportReference
+      .collection("attachments")
+      .orderBy("createdAt", "asc")
+      .limit(100)
+      .get();
+    const currentAttachments = await cleanupExpiredPendingAttachments(attachmentSnapshot.docs);
+    const occupiedSlots = currentAttachments.filter((document) => {
+      const status = document.data().status;
+      return status === "pending" || status === "ready";
+    }).length;
+
+    const attachmentLimit = report.submissionState === "uploading"
+      ? Number(report.expectedAttachments ?? 0)
+      : policy.maxFilesPerReport;
+
+    if (occupiedSlots >= attachmentLimit) {
+      throw httpError(409, `This report already has the maximum of ${attachmentLimit} attachments.`);
+    }
+
+    const normalized = normalizeAttachmentInput(request.body ?? {});
+    const attachmentReference = reportReference.collection("attachments").doc();
+    const objectKey = [
+      "bug-reports",
+      reportReference.id,
+      attachmentReference.id,
+      normalized.objectName,
+    ].join("/");
+    const upload = createAttachmentUploadUrl(
+      objectKey,
+      normalized.contentType,
+    );
+
+    await attachmentReference.set({
+      objectKey,
+      originalName: normalized.originalName,
+      contentType: normalized.contentType,
+      contentDisposition: normalized.contentDisposition,
+      previewKind: normalized.previewKind,
+      declaredSize: normalized.size,
+      size: normalized.size,
+      status: "pending",
+      uploader: actorSnapshot(request.authSession),
+      createdAt: FieldValue.serverTimestamp(),
+      uploadedAt: null,
+      uploadExpiresAt: new Timestamp(
+        new Date(Date.now() + (upload.expiresIn + 300) * 1000),
+      ),
+      etag: null,
+    });
+
+    response.status(201).json({
+      attachmentId: attachmentReference.id,
+      uploadUrl: upload.url,
+      uploadHeaders: upload.headers,
+      expiresIn: upload.expiresIn,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function completeAttachmentUpload(request, response, next) {
+  try {
+    const reportReference = db.doc(`bugReports/${request.params.reportId}`);
+    const attachmentReference = reportReference
+      .collection("attachments")
+      .doc(request.params.attachmentId);
+    const [reportSnapshot, attachmentSnapshot] = await Promise.all([
+      reportReference.get(),
+      attachmentReference.get(),
+    ]);
+
+    if (!reportSnapshot.exists) throw httpError(404, "Bug report not found.");
+    if (!attachmentSnapshot.exists) throw httpError(404, "Attachment upload not found.");
+
+    const report = reportSnapshot.data();
+    const attachment = attachmentSnapshot.data();
+    await requireAttachmentAccess(request.authSession, report);
+
+    if (attachment.status === "ready") {
+      response.json({ attachment: serializeAttachmentDocument(attachmentSnapshot) });
+      return;
+    }
+    if (attachment.status !== "pending") {
+      throw httpError(409, "This attachment upload cannot be completed.");
+    }
+    if (attachmentIsExpired(attachment)) {
+      await deleteAttachmentObject(attachment.objectKey, { ignoreMissing: true });
+      await attachmentReference.delete();
+      throw httpError(410, "The attachment upload expired. Select the file and try again.");
+    }
+
+    const object = await headAttachmentObject(attachment.objectKey);
+    if (!object) {
+      throw httpError(409, "R2 has not received this attachment yet.");
+    }
+
+    if (object.size !== attachment.declaredSize) {
+      await deleteAttachmentObject(attachment.objectKey, { ignoreMissing: true });
+      await attachmentReference.delete();
+      throw httpError(400, "The uploaded file size does not match the requested attachment.");
+    }
+    if (object.contentType && object.contentType !== attachment.contentType) {
+      await deleteAttachmentObject(attachment.objectKey, { ignoreMissing: true });
+      await attachmentReference.delete();
+      throw httpError(400, "The uploaded file type does not match the requested attachment.");
+    }
+
+    const actor = actorSnapshot(request.authSession);
+    const completion = await db.runTransaction(async (transaction) => {
+      const currentSnapshot = await transaction.get(attachmentReference);
+      if (!currentSnapshot.exists) {
+        throw httpError(404, "Attachment upload not found.");
+      }
+
+      const current = currentSnapshot.data();
+      if (current.status === "ready") {
+        return { created: false };
+      }
+      if (current.status !== "pending") {
+        throw httpError(409, "This attachment upload cannot be completed.");
+      }
+
+      transaction.update(attachmentReference, {
+        status: "ready",
+        size: object.size,
+        contentType: object.contentType ?? current.contentType,
+        contentDisposition: object.contentDisposition ?? current.contentDisposition,
+        etag: object.etag,
+        uploadedAt: FieldValue.serverTimestamp(),
+        uploadExpiresAt: null,
+      });
+      transaction.update(reportReference, {
+        attachmentsCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await addActivity(transaction, reportReference, "attachment_added", actor, {
+        attachmentId: attachmentReference.id,
+        fileName: current.originalName,
+        size: object.size,
+        contentType: object.contentType ?? current.contentType,
+      });
+
+      return { created: true };
+    });
+
+    response.status(completion.created ? 201 : 200).json({
+      attachment: serializeAttachmentDocument(await attachmentReference.get()),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function deleteAttachment(request, response, next) {
+  try {
+    const reportReference = db.doc(`bugReports/${request.params.reportId}`);
+    const attachmentReference = reportReference
+      .collection("attachments")
+      .doc(request.params.attachmentId);
+    const [reportSnapshot, attachmentSnapshot] = await Promise.all([
+      reportReference.get(),
+      attachmentReference.get(),
+    ]);
+
+    if (!reportSnapshot.exists) throw httpError(404, "Bug report not found.");
+    if (!attachmentSnapshot.exists) throw httpError(404, "Attachment not found.");
+
+    const report = reportSnapshot.data();
+    const attachment = attachmentSnapshot.data();
+    await requireAttachmentAccess(request.authSession, report);
+
+    await deleteAttachmentObject(attachment.objectKey, { ignoreMissing: true });
+
+    const batch = db.batch();
+    batch.delete(attachmentReference);
+    if (attachment.status === "ready") {
+      batch.update(reportReference, {
+        attachmentsCount: FieldValue.increment(-1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await addActivity(
+        batch,
+        reportReference,
+        "attachment_removed",
+        actorSnapshot(request.authSession),
+        {
+          attachmentId: attachmentReference.id,
+          fileName: attachment.originalName,
+        },
+      );
+    }
+    await batch.commit();
+    response.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function deleteReport(request, response, next) {
   try {
     const reference = db.doc(`bugReports/${request.params.reportId}`);
@@ -516,7 +958,7 @@ async function deleteReport(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
-    await db.recursiveDelete(reference);
+    await removeReportAndStoredAttachments(reference);
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -527,8 +969,22 @@ export function createBugRouter() {
   const router = express.Router();
   router.use(requireAuth);
 
+  router.get("/storage-config", getAttachmentStorageConfig);
   router.get("/", listReports);
   router.post("/", requireCsrf, createReport);
+  router.post("/:reportId/finalize", requireCsrf, finalizeReportSubmission);
+  router.delete("/:reportId/cancel-submission", requireCsrf, cancelReportSubmission);
+  router.post("/:reportId/attachments", requireCsrf, beginAttachmentUpload);
+  router.post(
+    "/:reportId/attachments/:attachmentId/complete",
+    requireCsrf,
+    completeAttachmentUpload,
+  );
+  router.delete(
+    "/:reportId/attachments/:attachmentId",
+    requireCsrf,
+    deleteAttachment,
+  );
   router.get("/:reportId", getReport);
   router.patch("/:reportId", requireCsrf, patchReport);
   router.delete("/:reportId", requireCsrf, requireExactRole("dev"), deleteReport);

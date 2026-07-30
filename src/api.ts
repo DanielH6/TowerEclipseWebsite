@@ -1,5 +1,7 @@
 import type {
+  AttachmentPolicy,
   AuthResponse,
+  BugAttachment,
   BugComment,
   BugDetailsResponse,
   BugReport,
@@ -117,15 +119,45 @@ export interface BugInput {
   deviceId: string;
 }
 
-export async function createBug(input: BugInput, csrfToken: string): Promise<BugReport> {
+export async function createBug(
+  input: BugInput,
+  csrfToken: string,
+  expectedAttachments = 0,
+): Promise<BugReport> {
   const response = await fetch("/api/bugs", {
     method: "POST",
     credentials: "include",
     headers: writeHeaders(csrfToken),
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, expectedAttachments }),
   });
   const body = await readJson<{ report: BugReport }>(response);
   return body.report;
+}
+
+export async function finalizeBugSubmission(
+  reportId: string,
+  csrfToken: string,
+): Promise<BugReport> {
+  const response = await fetch(`/api/bugs/${encodeURIComponent(reportId)}/finalize`, {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: "{}",
+  });
+  const body = await readJson<{ report: BugReport }>(response);
+  return body.report;
+}
+
+export async function cancelBugSubmission(
+  reportId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(`/api/bugs/${encodeURIComponent(reportId)}/cancel-submission`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  if (!response.ok) await readJson(response);
 }
 
 export async function loadBug(reportId: string): Promise<BugDetailsResponse> {
@@ -202,6 +234,104 @@ export async function addDeveloperNote(reportId: string, body: string, csrfToken
   });
   const result = await readJson<{ note: DeveloperNote }>(response);
   return result.note;
+}
+
+export async function loadAttachmentPolicy(): Promise<AttachmentPolicy> {
+  const response = await fetch("/api/bugs/storage-config", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ attachmentPolicy: AttachmentPolicy }>(response);
+  return body.attachmentPolicy;
+}
+
+interface AttachmentUploadTicket {
+  attachmentId: string;
+  uploadUrl: string;
+  uploadHeaders: Record<string, string>;
+  expiresIn: number;
+}
+
+export async function uploadBugAttachment(
+  reportId: string,
+  file: File,
+  csrfToken: string,
+): Promise<BugAttachment> {
+  const encodedReportId = encodeURIComponent(reportId);
+  const ticketResponse = await fetch(`/api/bugs/${encodedReportId}/attachments`, {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type,
+      size: file.size,
+    }),
+  });
+  const ticket = await readJson<AttachmentUploadTicket>(ticketResponse);
+
+  try {
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await fetch(ticket.uploadUrl, {
+        method: "PUT",
+        headers: ticket.uploadHeaders,
+        body: file,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new Error(
+          "The browser could not reach R2. Check that the bucket CORS policy contains the exact website origin and allows PUT with the Content-Type header.",
+        );
+      }
+      throw error;
+    }
+
+    if (!uploadResponse.ok) {
+      const details = await uploadResponse.text().catch(() => "");
+      throw new Error(
+        `R2 upload failed with status ${uploadResponse.status}${details ? `: ${details}` : "."}`,
+      );
+    }
+
+    const completeResponse = await fetch(
+      `/api/bugs/${encodedReportId}/attachments/${encodeURIComponent(ticket.attachmentId)}/complete`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: writeHeaders(csrfToken),
+        body: "{}",
+      },
+    );
+    const completed = await readJson<{ attachment: BugAttachment }>(completeResponse);
+    return completed.attachment;
+  } catch (error) {
+    await fetch(
+      `/api/bugs/${encodedReportId}/attachments/${encodeURIComponent(ticket.attachmentId)}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken },
+      },
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteBugAttachment(
+  reportId: string,
+  attachmentId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/bugs/${encodeURIComponent(reportId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await readJson(response);
 }
 
 export async function loadAdminDictionary(dictionary: DictionaryName): Promise<DictionaryEntry[]> {

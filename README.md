@@ -1,164 +1,85 @@
-## Security warning
+# Tower Eclipse website
 
-Never publish or commit any of these:
+React/Vite frontend with a Node API, Discord OAuth, Firestore bug reports, dynamic dictionaries, Roblox statistics, persistent encrypted sessions, and private Cloudflare R2 image attachments.
+
+## Security
+
+Never commit or share:
 
 ```text
 .env
 Discord Client Secret
 COOKIE_SECRET
-Firebase Admin service-account JSON
+Firebase service-account JSON
 Roblox Open Cloud API key
+R2 Secret Access Key
+.runtime/
 ```
 
-The downloadable/project archive intentionally does not include `.env`, `.git`, `node_modules`, or `dist`.
-
-## What is implemented
-
-```text
-Discord OAuth login
-Discord role mapping: dev > leadqa > qa
-Secure server-side sessions
-Cloud Firestore bug reports
-Automatic Discord reporter attribution
-Submission and approval timestamps
-Approver/rejector attribution
-Comments
-Developer notes
-Activity history
-Developer-only dynamic dictionary admin
-Live Roblox plays, monthly players, and CCU statistics
-```
-
-Pages:
-
-```text
-/bugs           report table and filters
-/bugs/new       new bug editor
-/bugs/<id>      details, approval, comments, notes, history
-/admin          developer-only dictionary editor
-/login          Discord authentication
-```
-
-## Requirements
-
-```text
-Node.js 22 or newer
-npm
-```
-
-### Generate `COOKIE_SECRET`
-
-Run this command from any directory with Node.js installed:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Copy the full 64-character result into `.env`:
-
-```env
-COOKIE_SECRET=PASTE_THE_GENERATED_VALUE_HERE
-```
-
-Generate it once per environment. Changing it invalidates existing login cookies and logs everyone out.
-
-=======
-### Configure Roblox live statistics
-
-The Tower Eclipse universe ID is:
-
-```env
-ROBLOX_UNIVERSE_ID=6466960954
-```
-
-In Roblox Creator Dashboard, create an Open Cloud API key with access restricted
-to Tower Eclipse. Under `universe-analytics`, grant only the
-`universe.analytics:read` operation. Store the generated key in `.env`:
-
-```env
-ROBLOX_OPEN_CLOUD_API_KEY=PASTE_THE_GENERATED_KEY_HERE
-```
-
-The key is read only by the Node API. Never put it in React code or a `VITE_`
-environment variable.
-
-## 5. Install and run
-
-From the project directory:
+## Install
 
 ```bash
 npm ci
 npm run dev
 ```
 
-`npm run dev` now starts the API without Node watch mode, preventing development file-watcher restarts from interrupting bug submissions. The Vite frontend still supports hot module replacement. To intentionally auto-restart the API while editing files under `server/`, use:
+Frontend: `http://localhost:5173`
+
+API health: `http://localhost:3001/api/health`
+
+## Environment
+
+Copy `.env.example` to `.env` and replace all placeholders. Generate `COOKIE_SECRET` with:
 
 ```bash
-npm run dev:watch
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Open:
+## Firestore
+
+Publish `firestore.rules`. Browser access is denied; the Node API uses the Firebase service account.
+
+## Cloudflare R2 image attachments
+
+Create a private R2 bucket and a bucket-scoped **Object Read & Write** account API token. Add the R2 values shown in `.env.example`.
+
+Apply `r2-cors.example.json` to the bucket. It already includes `http://localhost:5173`, `https://towereclipse.com`, and `https://www.towereclipse.com`. Origins must match exactly and must not include a trailing slash or path.
+
+Images are stored under report-specific object keys. Firestore stores attachment metadata. The actual R2 object remains until a developer removes the attachment/report or an R2 lifecycle rule deletes it. Presigned view URLs are temporary and are regenerated when the report is loaded.
+
+When images are selected during report creation, the report stays hidden as an upload draft. It becomes visible only after every selected image has uploaded and been verified. If any image fails, the API removes the draft and any images that already reached R2. Bug detail pages include an image viewer; select a thumbnail to enlarge it.
+
+Supported images:
 
 ```text
-http://localhost:5173
+png jpg jpeg
 ```
 
-Both processes run together:
+Default limits:
 
 ```text
-Vite frontend: http://localhost:5173
-Node API:      http://localhost:3001
+25 MB per file
+10 images per report
+10-minute upload URL
+15-minute download URL
 ```
 
-API health check:
+## Attachment permissions
 
 ```text
-http://localhost:3001/api/health
+QA:      own pending reports
+QA Lead: non-terminal reports
+Dev:     every report, including terminal reports
 ```
 
-Expected response:
+QA Leads remain comments-only after a report becomes terminal. Only developers can reopen terminal reports.
 
-```json
-{
-  "ok": true
-}
-```
-=======
-Roblox statistics endpoint:
+## Pages
 
 ```text
-http://localhost:3001/api/roblox/stats
-```
-
-## Dynamic dictionaries
-
-A user with the exact `dev` website role can open `/admin` and manage:
-
-```text
-Statuses
-Versions
-Priorities
-Categories
-Types
-Devices
-```
-
-## Important files
-
-```text
-.env.example                 safe environment template
-firestore.rules              deny-all browser Firestore rules
-server/firebase.mjs          Firebase Admin initialization
-server/auth-context.mjs      Discord-session API authorization
-server/bug-routes.mjs        report, approval, comments, notes API
-server/dictionaries.mjs      dynamic dictionary API and seed data
-<<<<<<< HEAD
-=======
-server/roblox-stats.mjs      Roblox public and Open Cloud analytics client
->>>>>>> origin/main
-server/index.mjs             Express and Discord OAuth routes
-src/Pages/Bugs.tsx           report table
-src/Pages/NewBug.tsx         report editor
-src/Pages/BugDetails.tsx     report workflow/details
-src/Pages/Admin.tsx          developer-only dictionaries
+/bugs
+/bugs/new
+/bugs/:id
+/admin
+/login
 ```

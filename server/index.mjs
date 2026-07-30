@@ -94,12 +94,20 @@ app.use(
         formAction: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        connectSrc: ["'self'"],
+        connectSrc: [
+          "'self'",
+          ...(config.r2 ? [config.r2.endpointOrigin] : []),
+        ],
         imgSrc: [
           "'self'",
           "data:",
           "https://cdn.discordapp.com",
           "https://media.discordapp.net",
+          ...(config.r2 ? [config.r2.endpointOrigin] : []),
+        ],
+        mediaSrc: [
+          "'self'",
+          ...(config.r2 ? [config.r2.endpointOrigin] : []),
         ],
         fontSrc: ["'self'", "data:"],
       },
@@ -199,6 +207,7 @@ app.get("/api/health", (_request, response) => {
   response.status(failed ? 503 : 200).json({
     ok: !failed,
     firestore: firestoreState,
+    r2: config.r2 ? "configured" : "disabled",
     ...(failed && config.production === false
       ? { firestoreError: firestoreInitializationError?.message ?? "Unknown error" }
       : {}),
@@ -435,5 +444,6 @@ app.use((error, _request, response, _next) => {
 app.listen(config.port, "0.0.0.0", () => {
   console.log(`Discord authentication API listening on port ${config.port}.`);
   console.log(`Frontend origin: ${config.appOrigin}`);
+  console.log(`R2 attachments: ${config.r2 ? `enabled (${config.r2.bucket})` : "disabled"}`);
   console.log(`Register this exact Discord OAuth redirect: ${config.discord.redirectUri}`);
 });

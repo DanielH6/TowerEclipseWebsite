@@ -17,7 +17,8 @@ const emptyFilters: BugFilters = {
   device: "",
 };
 
-function formatDate(value: string): string {
+function formatDate(value: string | null): string {
+  if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -159,6 +160,7 @@ export default function BugsPage() {
               <th>Type</th>
               <th>Discord username</th>
               <th>Device</th>
+              <th>Attachments</th>
               <th>Comments</th>
               <th>Developer notes</th>
               <th>Submitted</th>
@@ -166,9 +168,9 @@ export default function BugsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={12} className="table-message">Loading reports…</td></tr>
+              <tr><td colSpan={13} className="table-message">Loading reports…</td></tr>
             ) : reports.length === 0 ? (
-              <tr><td colSpan={12} className="table-message">No bug reports match these filters.</td></tr>
+              <tr><td colSpan={13} className="table-message">No bug reports match these filters.</td></tr>
             ) : (
               reports.map((savedReport) => {
                 const report = synchronizeReportDictionaries(savedReport, dictionaries);
@@ -195,6 +197,7 @@ export default function BugsPage() {
                     </div>
                   </td>
                   <td>{report.device.label}</td>
+                  <td>{report.attachmentsCount}</td>
                   <td>{report.commentsCount}</td>
                   <td>{report.developerNotesCount}</td>
                   <td className="date-cell">{formatDate(report.submittedAt)}</td>

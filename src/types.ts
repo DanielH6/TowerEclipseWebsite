@@ -92,12 +92,40 @@ export interface BugReport {
   type: DictionarySnapshot;
   device: DictionarySnapshot;
   reporter: ActorSnapshot;
-  submittedAt: string;
+  submissionState?: "uploading" | "submitted";
+  expectedAttachments?: number;
+  submittedAt: string | null;
   approval: ApprovalInfo;
   commentsCount: number;
   developerNotesCount: number;
+  attachmentsCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AttachmentPolicy {
+  enabled: boolean;
+  maxFileSizeBytes: number;
+  maxFilesPerReport: number;
+  uploadUrlTtlSeconds: number;
+  downloadUrlTtlSeconds: number;
+  allowedExtensions: string[];
+}
+
+export interface BugAttachment {
+  id: string;
+  originalName: string;
+  contentType: string;
+  contentDisposition: string;
+  previewKind: "image" | "video" | "file";
+  declaredSize: number;
+  size: number;
+  status: "ready";
+  uploader: ActorSnapshot;
+  createdAt: string;
+  uploadedAt: string | null;
+  etag: string | null;
+  downloadUrl: string | null;
 }
 
 export interface BugComment {
@@ -122,5 +150,7 @@ export interface BugDetailsResponse {
   report: BugReport;
   comments: BugComment[];
   developerNotes: DeveloperNote[];
+  attachments: BugAttachment[];
+  attachmentPolicy: AttachmentPolicy;
   activity: ActivityEvent[];
 }
