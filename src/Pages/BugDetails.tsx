@@ -5,16 +5,24 @@ import {
   addDeveloperNote,
   approveBug,
   deleteBug,
+  deleteBugAttachment,
   loadBug,
   loadDictionaries,
   rejectBug,
   updateBug,
+  uploadBugAttachment,
 } from "../api";
 import { useAuth } from "../AuthContext";
 import UserAvatar from "../Components/UserAvatar";
 import { synchronizeReportDictionaries } from "../dictionary-sync";
+import {
+  attachmentAccept,
+  formatFileSize,
+  mergeSelectedFiles,
+} from "../attachments";
 import type {
   ActorSnapshot,
+  BugAttachment,
   BugDetailsResponse,
   Dictionaries,
   DictionaryEntry,
@@ -105,6 +113,9 @@ export default function BugDetailsPage() {
   const [commentBody, setCommentBody] = useState("");
   const [developerNoteBody, setDeveloperNoteBody] = useState("");
   const [approvalComment, setApprovalComment] = useState("");
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [viewerAttachment, setViewerAttachment] = useState<BugAttachment | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,6 +176,22 @@ export default function BugDetailsPage() {
     window.addEventListener("focus", refreshCurrentReport);
     return () => window.removeEventListener("focus", refreshCurrentReport);
   }, [reportId]);
+
+  useEffect(() => {
+    if (!viewerAttachment) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setViewerAttachment(null);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [viewerAttachment]);
 
   const canEdit = useMemo(() => {
     if (!auth || !details) return false;
@@ -380,6 +407,176 @@ export default function BugDetailsPage() {
         </aside>
       </div>
 
+      <article className="panel-card attachments-panel">
+        <div className="attachment-section-heading">
+          <div>
+            <h3>ATTACHMENTS ({details.attachments.length})</h3>
+            {details.attachmentPolicy.enabled ? (
+              <small>
+                PNG, JPG, or JPEG only. Up to {details.attachmentPolicy.maxFilesPerReport} images, {formatFileSize(details.attachmentPolicy.maxFileSizeBytes)} each.
+              </small>
+            ) : (
+              <small>R2 image storage is not configured on the API.</small>
+            )}
+          </div>
+
+          {canEdit && details.attachmentPolicy.enabled && (
+            <label className="attachment-select-button">
+              ADD IMAGES
+              <input
+                type="file"
+                multiple
+                disabled={working}
+                accept={attachmentAccept(details.attachmentPolicy)}
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  event.target.value = "";
+                  try {
+                    setAttachmentFiles((current) => mergeSelectedFiles(
+                      current,
+                      selected,
+                      details.attachmentPolicy,
+                      details.attachments.length,
+                    ));
+                    setError(null);
+                  } catch (reason) {
+                    setError(reason instanceof Error ? reason.message : "Could not select those images.");
+                  }
+                }}
+              />
+            </label>
+          )}
+        </div>
+
+        {details.attachments.length === 0 && (
+          <p className="empty-copy">No images have been attached.</p>
+        )}
+
+        {details.attachments.length > 0 && (
+          <div className="attachment-grid">
+            {details.attachments.map((attachment) => (
+              <article className="attachment-card" key={attachment.id}>
+                <button
+                  type="button"
+                  className="attachment-preview attachment-preview-button"
+                  disabled={!attachment.downloadUrl}
+                  onClick={() => setViewerAttachment(attachment)}
+                  aria-label={`Enlarge ${attachment.originalName}`}
+                >
+                  {attachment.previewKind === "image" && attachment.downloadUrl ? (
+                    <>
+                      <img src={attachment.downloadUrl} alt={attachment.originalName} loading="lazy" />
+                      <span className="attachment-preview-hint">CLICK TO ENLARGE</span>
+                    </>
+                  ) : (
+                    <span className="attachment-file-mark">IMAGE</span>
+                  )}
+                </button>
+                <div className="attachment-card-copy">
+                  <strong title={attachment.originalName}>{attachment.originalName}</strong>
+                  <small>{formatFileSize(attachment.size)} · {attachment.contentType}</small>
+                  <small>Uploaded by {attachment.uploader.displayName} on {formatDate(attachment.uploadedAt || attachment.createdAt)}</small>
+                </div>
+                <div className="attachment-card-actions">
+                  {attachment.downloadUrl ? (
+                    <a className="ghost-link" href={attachment.downloadUrl} target="_blank" rel="noreferrer">
+                      OPEN
+                    </a>
+                  ) : (
+                    <span className="attachment-expired">Refresh to renew link</span>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="danger-action"
+                      disabled={working}
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${attachment.originalName}?`)) return;
+                        perform(
+                          () => deleteBugAttachment(reportId, attachment.id, auth.csrfToken),
+                          () => setDetails((current) => current ? {
+                            ...current,
+                            attachments: current.attachments.filter((item) => item.id !== attachment.id),
+                            report: {
+                              ...current.report,
+                              attachmentsCount: Math.max(0, current.report.attachmentsCount - 1),
+                            },
+                          } : current),
+                        );
+                      }}
+                    >
+                      REMOVE
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {canEdit && details.attachmentPolicy.enabled && attachmentFiles.length > 0 && (
+          <div className="attachment-upload-queue">
+            <div className="selected-attachment-list">
+              {attachmentFiles.map((file, index) => (
+                <div className="selected-attachment" key={`${file.name}-${file.size}-${file.lastModified}`}>
+                  <div>
+                    <strong>{file.name}</strong>
+                    <small>{formatFileSize(file.size)}</small>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={working}
+                    onClick={() => setAttachmentFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}
+                  >
+                    REMOVE
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={working}
+              onClick={async () => {
+                setWorking(true);
+                setError(null);
+                try {
+                  const uploaded: BugAttachment[] = [];
+                  for (let index = 0; index < attachmentFiles.length; index += 1) {
+                    const file = attachmentFiles[index];
+                    if (!file) continue;
+                    setUploadMessage(`Uploading image ${index + 1} of ${attachmentFiles.length}: ${file.name}`);
+                    uploaded.push(await uploadBugAttachment(reportId, file, auth.csrfToken));
+                  }
+                  setAttachmentFiles([]);
+                  setDetails((current) => current ? {
+                    ...current,
+                    attachments: [...current.attachments, ...uploaded],
+                    report: {
+                      ...current.report,
+                      attachmentsCount: current.report.attachmentsCount + uploaded.length,
+                    },
+                  } : current);
+                  setWorking(false);
+                  setUploadMessage(null);
+                  void refresh().catch((reason: unknown) => {
+                    setError(reason instanceof Error ? reason.message : "Could not refresh attachments.");
+                  });
+                } catch (reason) {
+                  setError(reason instanceof Error ? reason.message : "Could not upload the images.");
+                  setWorking(false);
+                  setUploadMessage(null);
+                }
+              }}
+            >
+              UPLOAD {attachmentFiles.length} {attachmentFiles.length === 1 ? "IMAGE" : "IMAGES"}
+            </button>
+          </div>
+        )}
+
+        {uploadMessage && <div className="upload-status" role="status">{uploadMessage}</div>}
+      </article>
+
       <div className="discussion-grid">
         <article className="panel-card discussion-panel" id="bug-comments">
           <h3>COMMENTS ({details.comments.length})</h3>
@@ -478,6 +675,51 @@ export default function BugDetailsPage() {
           ))}
         </div>
       </article>
+
+      {viewerAttachment?.downloadUrl && (
+        <div
+          className="attachment-viewer-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setViewerAttachment(null);
+          }}
+        >
+          <section
+            className="attachment-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Attachment viewer: ${viewerAttachment.originalName}`}
+          >
+            <div className="attachment-viewer-toolbar">
+              <div>
+                <strong>{viewerAttachment.originalName}</strong>
+                <small>{formatFileSize(viewerAttachment.size)}</small>
+              </div>
+              <div className="attachment-viewer-actions">
+                <a
+                  className="ghost-link"
+                  href={viewerAttachment.downloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  OPEN ORIGINAL
+                </a>
+                <button
+                  type="button"
+                  className="attachment-viewer-close"
+                  onClick={() => setViewerAttachment(null)}
+                  aria-label="Close attachment viewer"
+                >
+                  CLOSE
+                </button>
+              </div>
+            </div>
+            <div className="attachment-viewer-canvas">
+              <img src={viewerAttachment.downloadUrl} alt={viewerAttachment.originalName} />
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
