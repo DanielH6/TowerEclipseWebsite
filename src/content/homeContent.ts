@@ -13,8 +13,7 @@ export const HOME_INTRO = {
   robloxUrl: "https://www.roblox.com/games/80787635946901/Tower-Eclipse",
 };
 
-// Edit the titles and paragraph text here. Put the matching images in
-// public/home, or change imageSrc if you prefer different file names.
+// can edit like the content and images here, might change to videos later but idk how to do that so yeah
 export const HOME_INFO_SECTIONS: HomeInfoSection[] = [
   {
     title: "WHO ARE WE?",
