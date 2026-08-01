@@ -8,7 +8,7 @@ export interface HomeInfoSection {
 export const HOME_INTRO = {
   kicker: "ROBLOX TOWER DEFENSE",
   title: "TOWER ECLIPSE",
-  description: "Build your defense, adapt your strategy, and hold the line against the eclipse.",
+  description: "Created by experienced Tower Defense players for Tower Defense players.",
   buttonLabel: "PLAY ON ROBLOX",
   robloxUrl: "https://www.roblox.com/games/80787635946901/Tower-Eclipse",
 };

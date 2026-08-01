@@ -121,7 +121,10 @@ export async function getCurrentGuildMember(accessToken) {
 export function mapDiscordRole(roleIds) {
   const roleSet = new Set(roleIds);
 
-  if (roleSet.has(config.discord.roleIds.dev)) {
+  if (
+    roleSet.has(config.discord.roleIds.owner) ||
+    roleSet.has(config.discord.roleIds.dev)
+  ) {
     return "dev";
   }
 
