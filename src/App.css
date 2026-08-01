@@ -448,9 +448,14 @@
 }
 
 @media (max-width: 440px) {
-  .top-navigation a:nth-child(2),
-  .top-navigation a:nth-child(3) {
-    display: none;
+  .top-navigation {
+    gap: 4px;
+  }
+
+  .top-navigation a {
+    padding-inline: 8px;
+    font-size: 0.54rem;
+    letter-spacing: 0.12em;
   }
 
   .hero-header > h1 {

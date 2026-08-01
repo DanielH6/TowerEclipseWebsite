@@ -158,14 +158,21 @@ function Footer() {
 }
 
 function PageShell({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  const isAboutPage = pathname === "/about";
+
   return (
     <main className="background-page">
       <div className="site-frame">
         <header className="hero-header">
           <Navigation />
-          <h1>
-            TOWER <span className="hero-title-accent">ECLIPSE</span>
-          </h1>
+          {isAboutPage ? (
+            <h1>ABOUT US</h1>
+          ) : (
+            <h1>
+              TOWER <span className="hero-title-accent">ECLIPSE</span>
+            </h1>
+          )}
           <Stats />
         </header>
         {children}
