@@ -6,9 +6,11 @@ import type { AppRole } from "./types";
 export default function ProtectedRoute({
   children,
   role,
+  roles,
 }: {
   children: ReactNode;
   role?: AppRole;
+  roles?: AppRole[];
 }) {
   const { loading, auth } = useAuth();
   const location = useLocation();
@@ -26,6 +28,10 @@ export default function ProtectedRoute({
   }
 
   if (role && auth.user.role !== role) {
+    return <Navigate to="/bugs" replace />;
+  }
+
+  if (roles && !roles.includes(auth.user.role)) {
     return <Navigate to="/bugs" replace />;
   }
 

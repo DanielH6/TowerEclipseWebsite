@@ -72,6 +72,10 @@
   text-shadow: 0 3px 18px rgba(0, 0, 0, 0.78);
 }
 
+.hero-title-accent {
+  color: #8dd9ff;
+}
+
 .stats-row {
   position: relative;
   display: grid;
@@ -297,21 +301,6 @@
   letter-spacing: 0.12em;
 }
 
-.role-panel strong {
-  padding: 7px 10px;
-  color: #fff;
-  background: #047857;
-  letter-spacing: 0.03em;
-}
-
-.role-panel strong[data-role="leadqa"] {
-  background: #7c3aed;
-}
-
-.role-panel strong[data-role="dev"] {
-  background: #0369a1;
-}
-
 .button-row {
   margin-top: 25px;
   display: flex;
@@ -459,9 +448,14 @@
 }
 
 @media (max-width: 440px) {
-  .top-navigation a:nth-child(2),
-  .top-navigation a:nth-child(3) {
-    display: none;
+  .top-navigation {
+    gap: 4px;
+  }
+
+  .top-navigation a {
+    padding-inline: 8px;
+    font-size: 0.54rem;
+    letter-spacing: 0.12em;
   }
 
   .hero-header > h1 {

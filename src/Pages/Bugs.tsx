@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "../router";
 import { loadBugs, loadDictionaries } from "../api";
+import { useAuth } from "../AuthContext";
+import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
 import { synchronizeReportDictionaries } from "../dictionary-sync";
+import { isBugStaff } from "../roles";
 import type { BugFilters } from "../api";
 import type { BugReport, Dictionaries, DictionaryName, DictionarySnapshot } from "../types";
 import "./Bugs.css";
@@ -65,6 +68,7 @@ function FilterSelect({
 }
 
 export default function BugsPage() {
+  const { auth, loading: authLoading } = useAuth();
   const [reports, setReports] = useState<BugReport[]>([]);
   const [dictionaries, setDictionaries] = useState<Dictionaries | null>(null);
   const [filters, setFilters] = useState<BugFilters>(emptyFilters);
@@ -98,6 +102,8 @@ export default function BugsPage() {
     setFilters((current) => ({ ...current, [name]: value }));
   }
 
+  const canCreateReports = isBugStaff(auth?.user.role);
+
   return (
     <section className="workspace-page bugs-page">
       <div className="workspace-header">
@@ -106,7 +112,11 @@ export default function BugsPage() {
           <h2>BUG REPORTS</h2>
           <p>{reports.length} report{reports.length === 1 ? "" : "s"} in the current view.</p>
         </div>
-        <Link className="primary-action" to="/bugs/new">NEW BUG REPORT</Link>
+        {!authLoading && canCreateReports ? (
+          <Link className="primary-action" to="/bugs/new">NEW BUG REPORT</Link>
+        ) : !authLoading ? (
+          <span className="read-only-label">READ-ONLY VIEW</span>
+        ) : null}
       </div>
 
       <form
@@ -191,7 +201,10 @@ export default function BugsPage() {
                         size={34}
                       />
                       <span className="reporter-copy">
-                        <span className="reporter-name">{report.reporter.displayName}</span>
+                        <span className="reporter-name">
+                          {report.reporter.displayName}
+                          <RoleBadge role={report.reporter.role} />
+                        </span>
                         <span className="reporter-handle">@{report.reporter.username}</span>
                       </span>
                     </div>

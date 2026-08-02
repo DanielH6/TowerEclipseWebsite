@@ -33,8 +33,12 @@ function integer(name, fallback, minimum, maximum) {
   return value;
 }
 
-function snowflake(name) {
-  const value = required(name);
+function snowflake(name, fallback = null) {
+  const value = process.env[name]?.trim() || fallback;
+
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
 
   if (!/^\d{15,22}$/.test(value)) {
     throw new Error(`${name} must be a Discord ID containing only digits.`);
@@ -107,13 +111,14 @@ if (production && !redirectUri.startsWith("https://")) {
 }
 
 const roleIds = {
+  owner: snowflake("DISCORD_ROLE_OWNER_ID", "1338054578897420288"),
   leadqa: snowflake("DISCORD_ROLE_LEADQA_ID"),
   qa: snowflake("DISCORD_ROLE_QA_ID"),
   dev: snowflake("DISCORD_ROLE_DEV_ID"),
 };
 
-if (new Set(Object.values(roleIds)).size !== 3) {
-  throw new Error("The three Discord role IDs must be different.");
+if (new Set(Object.values(roleIds)).size !== 4) {
+  throw new Error("Discord role IDs must be different.");
 }
 
 const cookieSecret = required("COOKIE_SECRET");

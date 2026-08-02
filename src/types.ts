@@ -1,4 +1,4 @@
-export type AppRole = "leadqa" | "qa" | "dev";
+export type AppRole = "member" | "leadqa" | "qa" | "dev";
 
 export interface AuthenticatedUser {
   id: string;

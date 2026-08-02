@@ -9,6 +9,7 @@ import {
   uploadBugAttachment,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
 import {
   attachmentAccept,
@@ -111,7 +112,10 @@ export default function NewBugPage() {
           {auth && (
             <div className="report-submitter">
               <UserAvatar avatarUrl={auth.user.avatarUrl} displayName={auth.user.displayName} size={42} />
-              <p>The reporter will be recorded automatically as {auth.user.displayName}.</p>
+              <p>
+                The reporter will be recorded automatically as {auth.user.displayName}{" "}
+                <RoleBadge role={auth.user.role} />.
+              </p>
             </div>
           )}
         </div>

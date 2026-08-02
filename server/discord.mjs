@@ -121,7 +121,10 @@ export async function getCurrentGuildMember(accessToken) {
 export function mapDiscordRole(roleIds) {
   const roleSet = new Set(roleIds);
 
-  if (roleSet.has(config.discord.roleIds.dev)) {
+  if (
+    roleSet.has(config.discord.roleIds.owner) ||
+    roleSet.has(config.discord.roleIds.dev)
+  ) {
     return "dev";
   }
 
@@ -133,11 +136,13 @@ export function mapDiscordRole(roleIds) {
     return "qa";
   }
 
-  return null;
+  return "member";
 }
 
 export function roleLabel(role) {
   switch (role) {
+    case "member":
+      return "Member";
     case "leadqa":
       return "QA Lead";
     case "qa":
@@ -188,14 +193,6 @@ export async function refreshDiscordSession(session, force = false) {
   ]);
 
   const role = mapDiscordRole(member.roles ?? []);
-
-  if (!role) {
-    throw new DiscordApiError(
-      "No permitted Discord role is assigned.",
-      403,
-      "missing_role",
-    );
-  }
 
   session.discordUser = user;
   session.discordMember = member;

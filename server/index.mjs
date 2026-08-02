@@ -282,11 +282,6 @@ app.get(
 
       const role = mapDiscordRole(discordMember.roles ?? []);
 
-      if (!role) {
-        redirectWithError(response, "missing_role");
-        return;
-      }
-
       const session = createSession({
         discordUser,
         discordMember,

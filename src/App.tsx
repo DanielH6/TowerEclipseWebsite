@@ -12,6 +12,7 @@ import BugsPage from "./Pages/Bugs";
 import NewBugPage from "./Pages/NewBug";
 import BugDetailsPage from "./Pages/BugDetails";
 import AdminPage from "./Pages/Admin";
+import { BUG_STAFF_ROLES } from "./roles";
 import "./App.css";
 
 function Navigation() {
@@ -157,12 +158,21 @@ function Footer() {
 }
 
 function PageShell({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  const isAboutPage = pathname === "/about";
+
   return (
     <main className="background-page">
       <div className="site-frame">
         <header className="hero-header">
           <Navigation />
-          <h1>TOWER ECLIPSE</h1>
+          {isAboutPage ? (
+            <h1>ABOUT US</h1>
+          ) : (
+            <h1>
+              TOWER <span className="hero-title-accent">ECLIPSE</span>
+            </h1>
+          )}
           <Stats />
         </header>
         {children}
@@ -181,15 +191,17 @@ function AppRoutes() {
   else if (pathname === "/news") element = <News />;
   else if (pathname === "/about") element = <AboutUs />;
   else if (pathname === "/login") element = <Login />;
-  else if (pathname === "/bugs") element = <ProtectedRoute><BugsPage /></ProtectedRoute>;
-  else if (pathname === "/bugs/new") element = <ProtectedRoute><NewBugPage /></ProtectedRoute>;
+  else if (pathname === "/bugs") element = <BugsPage />;
+  else if (pathname === "/bugs/new") {
+    element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;
+  }
   else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
   else {
     const bugMatch = pathname.match(/^\/bugs\/([^/]+)$/);
     const reportId = bugMatch?.[1];
     if (reportId) {
       params = { reportId: decodeURIComponent(reportId) };
-      element = <ProtectedRoute><BugDetailsPage /></ProtectedRoute>;
+      element = <BugDetailsPage />;
     } else {
       element = <Navigate to="/" replace />;
     }

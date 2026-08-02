@@ -246,8 +246,6 @@ export function dictionarySnapshot(entry) {
 export function createDictionaryRouter() {
   const router = express.Router();
 
-  router.use(requireAuth);
-
   router.get("/", async (_request, response, next) => {
     try {
       const result = {};
