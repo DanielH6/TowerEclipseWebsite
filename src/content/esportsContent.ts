@@ -7,5 +7,5 @@ export const ESPORTS_CONTENT = {
   emptyDescription:
     "No public tournaments match these filters yet. Check back when the next Eclipse event is announced.",
   managerDescription:
-    "Create concurrent tournaments, configure their formats, seed entrants, record results, and publish every update from one control room.",
+    "Create concurrent tournaments, configure their formats, rate entrants by ISR, record results, and publish every update from one control room.",
 } as const;

@@ -182,7 +182,7 @@ export interface TournamentParticipant {
   id: string;
   displayName: string;
   robloxUsername: string;
-  seed: number | null;
+  isr: number;
   status: TournamentParticipantStatus;
   groupId: string | null;
   pointsAdjustment: number;
@@ -218,7 +218,7 @@ export interface TournamentStandingRow {
   participantId: string;
   displayName: string;
   robloxUsername: string;
-  seed: number | null;
+  isr: number;
   played: number;
   wins: number;
   draws: number;
@@ -255,6 +255,15 @@ export interface TournamentLogEntry {
   recordedBy: string | null;
 }
 
+export interface TournamentBanner {
+  id: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  uploadedAt: string;
+  uploader: ActorSnapshot | null;
+}
+
 export interface Tournament {
   id: string;
   slug: string;
@@ -274,6 +283,8 @@ export interface Tournament {
   registrationStatus: TournamentRegistrationStatus;
   published: boolean;
   featured: boolean;
+  banner: TournamentBanner | null;
+  bannerImageUrl: string | null;
   settings: TournamentSettings;
   participants: TournamentParticipant[];
   matches: TournamentMatch[];

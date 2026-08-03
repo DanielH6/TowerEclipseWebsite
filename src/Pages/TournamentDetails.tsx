@@ -68,7 +68,9 @@ export default function TournamentDetailsPage() {
     );
   }
 
-  const confirmed = tournament.participants.filter((participant) => participant.status === "confirmed");
+  const confirmed = tournament.participants
+    .filter((participant) => participant.status === "confirmed")
+    .sort((left, right) => right.isr - left.isr || left.displayName.localeCompare(right.displayName));
   const knockoutSlots = tournament.standings.reduce(
     (total, group) => total + Math.min(group.rows.length, tournament.settings.qualifiersPerGroup),
     0,
@@ -77,6 +79,9 @@ export default function TournamentDetailsPage() {
   return (
     <section className="esports-page tournament-detail-page">
       <div className={`tournament-detail-hero tournament-detail-hero-${tournament.status}`}>
+        {tournament.bannerImageUrl && (
+          <img className="tournament-detail-banner-image" src={tournament.bannerImageUrl} alt="" />
+        )}
         <div className="tournament-detail-breadcrumbs">
           <Link to="/esports">ESPORTS</Link><span>/</span><strong>{tournament.name}</strong>
         </div>
@@ -138,7 +143,7 @@ export default function TournamentDetailsPage() {
         <section className="tournament-content-section" id="groups">
           <header className="tournament-section-heading">
             <div><p className="esports-eyebrow">STAGE 01</p><h2>GROUP STANDINGS</h2></div>
-            <p>Ranked by points, score difference, score scored, wins, head-to-head, then seed.</p>
+            <p>Ranked by points, score difference, score scored, wins, head-to-head, then ISR.</p>
           </header>
           <TournamentStandings
             standings={tournament.standings}
@@ -171,7 +176,7 @@ export default function TournamentDetailsPage() {
               <ol className="tournament-roster">
                 {confirmed.map((participant) => (
                   <li key={participant.id}>
-                    <span>{participant.seed ?? "—"}</span>
+                    <span>ISR {participant.isr}</span>
                     <div><strong>{participant.displayName}</strong>{participant.robloxUsername && <small>@{participant.robloxUsername}</small>}</div>
                     <em>{participant.groupId ? participant.groupId.replace("group-", "GROUP ").toUpperCase() : "UNASSIGNED"}</em>
                     {participant.advanced && <b>ADVANCED</b>}
