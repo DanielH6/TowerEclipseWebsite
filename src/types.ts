@@ -154,3 +154,168 @@ export interface BugDetailsResponse {
   attachmentPolicy: AttachmentPolicy;
   activity: ActivityEvent[];
 }
+
+export type TournamentStatus = "draft" | "scheduled" | "live" | "completed" | "archived";
+export type TournamentRegistrationStatus = "open" | "closed" | "invite_only";
+export type TournamentParticipantStatus = "confirmed" | "waitlist" | "withdrawn";
+export type TournamentMatchStatus = "scheduled" | "live" | "completed";
+export type TournamentStage = "group" | "knockout";
+
+export interface TournamentSettings {
+  participantCap: number;
+  groupCount: number;
+  qualifiersPerGroup: number;
+  pointsWin: number;
+  pointsDraw: number;
+  pointsLoss: number;
+  allowDraws: boolean;
+  autoAdvance: boolean;
+  groupBestOf: number;
+  knockoutBestOf: number;
+  thirdPlaceMatch: boolean;
+  checkInRequired: boolean;
+  seedingMode: "random" | "balanced" | "manual";
+  tiebreakers: string[];
+}
+
+export interface TournamentParticipant {
+  id: string;
+  displayName: string;
+  robloxUsername: string;
+  seed: number | null;
+  status: TournamentParticipantStatus;
+  groupId: string | null;
+  pointsAdjustment: number;
+  advanced: boolean;
+  eliminated: boolean;
+  checkedIn: boolean;
+}
+
+export interface TournamentMatch {
+  id: string;
+  stage: TournamentStage;
+  groupId: string | null;
+  round: number;
+  bracketPosition: number;
+  label: string;
+  participantAId: string | null;
+  participantBId: string | null;
+  scoreA: number | null;
+  scoreB: number | null;
+  winnerId: string | null;
+  status: TournamentMatchStatus;
+  bestOf: number;
+  scheduledAt: string | null;
+  completedAt: string | null;
+  notes: string;
+  isBye: boolean;
+  isThirdPlace?: boolean;
+  sourceMatchAId: string | null;
+  sourceMatchBId: string | null;
+}
+
+export interface TournamentStandingRow {
+  participantId: string;
+  displayName: string;
+  robloxUsername: string;
+  seed: number | null;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  scoreFor: number;
+  scoreAgainst: number;
+  scoreDifference: number;
+  pointsAdjustment: number;
+  points: number;
+  rank: number;
+  qualified: boolean;
+}
+
+export interface TournamentGroupStanding {
+  id: string;
+  label: string;
+  rows: TournamentStandingRow[];
+  totalMatches: number;
+  expectedMatches: number;
+  completedMatches: number;
+  matchesComplete: boolean;
+}
+
+export interface TournamentLogEntry {
+  id: string;
+  type: "tournament_created" | "schedule_generated" | "match_result" | "advancement" | "points_adjustment" | "announcement";
+  headline: string;
+  detail: string;
+  stage: TournamentStage | null;
+  matchId: string | null;
+  participantIds: string[];
+  score: { a: number; b: number } | null;
+  createdAt: string;
+  recordedBy: string | null;
+}
+
+export interface Tournament {
+  id: string;
+  slug: string;
+  name: string;
+  tagline: string;
+  description: string;
+  rules: string;
+  hostName: string;
+  region: string;
+  timezone: string;
+  contact: string;
+  registrationUrl: string;
+  streamUrl: string;
+  startsAt: string;
+  endsAt: string;
+  status: TournamentStatus;
+  registrationStatus: TournamentRegistrationStatus;
+  published: boolean;
+  featured: boolean;
+  settings: TournamentSettings;
+  participants: TournamentParticipant[];
+  matches: TournamentMatch[];
+  log: TournamentLogEntry[];
+  championId: string | null;
+  groupStageGeneratedAt: string | null;
+  knockoutGeneratedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  standings: TournamentGroupStanding[];
+  participantCount: number;
+  completedMatches: number;
+  totalMatches: number;
+  groupStageComplete: boolean;
+}
+
+export interface TournamentPreviewMatch {
+  id: string;
+  label: string;
+  participantA: string;
+  participantB: string;
+  scoreA: number | null;
+  scoreB: number | null;
+  status: TournamentMatchStatus;
+}
+
+export interface TournamentPreviewGroup {
+  id: string;
+  label: string;
+  rows: Array<{
+    participantId: string;
+    displayName: string;
+    rank: number;
+    points: number;
+  }>;
+}
+
+export type TournamentSummary = Omit<
+  Tournament,
+  "participants" | "matches" | "log" | "standings" | "rules"
+> & {
+  previewMatches: TournamentPreviewMatch[];
+  previewGroups: TournamentPreviewGroup[];
+  recentResult: TournamentLogEntry | null;
+};

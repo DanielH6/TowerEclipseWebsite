@@ -1,0 +1,211 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  addParticipants,
+  adjustParticipantPoints,
+  buildStandings,
+  createTournament,
+  generateGroupSchedule,
+  generateKnockout,
+  randomizeGroups,
+  toAdminTournament,
+  toPublicTournament,
+  updateParticipant,
+  updateMatch,
+} from "./tournament-domain.mjs";
+
+function ids(prefix = "id") {
+  let value = 0;
+  return () => `${prefix}-${++value}`;
+}
+
+function makeTournament(settings = {}) {
+  const idFactory = ids();
+  const tournament = createTournament({
+    name: "Eclipse Open",
+    slug: "eclipse-open",
+    startsAt: "2026-08-10T00:00:00.000Z",
+    endsAt: "2026-08-17T00:00:00.000Z",
+    hostName: "Eclipse Esports",
+    settings,
+  }, {
+    id: "tournament-1",
+    idFactory,
+    now: "2026-08-03T00:00:00.000Z",
+  });
+  return { tournament, idFactory };
+}
+
+function completeMatch(tournament, matchId, scoreA, scoreB, idFactory) {
+  return updateMatch(tournament, matchId, {
+    status: "completed",
+    scoreA,
+    scoreB,
+  }, {
+    idFactory,
+    now: "2026-08-11T00:00:00.000Z",
+  });
+}
+
+test("builds a scalable 32-player group stage and auto-advances the top two", () => {
+  const setup = makeTournament({
+    participantCap: 32,
+    groupCount: 8,
+    qualifiersPerGroup: 2,
+    autoAdvance: true,
+  });
+  let tournament = addParticipants(
+    setup.tournament,
+    Array.from({ length: 32 }, (_, index) => ({
+      displayName: `Player ${String(index + 1).padStart(2, "0")}`,
+      robloxUsername: `RobloxPlayer${index + 1}`,
+      seed: index + 1,
+    })),
+    { idFactory: setup.idFactory },
+  );
+  tournament = randomizeGroups(tournament, { random: () => 0.37 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+
+  assert.equal(tournament.participants.filter((participant) => participant.groupId).length, 32);
+  assert.deepEqual(
+    buildStandings(tournament).map((group) => group.rows.length),
+    [4, 4, 4, 4, 4, 4, 4, 4],
+  );
+  const groupMatches = tournament.matches.filter((match) => match.stage === "group");
+  assert.equal(groupMatches.length, 48);
+
+  for (const match of groupMatches) {
+    tournament = completeMatch(tournament, match.id, 2, 0, setup.idFactory);
+  }
+
+  assert.equal(tournament.participants.filter((participant) => participant.advanced).length, 16);
+  assert.equal(tournament.matches.filter((match) => match.stage === "knockout").length, 15);
+  assert.equal(tournament.knockoutGeneratedAt, "2026-08-11T00:00:00.000Z");
+});
+
+test("standings include saved results and transparent manual point adjustments", () => {
+  const setup = makeTournament({
+    participantCap: 4,
+    groupCount: 1,
+    qualifiersPerGroup: 2,
+    autoAdvance: false,
+    pointsWin: 3,
+    pointsDraw: 1,
+    pointsLoss: 0,
+  });
+  let tournament = addParticipants(setup.tournament, [
+    { displayName: "Atomic" },
+    { displayName: "Nova" },
+    { displayName: "Vanta" },
+    { displayName: "Solar" },
+  ], { idFactory: setup.idFactory });
+  tournament = randomizeGroups(tournament, { random: () => 0.5 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  const firstMatch = tournament.matches.find((match) => match.stage === "group");
+  tournament = completeMatch(tournament, firstMatch.id, 3, 1, setup.idFactory);
+  const losingParticipant = firstMatch.participantBId;
+  tournament = adjustParticipantPoints(tournament, losingParticipant, {
+    delta: 2,
+    reason: "Administrative fair-play adjustment",
+  }, { idFactory: setup.idFactory });
+
+  const rows = buildStandings(tournament)[0].rows;
+  const winner = rows.find((row) => row.participantId === firstMatch.participantAId);
+  const loser = rows.find((row) => row.participantId === losingParticipant);
+  assert.equal(winner.points, 3);
+  assert.equal(loser.points, 2);
+  assert.equal(loser.pointsAdjustment, 2);
+  assert.match(tournament.log[0].headline, /\+2 points/);
+});
+
+test("knockout winners propagate to the final and produce a champion", () => {
+  const setup = makeTournament({
+    participantCap: 4,
+    groupCount: 2,
+    qualifiersPerGroup: 2,
+    autoAdvance: false,
+  });
+  let tournament = addParticipants(setup.tournament, [
+    { displayName: "Astra" },
+    { displayName: "Blaze" },
+    { displayName: "Cipher" },
+    { displayName: "Drift" },
+  ], { idFactory: setup.idFactory });
+  tournament = randomizeGroups(tournament, { random: () => 0.25 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  for (const match of tournament.matches.filter((item) => item.stage === "group")) {
+    tournament = completeMatch(tournament, match.id, 2, 0, setup.idFactory);
+  }
+  tournament = generateKnockout(tournament, { idFactory: setup.idFactory });
+
+  const semifinals = tournament.matches.filter((match) => match.stage === "knockout" && match.round === 1);
+  assert.equal(semifinals.length, 2);
+  for (const semifinal of semifinals) {
+    tournament = completeMatch(tournament, semifinal.id, 3, 1, setup.idFactory);
+  }
+  const final = tournament.matches.find(
+    (match) => match.stage === "knockout" && match.label === "Final",
+  );
+  assert.ok(final.participantAId);
+  assert.ok(final.participantBId);
+  tournament = completeMatch(tournament, final.id, 4, 2, setup.idFactory);
+
+  assert.equal(tournament.championId, final.participantAId);
+  assert.equal(tournament.log[0].type, "match_result");
+  assert.match(tournament.log[0].headline, /4–2/);
+});
+
+test("non-power-of-two qualifiers receive byes without prematurely completing later rounds", () => {
+  const setup = makeTournament({
+    participantCap: 6,
+    groupCount: 3,
+    qualifiersPerGroup: 1,
+    autoAdvance: false,
+  });
+  let tournament = addParticipants(
+    setup.tournament,
+    Array.from({ length: 6 }, (_, index) => ({ displayName: `Entrant ${index + 1}` })),
+    { idFactory: setup.idFactory },
+  );
+  tournament = randomizeGroups(tournament, { random: () => 0.75 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  for (const match of tournament.matches.filter((item) => item.stage === "group")) {
+    tournament = completeMatch(tournament, match.id, 1, 0, setup.idFactory);
+  }
+  tournament = generateKnockout(tournament, { idFactory: setup.idFactory });
+
+  const firstRound = tournament.matches.filter((match) => match.stage === "knockout" && match.round === 1);
+  const final = tournament.matches.find((match) => match.stage === "knockout" && match.round === 2);
+  assert.equal(firstRound.filter((match) => match.isBye).length, 1);
+  assert.equal(final.status, "scheduled");
+  assert.equal(Boolean(final.participantAId) || Boolean(final.participantBId), true);
+});
+
+test("waitlist administration cannot erase group results already on the record", () => {
+  const setup = makeTournament({
+    participantCap: 4,
+    groupCount: 1,
+    qualifiersPerGroup: 2,
+    autoAdvance: false,
+  });
+  let tournament = addParticipants(setup.tournament, [
+    { displayName: "North" },
+    { displayName: "South" },
+  ], { idFactory: setup.idFactory });
+  tournament = randomizeGroups(tournament, { random: () => 0.2 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  tournament = completeMatch(tournament, tournament.matches[0].id, 1, 0, setup.idFactory);
+  const resultMatchId = tournament.matches[0].id;
+  tournament = addParticipants(tournament, [
+    { displayName: "Reserve", status: "waitlist" },
+  ], { idFactory: setup.idFactory });
+
+  assert.equal(tournament.matches.find((match) => match.id === resultMatchId)?.status, "completed");
+  const reserve = tournament.participants.find((participant) => participant.displayName === "Reserve");
+  assert.throws(
+    () => updateParticipant(tournament, reserve.id, { status: "confirmed", groupId: "group-a" }),
+    /locked after group results/,
+  );
+  assert.equal(toAdminTournament(tournament).participants.length, 3);
+  assert.equal(toPublicTournament(tournament).participants.length, 2);
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Navigate, NavLink, RouteParamsProvider, useLocation } from "./router";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { loadRobloxStats } from "./api";
@@ -15,11 +15,16 @@ import AdminPage from "./Pages/Admin";
 import { BUG_STAFF_ROLES } from "./roles";
 import "./App.css";
 
+const EsportsPage = lazy(() => import("./Pages/Esports"));
+const TournamentDetailsPage = lazy(() => import("./Pages/TournamentDetails"));
+const TournamentManagerPage = lazy(() => import("./Pages/TournamentManager"));
+
 function Navigation() {
   const { auth } = useAuth();
   const links = [
     { to: "/", label: "HOME", end: true },
     { to: "/news", label: "NEWS" },
+    { to: "/esports", label: "ESPORTS" },
     { to: "/about", label: "ABOUT US" },
     { to: "/bugs", label: "BUGS" },
   ];
@@ -189,6 +194,14 @@ function AppRoutes() {
 
   if (pathname === "/") element = <HomePage />;
   else if (pathname === "/news") element = <News />;
+  else if (pathname === "/esports") element = <EsportsPage />;
+  else if (pathname === "/esports/manage") {
+    element = <ProtectedRoute role="dev" fallbackTo="/esports"><TournamentManagerPage /></ProtectedRoute>;
+  }
+  else if (pathname === "/esports/manage/new") {
+    params = { tournamentId: "new" };
+    element = <ProtectedRoute role="dev" fallbackTo="/esports"><TournamentManagerPage /></ProtectedRoute>;
+  }
   else if (pathname === "/about") element = <AboutUs />;
   else if (pathname === "/login") element = <Login />;
   else if (pathname === "/bugs") element = <BugsPage />;
@@ -197,17 +210,37 @@ function AppRoutes() {
   }
   else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
   else {
-    const bugMatch = pathname.match(/^\/bugs\/([^/]+)$/);
-    const reportId = bugMatch?.[1];
-    if (reportId) {
-      params = { reportId: decodeURIComponent(reportId) };
-      element = <BugDetailsPage />;
+    const tournamentManagerMatch = pathname.match(/^\/esports\/manage\/([^/]+)$/);
+    const managedTournamentId = tournamentManagerMatch?.[1];
+    if (managedTournamentId) {
+      params = { tournamentId: decodeURIComponent(managedTournamentId) };
+      element = <ProtectedRoute role="dev" fallbackTo="/esports"><TournamentManagerPage /></ProtectedRoute>;
     } else {
-      element = <Navigate to="/" replace />;
+      const tournamentMatch = pathname.match(/^\/esports\/([^/]+)$/);
+      const tournamentSlug = tournamentMatch?.[1];
+      if (tournamentSlug) {
+        params = { tournamentSlug: decodeURIComponent(tournamentSlug) };
+        element = <TournamentDetailsPage />;
+      } else {
+        const bugMatch = pathname.match(/^\/bugs\/([^/]+)$/);
+        const reportId = bugMatch?.[1];
+        if (reportId) {
+          params = { reportId: decodeURIComponent(reportId) };
+          element = <BugDetailsPage />;
+        } else {
+          element = <Navigate to="/" replace />;
+        }
+      }
     }
   }
 
-  return <RouteParamsProvider params={params}>{element}</RouteParamsProvider>;
+  return (
+    <RouteParamsProvider params={params}>
+      <Suspense fallback={<section className="content-band loading-band"><div className="loading-spinner" aria-label="Loading page" /></section>}>
+        {element}
+      </Suspense>
+    </RouteParamsProvider>
+  );
 }
 
 export default function App() {

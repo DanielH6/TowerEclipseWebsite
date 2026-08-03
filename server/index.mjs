@@ -39,6 +39,10 @@ import {
   setSignedCookie,
 } from "./security.mjs";
 import { createRobloxStatsService } from "./roblox-stats.mjs";
+import {
+  createTournamentAdminRouter,
+  createTournamentPublicRouter,
+} from "./tournament-routes.mjs";
 
 const app = express();
 const robloxStats = createRobloxStatsService(config.roblox);
@@ -402,6 +406,8 @@ app.post(
 app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());
+app.use("/api/tournaments", requireFirestoreReady, createTournamentPublicRouter());
+app.use("/api/admin/tournaments", requireFirestoreReady, createTournamentAdminRouter());
 
 if (config.production) {
   const currentFile = fileURLToPath(import.meta.url);

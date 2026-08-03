@@ -7,10 +7,12 @@ export default function ProtectedRoute({
   children,
   role,
   roles,
+  fallbackTo = "/bugs",
 }: {
   children: ReactNode;
   role?: AppRole;
   roles?: AppRole[];
+  fallbackTo?: string;
 }) {
   const { loading, auth } = useAuth();
   const location = useLocation();
@@ -28,11 +30,11 @@ export default function ProtectedRoute({
   }
 
   if (role && auth.user.role !== role) {
-    return <Navigate to="/bugs" replace />;
+    return <Navigate to={fallbackTo} replace />;
   }
 
   if (roles && !roles.includes(auth.user.role)) {
-    return <Navigate to="/bugs" replace />;
+    return <Navigate to={fallbackTo} replace />;
   }
 
   return children;
