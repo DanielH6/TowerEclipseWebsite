@@ -489,10 +489,100 @@ export async function updateTournament(
   }));
 }
 
+export async function loadTournamentBannerPolicy(): Promise<AttachmentPolicy> {
+  const response = await fetch("/api/admin/tournaments/banner-config", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ bannerPolicy: AttachmentPolicy }>(response);
+  return body.bannerPolicy;
+}
+
+interface TournamentBannerUploadTicket {
+  uploadId: string;
+  uploadUrl: string;
+  uploadHeaders: Record<string, string>;
+  expiresIn: number;
+}
+
+export async function uploadTournamentBanner(
+  tournamentId: string,
+  file: File,
+  csrfToken: string,
+): Promise<Tournament> {
+  const encodedTournamentId = encodeURIComponent(tournamentId);
+  const ticketResponse = await fetch(`/api/admin/tournaments/${encodedTournamentId}/banner`, {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size }),
+  });
+  const ticket = await readJson<TournamentBannerUploadTicket>(ticketResponse);
+
+  try {
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await fetch(ticket.uploadUrl, {
+        method: "PUT",
+        headers: ticket.uploadHeaders,
+        body: file,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new Error(
+          "The browser could not reach R2. Check that the bucket CORS policy contains the exact website origin and allows PUT with the Content-Type header.",
+        );
+      }
+      throw error;
+    }
+
+    if (!uploadResponse.ok) {
+      const details = await uploadResponse.text().catch(() => "");
+      throw new Error(
+        `R2 upload failed with status ${uploadResponse.status}${details ? `: ${details}` : "."}`,
+      );
+    }
+
+    return readTournamentMutation(await fetch(
+      `/api/admin/tournaments/${encodedTournamentId}/banner/${encodeURIComponent(ticket.uploadId)}/complete`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: writeHeaders(csrfToken),
+        body: "{}",
+      },
+    ));
+  } catch (error) {
+    await fetch(
+      `/api/admin/tournaments/${encodedTournamentId}/banner/pending/${encodeURIComponent(ticket.uploadId)}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken },
+      },
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteTournamentBanner(
+  tournamentId: string,
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/banner`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  ));
+}
+
 export interface TournamentParticipantInput {
   displayName: string;
   robloxUsername?: string;
-  seed?: number | null;
+  isr?: number;
   status?: TournamentParticipant["status"];
 }
 
@@ -515,7 +605,7 @@ export async function addTournamentParticipants(
 export async function updateTournamentParticipant(
   tournamentId: string,
   participantId: string,
-  input: Partial<Pick<TournamentParticipant, "displayName" | "robloxUsername" | "seed" | "status" | "groupId" | "checkedIn">>,
+  input: Partial<Pick<TournamentParticipant, "displayName" | "robloxUsername" | "isr" | "status" | "groupId" | "checkedIn">>,
   csrfToken: string,
 ): Promise<Tournament> {
   return readTournamentMutation(await fetch(

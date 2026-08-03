@@ -6,6 +6,8 @@ export const PARTICIPANT_STATUSES = ["confirmed", "waitlist", "withdrawn"];
 export const MATCH_STATUSES = ["scheduled", "live", "completed"];
 
 const MAX_PARTICIPANTS = 256;
+const MIN_ISR = 100;
+const MAX_ISR = 5000;
 const MAX_LOG_ENTRIES = 200;
 const MAX_GENERATED_GROUP_MATCHES = 600;
 
@@ -158,7 +160,7 @@ function defaultSettings(input = {}, current = {}) {
       ["random", "balanced", "manual"],
       current.seedingMode ?? "random",
     ),
-    tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "seed"],
+    tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "isr"],
   };
 }
 
@@ -169,6 +171,14 @@ function validateTournamentDates(startsAt, endsAt) {
 }
 
 function touch(tournament, actor, now) {
+  tournament.participants = (tournament.participants ?? []).map((participant) => {
+    const { seed: _legacySeed, ...current } = participant;
+    return { ...current, isr: participantIsr(participant) };
+  });
+  tournament.settings = {
+    ...tournament.settings,
+    tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "isr"],
+  };
   tournament.updatedAt = now;
   tournament.updatedBy = actorSnapshot(actor);
   tournament.version = Number(tournament.version ?? 0) + 1;
@@ -241,6 +251,8 @@ export function createTournament(input, {
     participants: [],
     matches: [],
     log: [],
+    banner: null,
+    pendingBanner: null,
     championId: null,
     groupStageGeneratedAt: null,
     knockoutGeneratedAt: null,
@@ -381,14 +393,17 @@ function participantById(tournament, participantId) {
   return participant;
 }
 
+function participantIsr(participant) {
+  const value = Number(participant?.isr);
+  return Number.isInteger(value) && value >= MIN_ISR && value <= MAX_ISR ? value : MIN_ISR;
+}
+
 function normalizeParticipant(input, { idFactory }) {
   return {
     id: idFactory(),
     displayName: cleanText(input.displayName, "displayName", { min: 1, max: 80 }),
     robloxUsername: cleanOptionalText(input.robloxUsername, "robloxUsername", 40),
-    seed: input.seed === undefined || input.seed === null || input.seed === ""
-      ? null
-      : cleanInteger(input.seed, "seed", { min: 1, max: MAX_PARTICIPANTS }),
+    isr: cleanInteger(input.isr, "isr", { min: MIN_ISR, max: MAX_ISR, fallback: MIN_ISR }),
     status: cleanEnum(input.status, "participant status", PARTICIPANT_STATUSES, "confirmed"),
     groupId: null,
     pointsAdjustment: 0,
@@ -464,10 +479,12 @@ export function updateParticipant(current, participantId, patch, {
   if (patch.robloxUsername !== undefined) {
     participant.robloxUsername = cleanOptionalText(patch.robloxUsername, "robloxUsername", 40);
   }
-  if (patch.seed !== undefined) {
-    participant.seed = patch.seed === null || patch.seed === ""
-      ? null
-      : cleanInteger(patch.seed, "seed", { min: 1, max: MAX_PARTICIPANTS });
+  if (patch.isr !== undefined) {
+    participant.isr = cleanInteger(patch.isr, "isr", {
+      min: MIN_ISR,
+      max: MAX_ISR,
+      fallback: MIN_ISR,
+    });
   }
   if (patch.status !== undefined) {
     participant.status = cleanEnum(patch.status, "participant status", PARTICIPANT_STATUSES);
@@ -512,13 +529,13 @@ export function removeParticipant(current, participantId, {
   return touch(tournament, actor, now);
 }
 
-function seededParticipants(tournament, random) {
+function orderedParticipants(tournament, random) {
   const participants = tournament.participants.filter((participant) => participant.status === "confirmed");
   if (tournament.settings.seedingMode === "balanced") {
-    return participants.sort((left, right) => (left.seed ?? 9999) - (right.seed ?? 9999));
+    return participants.sort((left, right) => participantIsr(right) - participantIsr(left));
   }
   if (tournament.settings.seedingMode === "manual") {
-    return participants.sort((left, right) => (left.seed ?? 9999) - (right.seed ?? 9999));
+    return participants.sort((left, right) => participantIsr(right) - participantIsr(left));
   }
   for (let index = participants.length - 1; index > 0; index -= 1) {
     const target = Math.floor(random() * (index + 1));
@@ -535,7 +552,7 @@ export function randomizeGroups(current, {
   const tournament = clone(current);
   if (groupResultsExist(tournament)) fail(409, "Groups cannot be randomized after results have been recorded.");
   if (knockoutHasStarted(tournament)) fail(409, "Groups cannot be randomized after knockouts begin.");
-  const participants = seededParticipants(tournament, random);
+  const participants = orderedParticipants(tournament, random);
   if (participants.length < 2) fail(409, "Add at least two confirmed participants before assigning groups.");
   participants.forEach((participant, index) => {
     const groupIndex = tournament.settings.seedingMode === "balanced"
@@ -667,7 +684,7 @@ export function buildStandings(tournament) {
       participantId: participant.id,
       displayName: participant.displayName,
       robloxUsername: participant.robloxUsername,
-      seed: participant.seed,
+      isr: participantIsr(participant),
       played: 0,
       wins: 0,
       draws: 0,
@@ -716,7 +733,7 @@ export function buildStandings(tournament) {
       || right.scoreFor - left.scoreFor
       || right.wins - left.wins
       || directHeadToHead(tournament, left.participantId, right.participantId)
-      || (left.seed ?? 9999) - (right.seed ?? 9999)
+      || right.isr - left.isr
       || left.displayName.localeCompare(right.displayName)
     ));
     rows.forEach((row, index) => {
@@ -1043,22 +1060,49 @@ export function addTournamentAnnouncement(current, input, {
 }
 
 export function toAdminTournament(tournament) {
-  const { createdBy: _createdBy, updatedBy: _updatedBy, version: _version, ...publicFields } = clone(tournament);
-  const standings = buildStandings(tournament);
-  const completedMatches = tournament.matches.filter((match) => match.status === "completed" && !match.isBye).length;
+  const normalized = clone(tournament);
+  normalized.participants = (normalized.participants ?? []).map((participant) => {
+    const { seed: _legacySeed, ...current } = participant;
+    return { ...current, isr: participantIsr(participant) };
+  });
+  normalized.settings = {
+    ...normalized.settings,
+    tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "isr"],
+  };
+  const {
+    createdBy: _createdBy,
+    updatedBy: _updatedBy,
+    version: _version,
+    pendingBanner: _pendingBanner,
+    banner: storedBanner,
+    ...publicFields
+  } = normalized;
+  const banner = storedBanner ? {
+    id: storedBanner.id,
+    originalName: storedBanner.originalName,
+    contentType: storedBanner.contentType,
+    size: storedBanner.size,
+    uploadedAt: storedBanner.uploadedAt,
+    uploader: storedBanner.uploader ?? null,
+  } : null;
+  const standings = buildStandings(normalized);
+  const completedMatches = normalized.matches.filter((match) => match.status === "completed" && !match.isBye).length;
   return {
     ...publicFields,
+    banner,
+    bannerImageUrl: null,
     standings,
-    participantCount: tournament.participants.filter((participant) => participant.status === "confirmed").length,
+    participantCount: normalized.participants.filter((participant) => participant.status === "confirmed").length,
     completedMatches,
-    totalMatches: tournament.matches.filter((match) => !match.isBye).length,
-    groupStageComplete: groupStageComplete(tournament),
+    totalMatches: normalized.matches.filter((match) => !match.isBye).length,
+    groupStageComplete: groupStageComplete(normalized),
   };
 }
 
 export function toPublicTournament(tournament) {
   const result = toAdminTournament(tournament);
   result.participants = result.participants.filter((participant) => participant.status === "confirmed");
+  if (result.banner) result.banner.uploader = null;
   return result;
 }
 

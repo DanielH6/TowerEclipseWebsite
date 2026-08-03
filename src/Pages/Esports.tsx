@@ -125,7 +125,11 @@ export default function EsportsPage() {
             {visible.map((tournament) => (
               <article className={`tournament-card tournament-card-${tournament.status}`} key={tournament.id}>
                 <div className="tournament-card-preview">
-                  <TournamentPreview tournament={tournament} />
+                  {tournament.bannerImageUrl ? (
+                    <img className="tournament-card-banner" src={tournament.bannerImageUrl} alt="" />
+                  ) : (
+                    <TournamentPreview tournament={tournament} />
+                  )}
                   <TournamentStatusBadge status={tournament.status} />
                   {tournament.featured && <span className="featured-flag">FEATURED</span>}
                 </div>

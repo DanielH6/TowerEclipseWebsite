@@ -142,7 +142,7 @@ export function TournamentStandings({
                     <td><b>{row.rank}</b></td>
                     <td>
                       <strong>{row.displayName}</strong>
-                      {row.robloxUsername && <small>@{row.robloxUsername}</small>}
+                      <small>{row.robloxUsername ? `@${row.robloxUsername} · ` : ""}ISR {row.isr}</small>
                     </td>
                     <td>{row.played}</td>
                     <td>{row.wins}</td>

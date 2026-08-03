@@ -12,6 +12,7 @@ import {
   toPublicTournament,
   updateParticipant,
   updateMatch,
+  updateTournament,
 } from "./tournament-domain.mjs";
 
 function ids(prefix = "id") {
@@ -59,7 +60,7 @@ test("builds a scalable 32-player group stage and auto-advances the top two", ()
     Array.from({ length: 32 }, (_, index) => ({
       displayName: `Player ${String(index + 1).padStart(2, "0")}`,
       robloxUsername: `RobloxPlayer${index + 1}`,
-      seed: index + 1,
+      isr: 5000 - index * 100,
     })),
     { idFactory: setup.idFactory },
   );
@@ -208,4 +209,75 @@ test("waitlist administration cannot erase group results already on the record",
   );
   assert.equal(toAdminTournament(tournament).participants.length, 3);
   assert.equal(toPublicTournament(tournament).participants.length, 2);
+});
+
+test("ISR defaults to 100, stays within range, and orders strongest entrants first", () => {
+  const setup = makeTournament({
+    participantCap: 4,
+    groupCount: 2,
+    qualifiersPerGroup: 1,
+    seedingMode: "balanced",
+  });
+  let tournament = addParticipants(setup.tournament, [
+    { displayName: "Elite", isr: 5000 },
+    { displayName: "Expert", isr: 4000 },
+    { displayName: "Rising", isr: 3000 },
+    { displayName: "Newcomer" },
+  ], { idFactory: setup.idFactory });
+  tournament = randomizeGroups(tournament);
+
+  const byName = new Map(tournament.participants.map((participant) => [participant.displayName, participant]));
+  assert.equal(byName.get("Newcomer")?.isr, 100);
+  assert.equal(byName.get("Elite")?.groupId, "group-a");
+  assert.equal(byName.get("Expert")?.groupId, "group-b");
+  assert.equal(byName.get("Rising")?.groupId, "group-b");
+  assert.equal(byName.get("Newcomer")?.groupId, "group-a");
+
+  const firstGroup = buildStandings(tournament)[0].rows;
+  assert.deepEqual(firstGroup.map((row) => row.isr), [5000, 100]);
+  assert.throws(
+    () => addParticipants(setup.tournament, [{ displayName: "Too low", isr: 99 }]),
+    /isr must be at least 100/,
+  );
+  assert.throws(
+    () => updateParticipant(tournament, byName.get("Elite").id, { isr: 5001 }),
+    /isr must be at most 5000/,
+  );
+});
+
+test("legacy seeds migrate safely and private R2 banner keys are never serialized", () => {
+  const setup = makeTournament();
+  let tournament = addParticipants(
+    setup.tournament,
+    [{ displayName: "Legacy entrant" }],
+    { idFactory: setup.idFactory },
+  );
+  delete tournament.participants[0].isr;
+  tournament.participants[0].seed = 1;
+  tournament.banner = {
+    id: "banner-1",
+    objectKey: "tournament-banners/private/banner.png",
+    originalName: "banner.png",
+    contentType: "image/png",
+    size: 1024,
+    uploadedAt: "2026-08-04T00:00:00.000Z",
+    uploader: null,
+  };
+  tournament.pendingBanner = {
+    id: "pending-1",
+    objectKey: "tournament-banners/private/pending.png",
+  };
+
+  const serialized = toAdminTournament(tournament);
+  assert.equal(serialized.participants[0].isr, 100);
+  assert.equal("seed" in serialized.participants[0], false);
+  assert.equal("pendingBanner" in serialized, false);
+  assert.equal("objectKey" in serialized.banner, false);
+  assert.equal(serialized.bannerImageUrl, null);
+  assert.equal(toPublicTournament(tournament).banner.uploader, null);
+
+  tournament = updateTournament(tournament, { tagline: "Migrated" });
+  assert.equal(tournament.participants[0].isr, 100);
+  assert.equal("seed" in tournament.participants[0], false);
+  assert.equal(tournament.settings.tiebreakers.at(-1), "isr");
 });

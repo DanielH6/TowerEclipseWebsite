@@ -8,13 +8,17 @@ import {
   generateTournamentKnockout,
   loadAdminTournament,
   loadAdminTournaments,
+  loadTournamentBannerPolicy,
   randomizeTournamentGroups,
+  deleteTournamentBanner,
   removeTournamentParticipant,
   updateTournament,
   updateTournamentMatch,
   updateTournamentParticipant,
+  uploadTournamentBanner,
   type TournamentInput,
 } from "../api";
+import { attachmentAccept, formatFileSize, mergeSelectedFiles } from "../attachments";
 import { useAuth } from "../AuthContext";
 import {
   RegistrationBadge,
@@ -28,6 +32,7 @@ import {
 import { ESPORTS_CONTENT } from "../content/esportsContent";
 import { Link, useNavigate, useParams } from "../router";
 import type {
+  AttachmentPolicy,
   Tournament,
   TournamentMatch,
   TournamentParticipant,
@@ -98,7 +103,7 @@ function defaultTournamentInput(): TournamentInput {
       thirdPlaceMatch: false,
       checkInRequired: false,
       seedingMode: "random",
-      tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "seed"],
+      tiebreakers: ["points", "scoreDifference", "scoreFor", "wins", "headToHead", "isr"],
     },
   };
 }
@@ -160,7 +165,13 @@ function ManagerDashboard() {
           )}
           {tournaments.map((tournament) => (
             <article className="manager-tournament-card" key={tournament.id}>
-              <div className="manager-card-preview"><TournamentPreview tournament={tournament} /></div>
+              <div className="manager-card-preview">
+                {tournament.bannerImageUrl ? (
+                  <img className="tournament-card-banner" src={tournament.bannerImageUrl} alt="" />
+                ) : (
+                  <TournamentPreview tournament={tournament} />
+                )}
+              </div>
               <div className="manager-card-copy">
                 <div className="manager-card-badges">
                   <TournamentStatusBadge status={tournament.status} />
@@ -201,7 +212,7 @@ function ParticipantEditor({
 }) {
   const [displayName, setDisplayName] = useState(participant.displayName);
   const [robloxUsername, setRobloxUsername] = useState(participant.robloxUsername);
-  const [seed, setSeed] = useState(participant.seed?.toString() ?? "");
+  const [isr, setIsr] = useState(participant.isr.toString());
   const [status, setStatus] = useState<TournamentParticipantStatus>(participant.status);
   const [groupId, setGroupId] = useState(participant.groupId ?? "");
   const [checkedIn, setCheckedIn] = useState(participant.checkedIn);
@@ -209,7 +220,7 @@ function ParticipantEditor({
   useEffect(() => {
     setDisplayName(participant.displayName);
     setRobloxUsername(participant.robloxUsername);
-    setSeed(participant.seed?.toString() ?? "");
+    setIsr(participant.isr.toString());
     setStatus(participant.status);
     setGroupId(participant.groupId ?? "");
     setCheckedIn(participant.checkedIn);
@@ -219,7 +230,7 @@ function ParticipantEditor({
     <div className="participant-editor-row">
       <label><span>Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
       <label><span>Roblox username</span><input value={robloxUsername} onChange={(event) => setRobloxUsername(event.target.value)} /></label>
-      <label><span>Seed</span><input type="number" min="1" value={seed} onChange={(event) => setSeed(event.target.value)} /></label>
+      <label><span>ISR</span><input type="number" min="100" max="5000" required value={isr} onChange={(event) => setIsr(event.target.value)} /></label>
       <label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as TournamentParticipantStatus)}>
         <option value="confirmed">Confirmed</option><option value="waitlist">Waitlist</option><option value="withdrawn">Withdrawn</option>
       </select></label>
@@ -239,7 +250,7 @@ function ParticipantEditor({
             void onSave({
               displayName,
               robloxUsername,
-              seed: seed ? Number(seed) : null,
+              isr: isr ? Number(isr) : 100,
               status,
               groupId: status === "confirmed" ? groupId || null : null,
               checkedIn,
@@ -332,6 +343,24 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
   const [adjustReason, setAdjustReason] = useState("");
   const [announcementHeadline, setAnnouncementHeadline] = useState("");
   const [announcementDetail, setAnnouncementDetail] = useState("");
+  const [bannerPolicy, setBannerPolicy] = useState<AttachmentPolicy | null>(null);
+  const [selectedBanner, setSelectedBanner] = useState<File | null>(null);
+
+  const selectedBannerPreview = useMemo(
+    () => selectedBanner ? URL.createObjectURL(selectedBanner) : null,
+    [selectedBanner],
+  );
+
+  useEffect(() => () => {
+    if (selectedBannerPreview) URL.revokeObjectURL(selectedBannerPreview);
+  }, [selectedBannerPreview]);
+
+  useEffect(() => {
+    if (isNew) return;
+    loadTournamentBannerPolicy()
+      .then(setBannerPolicy)
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not load banner upload settings."));
+  }, [isNew]);
 
   useEffect(() => {
     if (isNew) return;
@@ -448,6 +477,81 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
             <label><span>Region</span><input value={draft.region} onChange={(event) => updateField("region", event.target.value)} /></label>
             <label className="manager-span-3"><span>Overview</span><textarea value={draft.description} onChange={(event) => updateField("description", event.target.value)} placeholder="Explain the stakes, format, and who the event is for." /></label>
           </div>
+          <header className="manager-panel-heading manager-subheading"><div><span>02</span><h3>EVENT BANNER</h3></div><p>Used across the tournament directory and event header.</p></header>
+          <div className="tournament-banner-editor">
+            <div className="tournament-banner-preview">
+              {(selectedBannerPreview || tournament?.bannerImageUrl) ? (
+                <img src={selectedBannerPreview ?? tournament?.bannerImageUrl ?? ""} alt="Tournament banner preview" />
+              ) : (
+                <div><strong>NO BANNER SET</strong><span>The bracket preview remains visible until an image is uploaded.</span></div>
+              )}
+            </div>
+            <div className="tournament-banner-controls">
+              <div>
+                <strong>WIDE EVENT ARTWORK</strong>
+                <p>PNG or JPEG. A 16:5 image is recommended; the directory card uses a centered crop.</p>
+                {bannerPolicy?.enabled && <small>Maximum file size: {formatFileSize(bannerPolicy.maxFileSizeBytes)}</small>}
+              </div>
+              {isNew ? (
+                <p className="tournament-banner-note">Create the tournament first, then return to Setup & publish to upload its banner.</p>
+              ) : !bannerPolicy?.enabled ? (
+                <p className="tournament-banner-note">R2 image storage is unavailable. Check the existing attachment storage configuration.</p>
+              ) : (
+                <>
+                  <label className="tournament-banner-picker">
+                    <span>{selectedBanner ? "CHOOSE A DIFFERENT IMAGE" : "CHOOSE IMAGE"}</span>
+                    <input
+                      type="file"
+                      accept={attachmentAccept(bannerPolicy)}
+                      onClick={(event) => { event.currentTarget.value = ""; }}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          setSelectedBanner(mergeSelectedFiles([], [file], bannerPolicy)[0] ?? null);
+                          setError(null);
+                        } catch (reason) {
+                          setSelectedBanner(null);
+                          setError(reason instanceof Error ? reason.message : "That banner image is invalid.");
+                        }
+                      }}
+                    />
+                  </label>
+                  {selectedBanner && <small>{selectedBanner.name} · {formatFileSize(selectedBanner.size)}</small>}
+                  <div className="tournament-banner-actions">
+                    <button
+                      type="button"
+                      className="esports-primary-button"
+                      disabled={working !== null || !selectedBanner}
+                      onClick={() => {
+                        if (!auth || !tournament || !selectedBanner) return;
+                        void runAction(
+                          "banner",
+                          () => uploadTournamentBanner(tournament.id, selectedBanner, auth.csrfToken),
+                          "Tournament banner uploaded.",
+                        ).then(() => setSelectedBanner(null)).catch(() => undefined);
+                      }}
+                    >{working === "banner" ? "UPLOADING…" : tournament?.banner ? "REPLACE BANNER" : "UPLOAD BANNER"}</button>
+                    {tournament?.banner && (
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={working !== null}
+                        onClick={() => {
+                          if (!auth || !tournament || !window.confirm("Remove this tournament banner? The bracket preview will be shown instead.")) return;
+                          void runAction(
+                            "banner-remove",
+                            () => deleteTournamentBanner(tournament.id, auth.csrfToken),
+                            "Tournament banner removed.",
+                          ).then(() => setSelectedBanner(null)).catch(() => undefined);
+                        }}
+                      >REMOVE</button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
           <div className="manager-divider" />
           <div className="manager-form-grid manager-form-grid-3">
             <label><span>Starts</span><input type="datetime-local" value={localFromIso(draft.startsAt)} onChange={(event) => updateField("startsAt", isoFromLocal(event.target.value))} /></label>
@@ -468,13 +572,13 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
             </div>
           </div>
 
-          <header className="manager-panel-heading manager-subheading"><div><span>02</span><h3>FORMAT & AUTOMATION</h3></div><p>Built for group stage → single-elimination knockout.</p></header>
+          <header className="manager-panel-heading manager-subheading"><div><span>03</span><h3>FORMAT & AUTOMATION</h3></div><p>Built for group stage → single-elimination knockout.</p></header>
           <div className="manager-form-grid manager-form-grid-4">
             <label><span>Participant capacity</span><input type="number" min="2" max="256" value={draft.settings.participantCap} onChange={(event) => updateSetting("participantCap", Number(event.target.value))} /></label>
             <label><span>Number of groups</span><input type="number" min="1" max="64" value={draft.settings.groupCount} onChange={(event) => updateSetting("groupCount", Number(event.target.value))} /></label>
             <label><span>Qualifiers per group</span><input type="number" min="1" max="16" value={draft.settings.qualifiersPerGroup} onChange={(event) => updateSetting("qualifiersPerGroup", Number(event.target.value))} /></label>
-            <label><span>Group seeding</span><select value={draft.settings.seedingMode} onChange={(event) => updateSetting("seedingMode", event.target.value as TournamentInput["settings"]["seedingMode"])}>
-              <option value="random">Fully random</option><option value="balanced">Snake by seed</option><option value="manual">Seed order</option>
+            <label><span>Group distribution</span><select value={draft.settings.seedingMode} onChange={(event) => updateSetting("seedingMode", event.target.value as TournamentInput["settings"]["seedingMode"])}>
+              <option value="random">Fully random</option><option value="balanced">Balanced by ISR (snake)</option><option value="manual">Highest ISR first</option>
             </select></label>
             <label><span>Points for win</span><input type="number" min="-20" max="100" value={draft.settings.pointsWin} onChange={(event) => updateSetting("pointsWin", Number(event.target.value))} /></label>
             <label><span>Points for draw</span><input type="number" min="-20" max="100" value={draft.settings.pointsDraw} onChange={(event) => updateSetting("pointsDraw", Number(event.target.value))} /></label>
@@ -491,9 +595,9 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
           <div className="format-summary-strip">
             <div><span>GROUP FIELD</span><strong>Up to {Math.ceil(draft.settings.participantCap / draft.settings.groupCount)} per group</strong></div>
             <div><span>KNOCKOUT FIELD</span><strong>Up to {draft.settings.groupCount * draft.settings.qualifiersPerGroup} qualifiers</strong></div>
-            <div><span>TIEBREAK ORDER</span><strong>Points → difference → scored → wins → H2H → seed</strong></div>
+            <div><span>TIEBREAK ORDER</span><strong>Points → difference → scored → wins → H2H → ISR</strong></div>
           </div>
-          <header className="manager-panel-heading manager-subheading"><div><span>03</span><h3>RULEBOOK</h3></div><p>Displayed on the public tournament page.</p></header>
+          <header className="manager-panel-heading manager-subheading"><div><span>04</span><h3>RULEBOOK</h3></div><p>Displayed on the public tournament page.</p></header>
           <label className="manager-full-field"><span>Rules and important information</span><textarea value={draft.rules} onChange={(event) => updateField("rules", event.target.value)} placeholder="Use blank lines to separate rule sections." /></label>
           <footer className="manager-form-actions">
             <Link to="/esports/manage" className="esports-secondary-button">CANCEL</Link>
@@ -506,8 +610,8 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
         <div className="manager-panel">
           <header className="manager-panel-heading"><div><span>01</span><h3>ENTRANTS & GROUP ASSIGNMENT</h3></div><p>{tournament.participantCount}/{tournament.settings.participantCap} confirmed</p></header>
           <div className="bulk-entry-panel">
-            <div><h4>BULK ADD ENTRANTS</h4><p>One entrant per line: <code>Display name | Roblox username | seed</code>. Username and seed are optional.</p></div>
-            <textarea value={bulkEntrants} onChange={(event) => setBulkEntrants(event.target.value)} placeholder={"Atomic | AtomicRoblox | 1\nNova | NovaPlayer | 2"} />
+            <div><h4>BULK ADD ENTRANTS</h4><p>One entrant per line: <code>Display name | Roblox username | ISR</code>. Username is optional; ISR defaults to 100.</p></div>
+            <textarea value={bulkEntrants} onChange={(event) => setBulkEntrants(event.target.value)} placeholder={"Atomic | AtomicRoblox | 1250\nNova | NovaPlayer | 980"} />
             <button
               type="button"
               className="esports-primary-button"
@@ -515,8 +619,8 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
               onClick={() => {
                 if (!auth) return;
                 const entrants = bulkEntrants.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-                  const [displayName = "", robloxUsername = "", seed = ""] = line.split("|").map((part) => part.trim());
-                  return { displayName, robloxUsername, seed: seed ? Number(seed) : null };
+                  const [displayName = "", robloxUsername = "", isr = ""] = line.split("|").map((part) => part.trim());
+                  return { displayName, robloxUsername, isr: isr ? Number(isr) : 100 };
                 });
                 void runAction("participants", () => addTournamentParticipants(tournament.id, entrants, auth.csrfToken), `${entrants.length} entrant${entrants.length === 1 ? "" : "s"} added.`)
                   .then(() => setBulkEntrants(""))
@@ -527,16 +631,18 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
           <div className="group-action-bar">
             <div><strong>GROUP TOOLS</strong><span>Assignments stay editable until results are saved.</span></div>
             <button type="button" disabled={working !== null || confirmedParticipants.length < 2} onClick={() => {
-              if (!auth || !window.confirm("Randomize every confirmed entrant into groups? This will replace any unsaved schedule.")) return;
+              if (!auth || !window.confirm("Assign every confirmed entrant using the selected group distribution? This will replace any unsaved schedule.")) return;
               void runAction("randomize", () => randomizeTournamentGroups(tournament.id, auth.csrfToken), "Groups assigned.").catch(() => undefined);
-            }}>RANDOMIZE / SEED GROUPS</button>
+            }}>ASSIGN GROUPS</button>
             <button type="button" disabled={working !== null || confirmedParticipants.some((participant) => !participant.groupId)} onClick={() => {
               if (!auth) return;
               void runAction("schedule", () => generateTournamentGroupSchedule(tournament.id, auth.csrfToken), "Round-robin group schedule generated.").catch(() => undefined);
             }}>GENERATE GROUP MATCHES</button>
           </div>
           <div className="participant-editor-list">
-            {tournament.participants.length === 0 ? <div className="tournament-empty-state">Add entrants to begin assigning the field.</div> : tournament.participants.map((participant) => (
+            {tournament.participants.length === 0 ? <div className="tournament-empty-state">Add entrants to begin assigning the field.</div> : [...tournament.participants]
+              .sort((left, right) => right.isr - left.isr || left.displayName.localeCompare(right.displayName))
+              .map((participant) => (
               <ParticipantEditor
                 participant={participant}
                 groupCount={tournament.settings.groupCount}
@@ -602,9 +708,9 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
         <div className="manager-stage-layout">
           <div className="manager-panel">
             <header className="manager-panel-heading"><div><span>01</span><h3>KNOCKOUT BRACKET</h3></div><div className="manager-heading-actions"><span>{tournament.groupStageComplete ? "GROUPS COMPLETE" : "QUALIFIERS PENDING"}</span><button type="button" disabled={working !== null || !tournament.groupStageComplete} onClick={() => {
-              if (!auth || !window.confirm("Generate or reseed the knockout bracket from the current group standings?")) return;
+              if (!auth || !window.confirm("Generate or rebuild the knockout bracket from the current group standings?")) return;
               void runAction("knockout", () => generateTournamentKnockout(tournament.id, auth.csrfToken), "Knockout bracket generated.").catch(() => undefined);
-            }}>GENERATE / RESEED</button></div></header>
+            }}>GENERATE / REBUILD</button></div></header>
             <TournamentBracket tournament={tournament} />
           </div>
           <div className="manager-panel">
