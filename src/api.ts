@@ -10,6 +10,10 @@ import type {
   DictionaryEntry,
   DictionaryName,
   RobloxStats,
+  Tournament,
+  TournamentParticipant,
+  TournamentSettings,
+  TournamentSummary,
 } from "./types";
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -396,4 +400,220 @@ export async function archiveDictionaryEntry(
     headers: { "X-CSRF-Token": csrfToken },
   });
   if (!response.ok) await readJson(response);
+}
+
+export async function loadTournaments(): Promise<TournamentSummary[]> {
+  const response = await fetch("/api/tournaments", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ tournaments: TournamentSummary[] }>(response);
+  return body.tournaments;
+}
+
+export async function loadTournament(identifier: string): Promise<Tournament> {
+  const response = await fetch(`/api/tournaments/${encodeURIComponent(identifier)}`, {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ tournament: Tournament }>(response);
+  return body.tournament;
+}
+
+export async function loadAdminTournaments(): Promise<TournamentSummary[]> {
+  const response = await fetch("/api/admin/tournaments", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ tournaments: TournamentSummary[] }>(response);
+  return body.tournaments;
+}
+
+export async function loadAdminTournament(tournamentId: string): Promise<Tournament> {
+  const response = await fetch(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}`, {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ tournament: Tournament }>(response);
+  return body.tournament;
+}
+
+export interface TournamentInput {
+  name: string;
+  slug: string;
+  tagline: string;
+  description: string;
+  rules: string;
+  hostName: string;
+  region: string;
+  timezone: string;
+  contact: string;
+  registrationUrl: string;
+  streamUrl: string;
+  startsAt: string;
+  endsAt: string;
+  status: Tournament["status"];
+  registrationStatus: Tournament["registrationStatus"];
+  published: boolean;
+  featured: boolean;
+  settings: TournamentSettings;
+}
+
+async function readTournamentMutation(response: Response): Promise<Tournament> {
+  const body = await readJson<{ tournament: Tournament }>(response);
+  return body.tournament;
+}
+
+export async function createTournament(
+  input: TournamentInput,
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch("/api/admin/tournaments", {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify(input),
+  }));
+}
+
+export async function updateTournament(
+  tournamentId: string,
+  input: Partial<TournamentInput>,
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify(input),
+  }));
+}
+
+export interface TournamentParticipantInput {
+  displayName: string;
+  robloxUsername?: string;
+  seed?: number | null;
+  status?: TournamentParticipant["status"];
+}
+
+export async function addTournamentParticipants(
+  tournamentId: string,
+  participants: TournamentParticipantInput[],
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/participants`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: writeHeaders(csrfToken),
+      body: JSON.stringify({ participants }),
+    },
+  ));
+}
+
+export async function updateTournamentParticipant(
+  tournamentId: string,
+  participantId: string,
+  input: Partial<Pick<TournamentParticipant, "displayName" | "robloxUsername" | "seed" | "status" | "groupId" | "checkedIn">>,
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/participants/${encodeURIComponent(participantId)}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: writeHeaders(csrfToken),
+      body: JSON.stringify(input),
+    },
+  ));
+}
+
+export async function removeTournamentParticipant(
+  tournamentId: string,
+  participantId: string,
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/participants/${encodeURIComponent(participantId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  ));
+}
+
+async function tournamentAction(
+  tournamentId: string,
+  path: string,
+  csrfToken: string,
+  body: object = {},
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/${path}`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: writeHeaders(csrfToken),
+      body: JSON.stringify(body),
+    },
+  ));
+}
+
+export function randomizeTournamentGroups(tournamentId: string, csrfToken: string) {
+  return tournamentAction(tournamentId, "groups/randomize", csrfToken);
+}
+
+export function generateTournamentGroupSchedule(tournamentId: string, csrfToken: string) {
+  return tournamentAction(tournamentId, "groups/schedule", csrfToken);
+}
+
+export function generateTournamentKnockout(tournamentId: string, csrfToken: string) {
+  return tournamentAction(tournamentId, "knockout/generate", csrfToken);
+}
+
+export async function updateTournamentMatch(
+  tournamentId: string,
+  matchId: string,
+  input: {
+    status: "scheduled" | "live" | "completed";
+    scoreA?: number | null;
+    scoreB?: number | null;
+    scheduledAt?: string | null;
+    notes?: string;
+  },
+  csrfToken: string,
+): Promise<Tournament> {
+  return readTournamentMutation(await fetch(
+    `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/matches/${encodeURIComponent(matchId)}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: writeHeaders(csrfToken),
+      body: JSON.stringify(input),
+    },
+  ));
+}
+
+export function adjustTournamentPoints(
+  tournamentId: string,
+  participantId: string,
+  input: { delta: number; reason: string },
+  csrfToken: string,
+) {
+  return tournamentAction(
+    tournamentId,
+    `standings/${encodeURIComponent(participantId)}/adjust`,
+    csrfToken,
+    input,
+  );
+}
+
+export function addTournamentAnnouncement(
+  tournamentId: string,
+  input: { headline: string; detail: string },
+  csrfToken: string,
+) {
+  return tournamentAction(tournamentId, "log", csrfToken, input);
 }
