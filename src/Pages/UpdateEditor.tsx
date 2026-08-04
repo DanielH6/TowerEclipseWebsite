@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { loadAdminUpdate, saveGameUpdate, uploadUpdateImage } from "../api";
 import { useAuth } from "../AuthContext";
 import RichTextEditor from "../Components/RichTextEditor";
-import { Link, useNavigate, useParams } from "../router";
+import { Link, useParams } from "../router";
 import type {
   BugFixLevel,
   GameUpdate,
+  NewsContentType,
   UpdateEntry,
   UpdateEntryImage,
   UpdateImage,
@@ -50,12 +51,16 @@ function formatFileSize(bytes: number) {
 
 function toInput(update: GameUpdate, status: UpdateStatus): UpdateInput {
   return {
+    contentType: update.contentType,
+    isMinor: update.contentType === "game_update" && update.isMinor,
     title: update.title,
-    version: update.version,
-    developerCommentHtml: update.developerCommentHtml,
-    coverImageId: update.coverImageId,
+    version: update.contentType === "game_update" ? update.version : "",
+    developerCommentHtml: update.contentType === "game_update" ? update.developerCommentHtml : "",
+    blogHtml: update.contentType === "developer_blog" ? update.blogHtml : "",
+    coverImageId: update.contentType === "game_update" ? update.coverImageId : null,
     status,
-    sections: update.sections.map((section) => ({
+    publishedOn: update.publishedOn,
+    sections: update.contentType === "developer_blog" ? [] : update.sections.map((section) => ({
       id: section.id,
       kind: section.kind,
       title: section.title,
@@ -78,7 +83,6 @@ function toInput(update: GameUpdate, status: UpdateStatus): UpdateInput {
 export default function UpdateEditorPage() {
   const { updateId = "" } = useParams<{ updateId: string }>();
   const { auth } = useAuth();
-  const navigate = useNavigate();
   const [update, setUpdate] = useState<GameUpdate | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -249,7 +253,9 @@ export default function UpdateEditorPage() {
       const saved = await saveGameUpdate(update.id, toInput(update, status), auth.csrfToken);
       setUpdate(saved);
       setDirty(false);
-      setNotice(status === "published" ? "Update published." : `Draft saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`);
+      setNotice(status === "published"
+        ? `${update.contentType === "developer_blog" ? "Developer blog" : "Update"} published.`
+        : `Draft saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save the update.");
     } finally {
@@ -508,6 +514,9 @@ export default function UpdateEditorPage() {
     );
   }
 
+  const isDeveloperBlog = update.contentType === "developer_blog";
+  const contentLabel = isDeveloperBlog ? "developer blog" : update.isMinor ? "minor update" : "game update";
+
   return (
     <section className="workspace-page update-editor-page">
       <div className="workspace-header update-editor-header">
@@ -515,7 +524,9 @@ export default function UpdateEditorPage() {
           <p className="workspace-kicker">DEVELOPER ADMIN</p>
           <h2>{update.title}</h2>
           <p>
-            {update.status === "published" ? "Published update" : "Draft update"} · {usedImageCount}/{update.imagePolicy.maxImagesPerUpdate || 0} referenced images · {dirty ? "Unsaved changes" : "All changes saved"}
+            {update.status === "published" ? "Published" : "Draft"} {contentLabel}
+            {!isDeveloperBlog && <> · {usedImageCount}/{update.imagePolicy.maxImagesPerUpdate || 0} referenced images</>}
+            {` · ${dirty ? "Unsaved changes" : "All changes saved"}`}
           </p>
         </div>
         <div className="workspace-header-actions">
@@ -526,37 +537,72 @@ export default function UpdateEditorPage() {
 
       <nav className="update-editor-outline" aria-label="Update editor sections">
         <a href="#update-header">Header</a>
-        {update.sections.map((section) => (
+        {isDeveloperBlog ? (
+          <a href="#developer-blog-content">Blog content</a>
+        ) : update.sections.map((section) => (
           <a href={`#update-${section.kind}`} key={section.kind}>
             {section.title} <span>{section.items.length}</span>
           </a>
         ))}
-        <div>
+        {!isDeveloperBlog && <div>
           <button type="button" onClick={() => setCollapsedItems(new Set(update.sections.flatMap((section) => section.items.map((item) => item.id))))}>COLLAPSE ENTRIES</button>
           <button type="button" onClick={() => setCollapsedItems(new Set())}>EXPAND ENTRIES</button>
-        </div>
+        </div>}
       </nav>
 
       <div className="update-editor-stack">
         <article className="panel-card update-meta-editor" id="update-header">
           <div className="update-editor-section-title">
             <div>
-              <p className="workspace-kicker">UPDATE DETAILS</p>
+              <p className="workspace-kicker">NEWS CONTENT DETAILS</p>
               <h3>HEADER</h3>
             </div>
           </div>
           <div className="update-meta-grid">
             <label className="editor-field">
-              <span>Update name</span>
+              <span>{isDeveloperBlog ? "Blog title" : "Update name"}</span>
               <input value={update.title} maxLength={180} disabled={working} onChange={(event) => patchUpdate({ title: event.target.value })} />
             </label>
             <label className="editor-field">
+              <span>Content type</span>
+              <select
+                value={update.contentType}
+                disabled={working}
+                onChange={(event) => {
+                  const contentType = event.target.value as NewsContentType;
+                  const hasUpdateContent = usedImageCount > 0 || update.sections.some((section) => section.items.length > 0 || section.introHtml);
+                  if (
+                    contentType === "developer_blog" &&
+                    hasUpdateContent &&
+                    !window.confirm("Changing this to a developer blog will remove its update sections and uploaded images when you save. Continue?")
+                  ) return;
+                  patchUpdate({ contentType, isMinor: contentType === "developer_blog" ? false : update.isMinor });
+                }}
+              >
+                <option value="game_update">Game update</option>
+                <option value="developer_blog">Developer blog</option>
+              </select>
+            </label>
+            <label className="editor-field">
+              <span>Display publish date</span>
+              <input type="date" value={update.publishedOn ?? ""} disabled={working} onChange={(event) => patchUpdate({ publishedOn: event.target.value || null })} />
+              <small>Controls the public date and archive order. Leave blank to use the first publish date.</small>
+            </label>
+            {!isDeveloperBlog && <label className="editor-field">
               <span>Version</span>
               <input value={update.version} maxLength={80} disabled={working} placeholder="Example: 1.4.0" onChange={(event) => patchUpdate({ version: event.target.value })} />
-            </label>
+            </label>}
           </div>
 
-          <div className="cover-image-field">
+          {!isDeveloperBlog && <label className="update-minor-toggle">
+            <input type="checkbox" checked={update.isMinor} disabled={working} onChange={(event) => patchUpdate({ isMinor: event.target.checked })} />
+            <span>
+              <strong>MINOR UPDATE</strong>
+              <small>Show this as a compact archive item. Image-free minor updates use the same wide text layout as developer blogs.</small>
+            </span>
+          </label>}
+
+          {!isDeveloperBlog && <div className="cover-image-field">
             <div className="cover-image-copy">
               <strong>COVER IMAGE</strong>
               <small>
@@ -580,18 +626,37 @@ export default function UpdateEditorPage() {
                 <input type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" disabled={working || !update?.imagePolicy.enabled} onChange={(event) => void uploadCover(event)} />
               </label>
             )}
-          </div>
+          </div>}
 
-          <RichTextEditor
+          {!isDeveloperBlog && <RichTextEditor
             label="Developer comment"
             value={update.developerCommentHtml}
             disabled={working}
             placeholder="Add the developer's introduction, context, or closing note."
             onChange={(developerCommentHtml) => patchUpdate({ developerCommentHtml })}
-          />
+          />}
         </article>
 
-        {update.sections.map((section) => {
+        {isDeveloperBlog && (
+          <article className="panel-card update-section-editor developer-blog-editor" id="developer-blog-content">
+            <div className="update-editor-section-title">
+              <div>
+                <p className="workspace-kicker">MONTHLY DEVELOPMENT JOURNAL</p>
+                <h3>BLOG CONTENT</h3>
+                <p>Write the complete post here. Headings, bold text, links, lists, quotes, and tables are supported.</p>
+              </div>
+            </div>
+            <RichTextEditor
+              label="Developer blog post"
+              value={update.blogHtml}
+              disabled={working}
+              placeholder="Share this month's development progress, highlights, and goals for next month."
+              onChange={(blogHtml) => patchUpdate({ blogHtml })}
+            />
+          </article>
+        )}
+
+        {!isDeveloperBlog && update.sections.map((section) => {
           const majorItems = section.kind === "bug_fixes" ? section.items.filter((item) => item.bugFixLevel === "major") : [];
           const minorItems = section.kind === "bug_fixes" ? section.items.filter((item) => item.bugFixLevel !== "major") : [];
 
@@ -662,7 +727,9 @@ export default function UpdateEditorPage() {
             <button className="ghost-action" type="button" disabled={working} onClick={() => void save("draft")}>UNPUBLISH</button>
           )}
           <button className="ghost-action" type="button" disabled={working || !dirty} title="Save draft (Ctrl/Cmd + S)" onClick={() => void save("draft")}>{working ? "WORKING…" : "SAVE DRAFT"}</button>
-          <button className="primary-action" type="button" disabled={working} onClick={() => void save("published")}>{working ? "WORKING…" : update.status === "published" ? "SAVE & PUBLISH" : "PUBLISH UPDATE"}</button>
+          <button className="primary-action" type="button" disabled={working} onClick={() => void save("published")}>
+            {working ? "WORKING…" : update.status === "published" ? "SAVE & PUBLISH" : isDeveloperBlog ? "PUBLISH BLOG" : "PUBLISH UPDATE"}
+          </button>
         </div>
       </div>
     </section>

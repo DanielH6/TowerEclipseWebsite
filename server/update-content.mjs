@@ -1,4 +1,8 @@
 export const MAX_IMAGES_PER_ENTRY = 20;
+export const MAX_IMAGES_PER_UPDATE = 500;
+export const NEWS_CONTENT_TYPES = Object.freeze(["game_update", "developer_blog"]);
+const NEWS_CONTENT_TYPE_SET = new Set(NEWS_CONTENT_TYPES);
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
 const ALLOWED_TAGS = new Set([
@@ -32,6 +36,58 @@ function validationError(message) {
   const error = new Error(message);
   error.status = 400;
   return error;
+}
+
+export function dateOnlyFromValue(value) {
+  if (!value) return null;
+  if (typeof value === "string" && DATE_ONLY_PATTERN.test(value)) return value;
+  const date = typeof value?.toDate === "function" ? value.toDate() : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+export function normalizePublishedOn(value, field = "publishedOn") {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") throw validationError(`${field} must be a date in YYYY-MM-DD format.`);
+  const match = value.match(DATE_ONLY_PATTERN);
+  if (!match) throw validationError(`${field} must be a date in YYYY-MM-DD format.`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw validationError(`${field} must be a real calendar date.`);
+  }
+  return value;
+}
+
+export function normalizeNewsContentType(value) {
+  if (!NEWS_CONTENT_TYPE_SET.has(value)) {
+    throw validationError("contentType must be game_update or developer_blog.");
+  }
+  return value;
+}
+
+export function normalizeMinorFlag(value, contentType) {
+  if (typeof value !== "boolean") throw validationError("isMinor must be true or false.");
+  return contentType === "game_update" && value;
+}
+
+export function assertPublishableNewsContent({ contentType, version, blogHtml, itemCount }) {
+  if (contentType === "developer_blog") {
+    if (updateRichTextPlainLength(blogHtml) < 1) {
+      throw validationError("A published developer blog needs content.");
+    }
+    return;
+  }
+  if (!version) throw validationError("A published update needs a version.");
+  if (!Number.isInteger(itemCount) || itemCount < 1) {
+    throw validationError("A published update needs at least one entry.");
+  }
 }
 
 function decodeHtmlEntities(value) {

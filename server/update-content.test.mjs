@@ -2,10 +2,63 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_IMAGES_PER_ENTRY,
+  MAX_IMAGES_PER_UPDATE,
+  assertPublishableNewsContent,
+  dateOnlyFromValue,
   normalizeEntryImages,
+  normalizeMinorFlag,
+  normalizeNewsContentType,
+  normalizePublishedOn,
   sanitizeUpdateRichText,
   storedEntryImages,
 } from "./update-content.mjs";
+
+test("manual publication dates preserve historical calendar days", () => {
+  assert.equal(normalizePublishedOn("2024-01-31"), "2024-01-31");
+  assert.equal(dateOnlyFromValue("2026-08-02T23:45:00.000Z"), "2026-08-02");
+  assert.throws(() => normalizePublishedOn("2024-02-30"), /real calendar date/);
+  assert.throws(() => normalizePublishedOn("02\/08\/2024"), /YYYY-MM-DD/);
+});
+
+test("the update-wide image policy is five hundred references", () => {
+  assert.equal(MAX_IMAGES_PER_UPDATE, 500);
+});
+
+test("news content types keep minor flags exclusive to game updates", () => {
+  assert.equal(normalizeNewsContentType("game_update"), "game_update");
+  assert.equal(normalizeNewsContentType("developer_blog"), "developer_blog");
+  assert.equal(normalizeMinorFlag(true, "game_update"), true);
+  assert.equal(normalizeMinorFlag(true, "developer_blog"), false);
+  assert.throws(() => normalizeNewsContentType("announcement"), /contentType/);
+  assert.throws(() => normalizeMinorFlag("true", "game_update"), /true or false/);
+});
+
+test("developer blogs and game updates have distinct publish requirements", () => {
+  assert.doesNotThrow(() => assertPublishableNewsContent({
+    contentType: "developer_blog",
+    version: "",
+    blogHtml: "<p>Monthly progress and next steps.</p>",
+    itemCount: 0,
+  }));
+  assert.throws(() => assertPublishableNewsContent({
+    contentType: "developer_blog",
+    version: "",
+    blogHtml: "<p><br></p>",
+    itemCount: 0,
+  }), /needs content/);
+  assert.throws(() => assertPublishableNewsContent({
+    contentType: "game_update",
+    version: "",
+    blogHtml: "",
+    itemCount: 1,
+  }), /needs a version/);
+  assert.throws(() => assertPublishableNewsContent({
+    contentType: "game_update",
+    version: "1.2.0",
+    blogHtml: "",
+    itemCount: 0,
+  }), /at least one entry/);
+});
 
 test("rich-text sanitizer preserves editor tables and strips unsafe content", () => {
   const result = sanitizeUpdateRichText(

@@ -332,6 +332,7 @@ export type TournamentSummary = Omit<
 };
 
 export type UpdateStatus = "draft" | "published";
+export type NewsContentType = "game_update" | "developer_blog";
 export type UpdateSectionKind =
   | "new_features"
   | "balancing"
@@ -388,9 +389,12 @@ export interface UpdateSection {
 
 export interface GameUpdate {
   id: string;
+  contentType: NewsContentType;
+  isMinor: boolean;
   title: string;
   version: string;
   developerCommentHtml: string;
+  blogHtml: string;
   coverImageId: string | null;
   coverImage: UpdateImage | null;
   status: UpdateStatus;
@@ -400,15 +404,20 @@ export interface GameUpdate {
   createdAt: string;
   updatedAt: string;
   publishedAt: string | null;
+  publishedOn: string | null;
   imagePolicy: UpdateImagePolicy;
 }
 
 export interface UpdateInput {
+  contentType: NewsContentType;
+  isMinor: boolean;
   title: string;
   version: string;
   developerCommentHtml: string;
+  blogHtml: string;
   coverImageId: string | null;
   status: UpdateStatus;
+  publishedOn: string | null;
   sections: Array<{
     id: string;
     kind: UpdateSectionKind;

@@ -6,10 +6,12 @@ import "./Updates.css";
 
 function formatDate(value: string | null) {
   if (!value) return "";
-  return new Date(value).toLocaleDateString(undefined, {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return date.toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -137,35 +139,40 @@ export default function UpdateDetailsPage() {
   }
 
   const bugFixSection = update.sections.find((section) => section.kind === "bug_fixes");
+  const isDeveloperBlog = update.contentType === "developer_blog";
 
   return (
     <section className="content-band update-article-page">
-      <article className="update-article">
+      <article className={`update-article ${isDeveloperBlog ? "developer-blog-article" : ""}`}>
         <Link className="update-back-link" to="/news">← ALL UPDATES</Link>
         <header className="update-article-header">
           <div className="update-article-meta">
-            <span>VERSION {update.version}</span>
-            <time dateTime={update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedAt ?? update.updatedAt)}</time>
+            <span>{isDeveloperBlog ? "DEVELOPER BLOG" : `${update.isMinor ? "MINOR UPDATE · " : ""}VERSION ${update.version}`}</span>
+            <time dateTime={update.publishedOn ?? update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedOn ?? update.publishedAt ?? update.updatedAt)}</time>
           </div>
           <h2>{update.title}</h2>
           <p>Published by {update.author.displayName}</p>
         </header>
 
-        {update.coverImage?.downloadUrl && (
+        {!isDeveloperBlog && update.coverImage?.downloadUrl && (
           <button className="update-cover-viewer-button" type="button" onClick={() => setViewer(update.coverImage)}>
             <img src={update.coverImage.downloadUrl} alt={`${update.title} cover`} />
             <span>CLICK TO ENLARGE</span>
           </button>
         )}
 
-        {update.developerCommentHtml && (
+        {!isDeveloperBlog && update.developerCommentHtml && (
           <section className="developer-comment-block">
             <p className="workspace-kicker">DEVELOPER COMMENT</p>
             <RichContent html={update.developerCommentHtml} />
           </section>
         )}
 
-        <div className="published-update-sections">
+        {isDeveloperBlog ? (
+          <section className="developer-blog-body">
+            <RichContent html={update.blogHtml} />
+          </section>
+        ) : <div className="published-update-sections">
           {update.sections.filter((section) => section.kind !== "bug_fixes" && (section.items.length > 0 || section.introHtml)).map((section) => (
             <section className={`published-update-section published-${section.kind}`} key={section.kind}>
               <header>
@@ -200,7 +207,7 @@ export default function UpdateDetailsPage() {
               })}
             </section>
           )}
-        </div>
+        </div>}
       </article>
 
       {viewer?.downloadUrl && (
