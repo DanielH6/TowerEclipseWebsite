@@ -337,7 +337,7 @@ export type UpdateSectionKind =
   | "balancing"
   | "bug_fixes"
   | "small_changes";
-export type UpdateImageLayout = "none" | "left" | "right";
+export type UpdateImageLayout = "none" | "left" | "right" | "gallery";
 export type BugFixLevel = "major" | "minor";
 
 export interface UpdateImagePolicy {
@@ -362,16 +362,20 @@ export interface UpdateImage {
   downloadUrl: string | null;
 }
 
+export interface UpdateEntryImage {
+  imageId: string;
+  caption: string;
+  image?: UpdateImage | null;
+  figureNumber?: number | null;
+}
+
 export interface UpdateEntry {
   id: string;
   title: string;
   bodyHtml: string;
-  imageId: string | null;
+  images: UpdateEntryImage[];
   imageLayout: UpdateImageLayout;
-  caption: string;
   bugFixLevel: BugFixLevel | null;
-  image?: UpdateImage | null;
-  figureNumber?: number | null;
 }
 
 export interface UpdateSection {
@@ -414,9 +418,11 @@ export interface UpdateInput {
       id: string;
       title: string;
       bodyHtml: string;
-      imageId: string | null;
+      images: Array<{
+        imageId: string;
+        caption: string;
+      }>;
       imageLayout: UpdateImageLayout;
-      caption: string;
       bugFixLevel: BugFixLevel | null;
     }>;
   }>;

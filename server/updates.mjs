@@ -15,6 +15,12 @@ import {
   normalizeAttachmentInput,
   updateImageStoragePolicy,
 } from "./r2.mjs";
+import {
+  normalizeEntryImages,
+  sanitizeUpdateRichText as sanitizeRichText,
+  storedEntryImages,
+  updateRichTextPlainLength as richTextPlainLength,
+} from "./update-content.mjs";
 
 const SECTION_DEFINITIONS = Object.freeze([
   { kind: "new_features", title: "New Features" },
@@ -23,30 +29,10 @@ const SECTION_DEFINITIONS = Object.freeze([
   { kind: "small_changes", title: "Small Changes" },
 ]);
 const SECTION_KINDS = new Set(SECTION_DEFINITIONS.map((section) => section.kind));
-const IMAGE_LAYOUTS = new Set(["none", "left", "right"]);
+const IMAGE_LAYOUTS = new Set(["none", "left", "right", "gallery"]);
 const BUG_FIX_LEVELS = new Set(["major", "minor"]);
 const UPDATE_STATUSES = new Set(["draft", "published"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
-const ALLOWED_TAGS = new Set([
-  "p",
-  "br",
-  "strong",
-  "em",
-  "u",
-  "ul",
-  "ol",
-  "li",
-  "h3",
-  "h4",
-  "blockquote",
-  "a",
-]);
-const TAG_ALIASES = new Map([
-  ["b", "strong"],
-  ["i", "em"],
-  ["div", "p"],
-]);
-const VOID_TAGS = new Set(["br"]);
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -70,96 +56,6 @@ function cleanId(value, field) {
     throw httpError(400, `${field} must be a valid identifier.`);
   }
   return value;
-}
-
-function decodeHtmlEntities(value) {
-  return value
-    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
-    .replace(/&nbsp;/gi, "\u00a0")
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&amp;/gi, "&");
-}
-
-function escapeHtml(value) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function safeHref(rawHref) {
-  if (!rawHref) return null;
-  const decoded = decodeHtmlEntities(rawHref.trim());
-  try {
-    const url = new URL(decoded, "https://towereclipse.invalid");
-    if (!["http:", "https:", "mailto:"].includes(url.protocol)) return null;
-    if (url.origin === "https://towereclipse.invalid") return null;
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeRichText(value, field, { max = 50000 } = {}) {
-  if (typeof value !== "string") {
-    throw httpError(400, `${field} must be rich-text HTML.`);
-  }
-  if (value.length > max) {
-    throw httpError(400, `${field} is too long.`);
-  }
-
-  const withoutDangerousBlocks = value.replace(
-    /<(script|style|iframe|object|embed|svg|math)[^>]*>[\s\S]*?<\/\1\s*>/gi,
-    "",
-  );
-  const tokens = withoutDangerousBlocks.match(/<[^>]*>|[^<]+/g) ?? [];
-  const output = [];
-
-  for (const token of tokens) {
-    if (!token.startsWith("<")) {
-      output.push(escapeHtml(decodeHtmlEntities(token)));
-      continue;
-    }
-
-    const match = token.match(/^<\s*(\/?)\s*([a-zA-Z0-9]+)([^>]*)>/);
-    if (!match) continue;
-    const closing = match[1] === "/";
-    const originalTag = match[2].toLowerCase();
-    const tag = TAG_ALIASES.get(originalTag) ?? originalTag;
-    if (!ALLOWED_TAGS.has(tag)) continue;
-
-    if (closing) {
-      if (!VOID_TAGS.has(tag)) output.push(`</${tag}>`);
-      continue;
-    }
-
-    if (tag === "a") {
-      const hrefMatch = match[3].match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-      const href = safeHref(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "");
-      if (href) {
-        output.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">`);
-      } else {
-        output.push("<a>");
-      }
-      continue;
-    }
-
-    output.push(VOID_TAGS.has(tag) ? `<${tag}>` : `<${tag}>`);
-  }
-
-  return output.join("").trim();
-}
-
-function richTextPlainLength(html) {
-  return decodeHtmlEntities(html.replace(/<[^>]+>/g, " "))
-    .replace(/\s+/g, " ")
-    .trim().length;
 }
 
 function serialize(value) {
@@ -204,17 +100,16 @@ function normalizeItem(rawItem, sectionKind, index) {
     throw httpError(400, `${title} needs a description.`);
   }
 
-  const imageId = rawItem.imageId == null || rawItem.imageId === ""
-    ? null
-    : cleanId(rawItem.imageId, `sections.${sectionKind}.items.${index}.imageId`);
-  const imageLayout = imageId
-    ? (IMAGE_LAYOUTS.has(rawItem.imageLayout) ? rawItem.imageLayout : "right")
-    : "none";
-  const caption = cleanText(
-    rawItem.caption ?? "",
-    `sections.${sectionKind}.items.${index}.caption`,
-    { min: 0, max: 300 },
+  const images = normalizeEntryImages(
+    rawItem,
+    `sections.${sectionKind}.items.${index}`,
+    title,
   );
+  const imageLayout = images.length > 0
+    ? (IMAGE_LAYOUTS.has(rawItem.imageLayout) && rawItem.imageLayout !== "none"
+      ? rawItem.imageLayout
+      : (images.length > 1 ? "gallery" : "right"))
+    : "none";
   const bugFixLevel = sectionKind === "bug_fixes"
     ? (BUG_FIX_LEVELS.has(rawItem.bugFixLevel) ? rawItem.bugFixLevel : "minor")
     : null;
@@ -223,9 +118,8 @@ function normalizeItem(rawItem, sectionKind, index) {
     id,
     title,
     bodyHtml,
-    imageId,
+    images,
     imageLayout,
-    caption,
     bugFixLevel,
   };
 }
@@ -282,7 +176,13 @@ function collectImageIds(update) {
   if (update.coverImageId) ids.add(update.coverImageId);
   for (const section of update.sections ?? []) {
     for (const item of section.items ?? []) {
-      if (item.imageId) ids.add(item.imageId);
+      if (Array.isArray(item.images)) {
+        item.images.forEach((image) => {
+          if (image?.imageId) ids.add(image.imageId);
+        });
+      } else if (item.imageId) {
+        ids.add(item.imageId);
+      }
     }
   }
   return ids;
@@ -324,12 +224,29 @@ async function hydrateUpdate(document, { includeDraft = false } = {}) {
   const sections = (value.sections ?? defaultSections()).map((section) => ({
     ...section,
     items: (section.items ?? []).map((item) => {
-      const image = hydrateImage(item.imageId);
-      if (image) figureNumber += 1;
+      const storedImages = storedEntryImages(item);
+      const images = storedImages.flatMap((storedImage) => {
+        const image = hydrateImage(storedImage?.imageId);
+        if (!image) return [];
+        figureNumber += 1;
+        return [{
+          imageId: storedImage.imageId,
+          caption: typeof storedImage.caption === "string" ? storedImage.caption : "",
+          image,
+          figureNumber,
+        }];
+      });
       return {
-        ...item,
-        image,
-        figureNumber: image ? figureNumber : null,
+        id: item.id,
+        title: item.title,
+        bodyHtml: item.bodyHtml,
+        imageLayout: images.length > 0
+          ? (IMAGE_LAYOUTS.has(item.imageLayout) && item.imageLayout !== "none"
+            ? item.imageLayout
+            : (images.length > 1 ? "gallery" : "right"))
+          : "none",
+        bugFixLevel: item.bugFixLevel ?? null,
+        images,
       };
     }),
   }));
@@ -615,6 +532,29 @@ async function completeImageUpload(request, response, next) {
   }
 }
 
+async function cancelPendingImageUpload(request, response, next) {
+  try {
+    const updateReference = db.doc(`updates/${request.params.updateId}`);
+    const imageReference = updateReference.collection("images").doc(request.params.imageId);
+    const [updateSnapshot, imageSnapshot] = await Promise.all([
+      updateReference.get(),
+      imageReference.get(),
+    ]);
+    if (!updateSnapshot.exists) throw httpError(404, "Update not found.");
+    if (!imageSnapshot.exists || imageSnapshot.data().status !== "pending") {
+      response.sendStatus(204);
+      return;
+    }
+
+    const image = imageSnapshot.data();
+    await deleteAttachmentObject(image.objectKey, { ignoreMissing: true }).catch(() => false);
+    await imageReference.delete();
+    response.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export function createPublicUpdateRouter() {
   const router = express.Router();
   router.get("/", listPublishedUpdates);
@@ -632,5 +572,6 @@ export function createAdminUpdateRouter() {
   router.delete("/:updateId", requireCsrf, deleteUpdate);
   router.post("/:updateId/images", requireCsrf, beginImageUpload);
   router.post("/:updateId/images/:imageId/complete", requireCsrf, completeImageUpload);
+  router.delete("/:updateId/images/pending/:imageId", requireCsrf, cancelPendingImageUpload);
   return router;
 }
