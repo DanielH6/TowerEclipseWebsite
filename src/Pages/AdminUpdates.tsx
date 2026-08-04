@@ -40,7 +40,7 @@ export default function AdminUpdatesPage() {
         <div>
           <p className="workspace-kicker">DEVELOPER ADMIN</p>
           <h2>UPDATE EDITOR</h2>
-          <p>Create structured patch notes with WYSIWYG fields, images, figure numbering, and draft publishing.</p>
+          <p>Create structured patch notes with rich-text tables, multi-image galleries, figure numbering, and draft publishing.</p>
         </div>
         <div className="workspace-header-actions">
           <Link className="ghost-link" to="/admin">DICTIONARIES</Link>

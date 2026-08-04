@@ -838,6 +838,14 @@ export async function uploadUpdateImage(
     const completed = await readJson<{ image: UpdateImage }>(completeResponse);
     return completed.image;
   } catch (error) {
+    await fetch(
+      `/api/admin/updates/${encodedUpdateId}/images/pending/${encodeURIComponent(ticket.imageId)}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken },
+      },
+    ).catch(() => undefined);
     throw error;
   }
 }

@@ -17,6 +17,7 @@
 }
 
 .rich-editor-toolbar {
+  position: relative;
   min-height: 42px;
   padding: 5px;
   display: flex;
@@ -48,6 +49,12 @@
   color: #fff;
 }
 
+.rich-editor-toolbar button.active {
+  border-color: rgba(124, 131, 255, 0.7);
+  color: #fff;
+  background: rgba(91, 101, 242, 0.24);
+}
+
 .rich-editor-toolbar button:disabled,
 .rich-editor-toolbar select:disabled {
   cursor: not-allowed;
@@ -61,6 +68,7 @@
   outline: none;
   line-height: 1.65;
   overflow-wrap: anywhere;
+  overflow-x: auto;
 }
 
 .rich-editor-field.compact .rich-editor-canvas {
@@ -97,8 +105,102 @@
   color: #9097ff;
 }
 
+.rich-editor-canvas table {
+  width: 100%;
+  min-width: 480px;
+  margin: 1em 0;
+  border-spacing: 0;
+  border-collapse: separate;
+  border: 1px solid rgba(144, 151, 255, 0.28);
+}
+
+.rich-editor-canvas th,
+.rich-editor-canvas td {
+  min-width: 92px;
+  padding: 10px 12px;
+  border-right: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  vertical-align: top;
+}
+
+.rich-editor-canvas th {
+  color: #fff;
+  background: rgba(91, 101, 242, 0.2);
+  text-align: left;
+}
+
+.rich-editor-canvas tr > :last-child {
+  border-right: 0;
+}
+
+.rich-editor-canvas tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.rich-table-builder {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 7px);
+  right: 6px;
+  width: min(430px, calc(100vw - 56px));
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 1px solid rgba(124, 131, 255, 0.42);
+  border-radius: 10px;
+  background: #11151d;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48), 0 0 24px rgba(91, 101, 242, 0.08);
+}
+
+.rich-table-builder label {
+  display: grid;
+  gap: 5px;
+}
+
+.rich-table-builder label > span {
+  color: #929bad;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.rich-table-builder input[type="number"] {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 9px;
+  color: #fff;
+  background: #080b10;
+  font: inherit;
+}
+
+.rich-table-builder .rich-table-header-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rich-table-builder .rich-table-header-toggle input {
+  accent-color: #7c83ff;
+}
+
+.rich-table-builder .rich-table-insert {
+  border-color: rgba(124, 131, 255, 0.5);
+  background: linear-gradient(135deg, #4f59d8, #7069e8);
+}
+
 @media (max-width: 680px) {
   .rich-editor-toolbar select {
     width: 100%;
+  }
+
+  .rich-table-builder {
+    right: 0;
+    left: 0;
+    width: auto;
+    grid-template-columns: 1fr;
   }
 }

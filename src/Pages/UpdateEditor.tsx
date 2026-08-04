@@ -7,6 +7,7 @@ import type {
   BugFixLevel,
   GameUpdate,
   UpdateEntry,
+  UpdateEntryImage,
   UpdateImage,
   UpdateImageLayout,
   UpdateInput,
@@ -17,11 +18,13 @@ import type {
 import "./Updates.css";
 
 const sectionDescriptions: Record<UpdateSectionKind, string> = {
-  new_features: "Major additions and new gameplay systems. Entries can use a text-only layout or an image column.",
+  new_features: "Major additions and new gameplay systems. Entries can use text-only, image-column, or gallery layouts.",
   balancing: "Tower, enemy, economy, progression, and difficulty adjustments.",
   bug_fixes: "Fixes are split into Major and Minor groups automatically.",
   small_changes: "Smaller quality-of-life improvements and miscellaneous changes.",
 };
+
+const MAX_IMAGES_PER_ENTRY = 20;
 
 function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -32,12 +35,9 @@ function createEntry(sectionKind: UpdateSectionKind, bugFixLevel: BugFixLevel | 
     id: makeId("entry"),
     title: "New entry",
     bodyHtml: "<p>Describe the change.</p>",
-    imageId: null,
+    images: [],
     imageLayout: "none",
-    caption: "",
     bugFixLevel: sectionKind === "bug_fixes" ? (bugFixLevel ?? "minor") : null,
-    image: null,
-    figureNumber: null,
   };
 }
 
@@ -64,9 +64,11 @@ function toInput(update: GameUpdate, status: UpdateStatus): UpdateInput {
         id: item.id,
         title: item.title,
         bodyHtml: item.bodyHtml,
-        imageId: item.imageId,
-        imageLayout: item.imageId ? item.imageLayout : "none",
-        caption: item.caption,
+        images: item.images.map((image) => ({
+          imageId: image.imageId,
+          caption: image.caption,
+        })),
+        imageLayout: item.images.length > 0 ? item.imageLayout : "none",
         bugFixLevel: item.bugFixLevel,
       })),
     })),
@@ -80,6 +82,8 @@ export default function UpdateEditorPage() {
   const [update, setUpdate] = useState<GameUpdate | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [collapsedItems, setCollapsedItems] = useState<Set<string>>(() => new Set());
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +93,10 @@ export default function UpdateEditorPage() {
     setLoading(true);
     loadAdminUpdate(updateId)
       .then((result) => {
-        if (active) setUpdate(result);
+        if (active) {
+          setUpdate(result);
+          setDirty(false);
+        }
       })
       .catch((reason) => {
         if (active) setError(reason instanceof Error ? reason.message : "Could not load the update editor.");
@@ -107,13 +114,14 @@ export default function UpdateEditorPage() {
     const ids = new Set<string>();
     if (update.coverImageId) ids.add(update.coverImageId);
     update.sections.forEach((section) => section.items.forEach((item) => {
-      if (item.imageId) ids.add(item.imageId);
+      item.images.forEach((image) => ids.add(image.imageId));
     }));
     return ids.size;
   }, [update]);
 
   function patchUpdate(changes: Partial<GameUpdate>) {
     setUpdate((current) => current ? { ...current, ...changes } : current);
+    setDirty(true);
   }
 
   function patchSection(kind: UpdateSectionKind, transform: (section: UpdateSection) => UpdateSection) {
@@ -121,6 +129,7 @@ export default function UpdateEditorPage() {
       ...current,
       sections: current.sections.map((section) => section.kind === kind ? transform(section) : section),
     } : current);
+    setDirty(true);
   }
 
   function patchItem(kind: UpdateSectionKind, itemId: string, changes: Partial<UpdateEntry>) {
@@ -141,6 +150,80 @@ export default function UpdateEditorPage() {
     patchSection(kind, (section) => ({
       ...section,
       items: section.items.filter((item) => item.id !== itemId),
+    }));
+    setCollapsedItems((current) => {
+      const next = new Set(current);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
+  function duplicateItem(kind: UpdateSectionKind, itemId: string) {
+    patchSection(kind, (section) => {
+      const index = section.items.findIndex((item) => item.id === itemId);
+      if (index < 0) return section;
+      const source = section.items[index]!;
+      const duplicate: UpdateEntry = {
+        ...source,
+        id: makeId("entry"),
+        title: `${source.title} (copy)`.slice(0, 180),
+        images: source.images.map((image) => ({ ...image })),
+      };
+      const items = [...section.items];
+      items.splice(index + 1, 0, duplicate);
+      return { ...section, items };
+    });
+  }
+
+  function moveEntryImage(
+    kind: UpdateSectionKind,
+    itemId: string,
+    imageId: string,
+    direction: -1 | 1,
+  ) {
+    patchSection(kind, (section) => ({
+      ...section,
+      items: section.items.map((item) => {
+        if (item.id !== itemId) return item;
+        const index = item.images.findIndex((image) => image.imageId === imageId);
+        const target = index + direction;
+        if (index < 0 || target < 0 || target >= item.images.length) return item;
+        const images = [...item.images];
+        const currentImage = images[index]!;
+        images[index] = images[target]!;
+        images[target] = currentImage;
+        return { ...item, images };
+      }),
+    }));
+  }
+
+  function patchEntryImage(
+    kind: UpdateSectionKind,
+    itemId: string,
+    imageId: string,
+    changes: Partial<UpdateEntryImage>,
+  ) {
+    patchSection(kind, (section) => ({
+      ...section,
+      items: section.items.map((item) => item.id === itemId ? {
+        ...item,
+        images: item.images.map((image) => image.imageId === imageId ? { ...image, ...changes } : image),
+      } : item),
+    }));
+  }
+
+  function removeEntryImage(kind: UpdateSectionKind, itemId: string, imageId: string) {
+    patchSection(kind, (section) => ({
+      ...section,
+      items: section.items.map((item) => {
+        if (item.id !== itemId) return item;
+        const images = item.images.filter((image) => image.imageId !== imageId);
+        return {
+          ...item,
+          images,
+          imageLayout: images.length === 0 ? "none" : item.imageLayout,
+        };
+      }),
     }));
   }
 
@@ -165,7 +248,8 @@ export default function UpdateEditorPage() {
     try {
       const saved = await saveGameUpdate(update.id, toInput(update, status), auth.csrfToken);
       setUpdate(saved);
-      setNotice(status === "published" ? "Update published." : "Draft saved.");
+      setDirty(false);
+      setNotice(status === "published" ? "Update published." : `Draft saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save the update.");
     } finally {
@@ -173,30 +257,57 @@ export default function UpdateEditorPage() {
     }
   }
 
-  async function uploadImage(file: File): Promise<UpdateImage | null> {
-    if (!auth || !update) return null;
+  useEffect(() => {
+    function warnAboutUnsavedChanges(event: BeforeUnloadEvent) {
+      if (!dirty) return;
+      event.preventDefault();
+    }
+    window.addEventListener("beforeunload", warnAboutUnsavedChanges);
+    return () => window.removeEventListener("beforeunload", warnAboutUnsavedChanges);
+  }, [dirty]);
+
+  useEffect(() => {
+    function saveWithShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      if (!working) void save("draft");
+    }
+    window.addEventListener("keydown", saveWithShortcut);
+    return () => window.removeEventListener("keydown", saveWithShortcut);
+  }, [auth, update, working]);
+
+  function validateImageFiles(files: File[]) {
     const allowed = new Set(["image/png", "image/jpeg"]);
-    if (!allowed.has(file.type)) {
-      setError("Use a PNG, JPG, or JPEG image.");
-      return null;
+    const unsupported = files.find((file) => !allowed.has(file.type));
+    if (unsupported) {
+      setError(`${unsupported.name} is not supported. Use PNG, JPG, or JPEG images.`);
+      return false;
     }
-    if (file.size > update.imagePolicy.maxFileSizeBytes) {
-      setError(`Images may not exceed ${formatFileSize(update.imagePolicy.maxFileSizeBytes)}.`);
-      return null;
+    const oversized = files.find((file) => update && file.size > update.imagePolicy.maxFileSizeBytes);
+    if (oversized && update) {
+      setError(`${oversized.name} exceeds the ${formatFileSize(update.imagePolicy.maxFileSizeBytes)} limit.`);
+      return false;
     }
+    return true;
+  }
+
+  async function uploadImages(files: File[]): Promise<UpdateImage[]> {
+    if (!auth || !update || files.length === 0 || !validateImageFiles(files)) return [];
     setWorking(true);
     setError(null);
     setNotice(null);
-    setUploadMessage(`Uploading ${file.name}…`);
+    const uploaded: UpdateImage[] = [];
     try {
-      const image = await uploadUpdateImage(update.id, file, auth.csrfToken);
-      setUploadMessage(null);
-      return image;
+      for (const [index, file] of files.entries()) {
+        setUploadMessage(`Uploading ${index + 1}/${files.length}: ${file.name}…`);
+        uploaded.push(await uploadUpdateImage(update.id, file, auth.csrfToken));
+      }
+      return uploaded;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not upload the image.");
-      setUploadMessage(null);
-      return null;
+      return uploaded;
     } finally {
+      setUploadMessage(null);
       setWorking(false);
     }
   }
@@ -205,22 +316,48 @@ export default function UpdateEditorPage() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const image = await uploadImage(file);
+    const [image] = await uploadImages([file]);
     if (image) patchUpdate({ coverImageId: image.id, coverImage: image });
   }
 
-  async function uploadEntryImage(kind: UpdateSectionKind, itemId: string, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function uploadEntryImages(kind: UpdateSectionKind, itemId: string, event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!file) return;
-    const image = await uploadImage(file);
-    if (image) {
-      patchItem(kind, itemId, {
-        imageId: image.id,
-        image,
-        imageLayout: "right",
-      });
+    if (files.length === 0 || !update) return;
+    const item = update.sections.find((section) => section.kind === kind)?.items.find((entry) => entry.id === itemId);
+    if (!item) return;
+    const entrySlots = MAX_IMAGES_PER_ENTRY - item.images.length;
+    if (files.length > entrySlots) {
+      setError(`This entry can contain at most ${MAX_IMAGES_PER_ENTRY} images. You can add ${entrySlots} more.`);
+      return;
     }
+    const updateSlots = update.imagePolicy.maxImagesPerUpdate - usedImageCount;
+    if (files.length > updateSlots) {
+      setError(`This update has room for ${Math.max(0, updateSlots)} more uploaded images.`);
+      return;
+    }
+    const uploaded = await uploadImages(files);
+    if (uploaded.length === 0) return;
+    patchSection(kind, (section) => ({
+      ...section,
+      items: section.items.map((entry) => {
+        if (entry.id !== itemId) return entry;
+        const images = [
+          ...entry.images,
+          ...uploaded.map((image) => ({
+            imageId: image.id,
+            caption: "",
+            image,
+            figureNumber: null,
+          })),
+        ];
+        return {
+          ...entry,
+          images,
+          imageLayout: images.length > 1 ? "gallery" : (entry.imageLayout === "none" ? "right" : entry.imageLayout),
+        };
+      }),
+    }));
   }
 
   if (loading) {
@@ -240,17 +377,31 @@ export default function UpdateEditorPage() {
   }
 
   function renderEntry(section: UpdateSection, item: UpdateEntry, index: number) {
+    const isCollapsed = collapsedItems.has(item.id);
     return (
-      <article className="update-entry-editor" key={item.id}>
+      <article className={`update-entry-editor ${isCollapsed ? "is-collapsed" : ""}`} key={item.id}>
         <div className="update-entry-editor-heading">
-          <span>ENTRY {index + 1}</span>
+          <span>ENTRY {index + 1} <strong>{item.title}</strong></span>
           <div>
-            <button type="button" disabled={working || index === 0} onClick={() => moveItem(section.kind, item.id, -1)}>↑</button>
-            <button type="button" disabled={working || index === section.items.length - 1} onClick={() => moveItem(section.kind, item.id, 1)}>↓</button>
+            <button
+              type="button"
+              aria-expanded={!isCollapsed}
+              onClick={() => setCollapsedItems((current) => {
+                const next = new Set(current);
+                if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                return next;
+              })}
+            >
+              {isCollapsed ? "EXPAND" : "COLLAPSE"}
+            </button>
+            <button type="button" aria-label={`Move ${item.title} up`} disabled={working || index === 0} onClick={() => moveItem(section.kind, item.id, -1)}>↑</button>
+            <button type="button" aria-label={`Move ${item.title} down`} disabled={working || index === section.items.length - 1} onClick={() => moveItem(section.kind, item.id, 1)}>↓</button>
+            <button type="button" disabled={working} onClick={() => duplicateItem(section.kind, item.id)}>DUPLICATE</button>
             <button className="danger-action" type="button" disabled={working} onClick={() => removeItem(section.kind, item.id)}>REMOVE</button>
           </div>
         </div>
 
+        {!isCollapsed && <>
         <div className="update-entry-grid">
           <label className="editor-field">
             <span>Entry title</span>
@@ -288,57 +439,71 @@ export default function UpdateEditorPage() {
         <div className="entry-image-editor">
           <div className="entry-image-controls">
             <div>
-              <strong>OPTIONAL IMAGE</strong>
-              <small>PNG, JPG, or JPEG. Images are automatically numbered as Figure 1, Figure 2, and so on.</small>
+              <strong>IMAGE GALLERY · {item.images.length}/{MAX_IMAGES_PER_ENTRY}</strong>
+              <small>Select several files at once or add more later. Drag-free arrow controls keep the published order predictable.</small>
             </div>
             <label className="attachment-select-button">
-              {item.imageId ? "REPLACE IMAGE" : "ADD IMAGE"}
-              <input type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" disabled={working || !update?.imagePolicy.enabled} onChange={(event) => void uploadEntryImage(section.kind, item.id, event)} />
+              {item.images.length > 0 ? "ADD MORE IMAGES" : "ADD IMAGES"}
+              <input
+                type="file"
+                accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                multiple
+                disabled={working || !update?.imagePolicy.enabled || item.images.length >= MAX_IMAGES_PER_ENTRY}
+                onChange={(event) => void uploadEntryImages(section.kind, item.id, event)}
+              />
             </label>
           </div>
 
-          {item.image?.downloadUrl && (
-            <div className="entry-image-preview-row">
-              <img src={item.image.downloadUrl} alt="" />
-              <div className="entry-image-options">
-                <label className="editor-field">
-                  <span>Layout</span>
-                  <select
-                    value={item.imageLayout}
-                    disabled={working}
-                    onChange={(event) => patchItem(section.kind, item.id, { imageLayout: event.target.value as UpdateImageLayout })}
-                  >
-                    <option value="left">Image column left</option>
-                    <option value="right">Image column right</option>
-                  </select>
-                </label>
-                <label className="editor-field">
-                  <span>Figure caption</span>
-                  <input
-                    value={item.caption}
-                    maxLength={300}
-                    disabled={working}
-                    placeholder="Defaults to the entry title"
-                    onChange={(event) => patchItem(section.kind, item.id, { caption: event.target.value })}
-                  />
-                </label>
-                <button
-                  className="danger-action"
-                  type="button"
-                  disabled={working}
-                  onClick={() => patchItem(section.kind, item.id, {
-                    imageId: null,
-                    image: null,
-                    imageLayout: "none",
-                    caption: "",
-                  })}
-                >
-                  REMOVE IMAGE
-                </button>
-              </div>
+          {item.images.length > 0 && (
+            <label className="editor-field entry-gallery-layout">
+              <span>Published image layout</span>
+              <select
+                value={item.imageLayout}
+                disabled={working}
+                onChange={(event) => patchItem(section.kind, item.id, { imageLayout: event.target.value as UpdateImageLayout })}
+              >
+                <option value="gallery">Full-width responsive gallery</option>
+                <option value="left">Image column left</option>
+                <option value="right">Image column right</option>
+              </select>
+            </label>
+          )}
+
+          {item.images.length > 0 && (
+            <div className="entry-image-list">
+              {item.images.map((entryImage, imageIndex) => (
+                <article className="entry-image-card" key={entryImage.imageId}>
+                  <div className="entry-image-preview">
+                    {entryImage.image?.downloadUrl ? (
+                      <img src={entryImage.image.downloadUrl} alt="" />
+                    ) : (
+                      <span>PREVIEW UNAVAILABLE</span>
+                    )}
+                    <strong>IMAGE {imageIndex + 1}</strong>
+                  </div>
+                  <div className="entry-image-options">
+                    <label className="editor-field">
+                      <span>Figure caption</span>
+                      <input
+                        value={entryImage.caption}
+                        maxLength={300}
+                        disabled={working}
+                        placeholder={`Defaults to ${item.title}`}
+                        onChange={(event) => patchEntryImage(section.kind, item.id, entryImage.imageId, { caption: event.target.value })}
+                      />
+                    </label>
+                    <div className="entry-image-actions">
+                      <button type="button" aria-label={`Move image ${imageIndex + 1} left`} disabled={working || imageIndex === 0} onClick={() => moveEntryImage(section.kind, item.id, entryImage.imageId, -1)}>←</button>
+                      <button type="button" aria-label={`Move image ${imageIndex + 1} right`} disabled={working || imageIndex === item.images.length - 1} onClick={() => moveEntryImage(section.kind, item.id, entryImage.imageId, 1)}>→</button>
+                      <button className="danger-action" type="button" disabled={working} onClick={() => removeEntryImage(section.kind, item.id, entryImage.imageId)}>REMOVE</button>
+                    </div>
+                  </div>
+                </article>
+              ))}
             </div>
           )}
         </div>
+        </>}
       </article>
     );
   }
@@ -350,7 +515,7 @@ export default function UpdateEditorPage() {
           <p className="workspace-kicker">DEVELOPER ADMIN</p>
           <h2>{update.title}</h2>
           <p>
-            {update.status === "published" ? "Published update" : "Draft update"} · {usedImageCount}/{update.imagePolicy.maxImagesPerUpdate || 0} referenced images
+            {update.status === "published" ? "Published update" : "Draft update"} · {usedImageCount}/{update.imagePolicy.maxImagesPerUpdate || 0} referenced images · {dirty ? "Unsaved changes" : "All changes saved"}
           </p>
         </div>
         <div className="workspace-header-actions">
@@ -359,8 +524,21 @@ export default function UpdateEditorPage() {
         </div>
       </div>
 
+      <nav className="update-editor-outline" aria-label="Update editor sections">
+        <a href="#update-header">Header</a>
+        {update.sections.map((section) => (
+          <a href={`#update-${section.kind}`} key={section.kind}>
+            {section.title} <span>{section.items.length}</span>
+          </a>
+        ))}
+        <div>
+          <button type="button" onClick={() => setCollapsedItems(new Set(update.sections.flatMap((section) => section.items.map((item) => item.id))))}>COLLAPSE ENTRIES</button>
+          <button type="button" onClick={() => setCollapsedItems(new Set())}>EXPAND ENTRIES</button>
+        </div>
+      </nav>
+
       <div className="update-editor-stack">
-        <article className="panel-card update-meta-editor">
+        <article className="panel-card update-meta-editor" id="update-header">
           <div className="update-editor-section-title">
             <div>
               <p className="workspace-kicker">UPDATE DETAILS</p>
@@ -418,7 +596,7 @@ export default function UpdateEditorPage() {
           const minorItems = section.kind === "bug_fixes" ? section.items.filter((item) => item.bugFixLevel !== "major") : [];
 
           return (
-            <article className={`panel-card update-section-editor section-${section.kind}`} key={section.kind}>
+            <article className={`panel-card update-section-editor section-${section.kind}`} id={`update-${section.kind}`} key={section.kind}>
               <div className="update-editor-section-title">
                 <div>
                   <p className="workspace-kicker">BLOCK TEMPLATE</p>
@@ -483,7 +661,7 @@ export default function UpdateEditorPage() {
           {update.status === "published" && (
             <button className="ghost-action" type="button" disabled={working} onClick={() => void save("draft")}>UNPUBLISH</button>
           )}
-          <button className="ghost-action" type="button" disabled={working} onClick={() => void save("draft")}>{working ? "WORKING…" : "SAVE DRAFT"}</button>
+          <button className="ghost-action" type="button" disabled={working || !dirty} title="Save draft (Ctrl/Cmd + S)" onClick={() => void save("draft")}>{working ? "WORKING…" : "SAVE DRAFT"}</button>
           <button className="primary-action" type="button" disabled={working} onClick={() => void save("published")}>{working ? "WORKING…" : update.status === "published" ? "SAVE & PUBLISH" : "PUBLISH UPDATE"}</button>
         </div>
       </div>
