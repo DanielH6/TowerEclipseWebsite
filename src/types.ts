@@ -330,3 +330,94 @@ export type TournamentSummary = Omit<
   previewGroups: TournamentPreviewGroup[];
   recentResult: TournamentLogEntry | null;
 };
+
+export type UpdateStatus = "draft" | "published";
+export type UpdateSectionKind =
+  | "new_features"
+  | "balancing"
+  | "bug_fixes"
+  | "small_changes";
+export type UpdateImageLayout = "none" | "left" | "right";
+export type BugFixLevel = "major" | "minor";
+
+export interface UpdateImagePolicy {
+  enabled: boolean;
+  maxFileSizeBytes: number;
+  maxImagesPerUpdate: number;
+  uploadUrlTtlSeconds: number;
+  downloadUrlTtlSeconds: number;
+  allowedExtensions: string[];
+}
+
+export interface UpdateImage {
+  id: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  status: "ready";
+  uploader: ActorSnapshot;
+  createdAt: string;
+  uploadedAt: string | null;
+  etag: string | null;
+  downloadUrl: string | null;
+}
+
+export interface UpdateEntry {
+  id: string;
+  title: string;
+  bodyHtml: string;
+  imageId: string | null;
+  imageLayout: UpdateImageLayout;
+  caption: string;
+  bugFixLevel: BugFixLevel | null;
+  image?: UpdateImage | null;
+  figureNumber?: number | null;
+}
+
+export interface UpdateSection {
+  id: string;
+  kind: UpdateSectionKind;
+  title: string;
+  introHtml: string;
+  items: UpdateEntry[];
+}
+
+export interface GameUpdate {
+  id: string;
+  title: string;
+  version: string;
+  developerCommentHtml: string;
+  coverImageId: string | null;
+  coverImage: UpdateImage | null;
+  status: UpdateStatus;
+  sections: UpdateSection[];
+  author: ActorSnapshot;
+  lastEditedBy: ActorSnapshot;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+  imagePolicy: UpdateImagePolicy;
+}
+
+export interface UpdateInput {
+  title: string;
+  version: string;
+  developerCommentHtml: string;
+  coverImageId: string | null;
+  status: UpdateStatus;
+  sections: Array<{
+    id: string;
+    kind: UpdateSectionKind;
+    title: string;
+    introHtml: string;
+    items: Array<{
+      id: string;
+      title: string;
+      bodyHtml: string;
+      imageId: string | null;
+      imageLayout: UpdateImageLayout;
+      caption: string;
+      bugFixLevel: BugFixLevel | null;
+    }>;
+  }>;
+}

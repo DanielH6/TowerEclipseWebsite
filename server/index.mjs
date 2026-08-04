@@ -43,6 +43,7 @@ import {
   createTournamentAdminRouter,
   createTournamentPublicRouter,
 } from "./tournament-routes.mjs";
+import { createAdminUpdateRouter, createPublicUpdateRouter } from "./updates.mjs";
 
 const app = express();
 const robloxStats = createRobloxStatsService(config.roblox);
@@ -119,7 +120,7 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: "32kb" }));
+app.use(express.json({ limit: "768kb" }));
 
 app.use("/api", (_request, response, next) => {
   response.setHeader("Cache-Control", "no-store");
@@ -406,6 +407,8 @@ app.post(
 app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());
+app.use("/api/admin/updates", requireFirestoreReady, createAdminUpdateRouter());
+app.use("/api/updates", requireFirestoreReady, createPublicUpdateRouter());
 app.use("/api/tournaments", requireFirestoreReady, createTournamentPublicRouter());
 app.use("/api/admin/tournaments", requireFirestoreReady, createTournamentAdminRouter());
 

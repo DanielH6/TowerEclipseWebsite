@@ -9,6 +9,9 @@ import type {
   Dictionaries,
   DictionaryEntry,
   DictionaryName,
+  UpdateInput,
+  UpdateImage,
+  GameUpdate,
   RobloxStats,
   Tournament,
   TournamentParticipant,
@@ -706,4 +709,135 @@ export function addTournamentAnnouncement(
   csrfToken: string,
 ) {
   return tournamentAction(tournamentId, "log", csrfToken, input);
+}
+
+export async function loadPublishedUpdates(): Promise<GameUpdate[]> {
+  const response = await fetch("/api/updates", {
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ updates: GameUpdate[] }>(response);
+  return body.updates;
+}
+
+export async function loadPublishedUpdate(updateId: string): Promise<GameUpdate> {
+  const response = await fetch(`/api/updates/${encodeURIComponent(updateId)}`, {
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ update: GameUpdate }>(response);
+  return body.update;
+}
+
+export async function loadAdminUpdates(): Promise<GameUpdate[]> {
+  const response = await fetch("/api/admin/updates", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ updates: GameUpdate[] }>(response);
+  return body.updates;
+}
+
+export async function createGameUpdate(csrfToken: string): Promise<GameUpdate> {
+  const response = await fetch("/api/admin/updates", {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: "{}",
+  });
+  const body = await readJson<{ update: GameUpdate }>(response);
+  return body.update;
+}
+
+export async function loadAdminUpdate(updateId: string): Promise<GameUpdate> {
+  const response = await fetch(`/api/admin/updates/${encodeURIComponent(updateId)}`, {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const body = await readJson<{ update: GameUpdate }>(response);
+  return body.update;
+}
+
+export async function saveGameUpdate(
+  updateId: string,
+  input: UpdateInput,
+  csrfToken: string,
+): Promise<GameUpdate> {
+  const response = await fetch(`/api/admin/updates/${encodeURIComponent(updateId)}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify(input),
+  });
+  const body = await readJson<{ update: GameUpdate }>(response);
+  return body.update;
+}
+
+export async function deleteGameUpdate(updateId: string, csrfToken: string): Promise<void> {
+  const response = await fetch(`/api/admin/updates/${encodeURIComponent(updateId)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  if (!response.ok) await readJson(response);
+}
+
+export async function uploadUpdateImage(
+  updateId: string,
+  file: File,
+  csrfToken: string,
+): Promise<UpdateImage> {
+  const encodedUpdateId = encodeURIComponent(updateId);
+  const beginResponse = await fetch(`/api/admin/updates/${encodedUpdateId}/images`, {
+    method: "POST",
+    credentials: "include",
+    headers: writeHeaders(csrfToken),
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type,
+      size: file.size,
+    }),
+  });
+  const ticket = await readJson<{
+    imageId: string;
+    uploadUrl: string;
+    uploadHeaders: Record<string, string>;
+  }>(beginResponse);
+
+  try {
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await fetch(ticket.uploadUrl, {
+        method: "PUT",
+        headers: ticket.uploadHeaders,
+        body: file,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new Error(
+          "The browser could not reach R2. Check that the bucket CORS policy contains this exact website origin and allows PUT with the Content-Type header.",
+        );
+      }
+      throw error;
+    }
+
+    if (!uploadResponse.ok) {
+      const details = await uploadResponse.text().catch(() => "");
+      throw new Error(
+        `R2 upload failed with status ${uploadResponse.status}${details ? `: ${details}` : "."}`,
+      );
+    }
+
+    const completeResponse = await fetch(
+      `/api/admin/updates/${encodedUpdateId}/images/${encodeURIComponent(ticket.imageId)}/complete`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: writeHeaders(csrfToken),
+        body: "{}",
+      },
+    );
+    const completed = await readJson<{ image: UpdateImage }>(completeResponse);
+    return completed.image;
+  } catch (error) {
+    throw error;
+  }
 }

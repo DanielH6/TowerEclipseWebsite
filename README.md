@@ -83,3 +83,22 @@ QA Leads remain comments-only after a report becomes terminal. Only developers c
 /admin
 /login
 ```
+
+## News and update editor
+
+Developers can manage patch notes at `/admin/updates`. Published updates appear at `/news` and `/news/:id`. The editor includes WYSIWYG fields for developer comments, section introductions, and update entries, plus R2-backed cover and entry images.
+
+Supported update sections:
+
+- New Features
+- Balancing Changes
+- Bug Fixes, split into Major and Minor
+- Small Changes
+
+Optional environment setting:
+
+```env
+R2_MAX_IMAGES_PER_UPDATE=50
+```
+
+The existing R2 credentials and CORS policy are reused for update images.
