@@ -172,6 +172,7 @@ if (configuredR2Values === Object.keys(r2Values).length) {
     maxFileSizeBytes:
       integer("R2_MAX_FILE_SIZE_MB", 25, 1, 100) * 1024 * 1024,
     maxFilesPerReport: integer("R2_MAX_FILES_PER_REPORT", 10, 1, 30),
+    maxImagesPerUpdate: integer("R2_MAX_IMAGES_PER_UPDATE", 50, 1, 120),
   });
 }
 

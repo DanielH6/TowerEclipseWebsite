@@ -225,6 +225,18 @@ export function normalizeAttachmentInput({ fileName, contentType, size }) {
   };
 }
 
+export function updateImageStoragePolicy() {
+  const r2 = config.r2;
+  return {
+    enabled: Boolean(r2),
+    maxFileSizeBytes: r2?.maxFileSizeBytes ?? 0,
+    maxImagesPerUpdate: r2?.maxImagesPerUpdate ?? 0,
+    uploadUrlTtlSeconds: r2?.uploadUrlTtlSeconds ?? 0,
+    downloadUrlTtlSeconds: r2?.downloadUrlTtlSeconds ?? 0,
+    allowedExtensions: [...FILE_TYPES.keys()].map((value) => value.slice(1)),
+  };
+}
+
 export function attachmentStoragePolicy() {
   const r2 = config.r2;
   return {

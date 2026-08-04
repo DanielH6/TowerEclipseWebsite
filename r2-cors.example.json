@@ -1,0 +1,23 @@
+[
+  {
+    "AllowedOrigins": [
+      "http://localhost:5173",
+      "https://towereclipse.com",
+      "https://www.towereclipse.com"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "Content-Type"
+    ],
+    "ExposeHeaders": [
+      "ETag",
+      "Content-Length",
+      "Content-Type"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]

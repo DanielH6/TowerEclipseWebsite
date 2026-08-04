@@ -12,6 +12,9 @@ import BugsPage from "./Pages/Bugs";
 import NewBugPage from "./Pages/NewBug";
 import BugDetailsPage from "./Pages/BugDetails";
 import AdminPage from "./Pages/Admin";
+import AdminUpdatesPage from "./Pages/AdminUpdates";
+import UpdateEditorPage from "./Pages/UpdateEditor";
+import UpdateDetailsPage from "./Pages/UpdateDetails";
 import { BUG_STAFF_ROLES } from "./roles";
 import "./App.css";
 
@@ -209,8 +212,21 @@ function AppRoutes() {
     element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;
   }
   else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
+  else if (pathname === "/admin/updates") element = <ProtectedRoute role="dev"><AdminUpdatesPage /></ProtectedRoute>;
   else {
-    const tournamentManagerMatch = pathname.match(/^\/esports\/manage\/([^/]+)$/);
+    const newsMatch = pathname.match(/^\/news\/([^/]+)$/);
+    const publicUpdateId = newsMatch?.[1];
+    const updateEditorMatch = pathname.match(/^\/admin\/updates\/([^/]+)$/);
+    const updateId = updateEditorMatch?.[1];
+
+    if (publicUpdateId) {
+      params = { updateId: decodeURIComponent(publicUpdateId) };
+      element = <UpdateDetailsPage />;
+    } else if (updateId) {
+      params = { updateId: decodeURIComponent(updateId) };
+      element = <ProtectedRoute role="dev"><UpdateEditorPage /></ProtectedRoute>;
+    } else {
+      const tournamentManagerMatch = pathname.match(/^\/esports\/manage\/([^/]+)$/);
     const managedTournamentId = tournamentManagerMatch?.[1];
     if (managedTournamentId) {
       params = { tournamentId: decodeURIComponent(managedTournamentId) };
@@ -231,6 +247,7 @@ function AppRoutes() {
           element = <Navigate to="/" replace />;
         }
       }
+    }
     }
   }
 
