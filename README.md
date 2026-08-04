@@ -39,14 +39,6 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Publish `firestore.rules`. Browser access is denied; the Node API uses the Firebase service account.
 
-## Cloudflare R2 image attachments
-
-Create a private R2 bucket and a bucket-scoped **Object Read & Write** account API token. Add the R2 values shown in `.env.example`.
-
-Apply `r2-cors.example.json` to the bucket. It already includes `http://localhost:5173`, `https://towereclipse.com`, and `https://www.towereclipse.com`. Origins must match exactly and must not include a trailing slash or path.
-
-Images are stored under report-specific object keys. Firestore stores attachment metadata. The actual R2 object remains until a developer removes the attachment/report or an R2 lifecycle rule deletes it. Presigned view URLs are temporary and are regenerated when the report is loaded.
-
 When images are selected during report creation, the report stays hidden as an upload draft. It becomes visible only after every selected image has uploaded and been verified. If any image fails, the API removes the draft and any images that already reached R2. Bug detail pages include an image viewer; select a thumbnail to enlarge it.
 
 Supported images:
@@ -58,10 +50,8 @@ png jpg jpeg
 Default limits:
 
 ```text
-25 MB per file
-10 images per report
-10-minute upload URL
-15-minute download URL
+5 MB per file
+5 images per report
 ```
 
 ## Attachment permissions
