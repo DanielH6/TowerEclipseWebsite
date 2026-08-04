@@ -6,10 +6,12 @@ import "./Updates.css";
 
 function formatDate(value: string | null) {
   if (!value) return "Unpublished";
-  return new Date(value).toLocaleDateString(undefined, {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return date.toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -44,14 +46,14 @@ export default function News() {
     };
   }, []);
 
-  const totalChanges = updates.reduce((total, update) => total + entryCount(update), 0);
   const visibleUpdates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return updates;
     return updates.filter((update) => [update.title, update.version, update.author.displayName]
       .some((value) => value.toLowerCase().includes(normalizedQuery)));
   }, [query, updates]);
-  const latestUpdateId = updates[0]?.id;
+  const currentVersion = updates.find((update) => update.contentType === "game_update" && update.version)?.version ?? "—";
+  const latestFullUpdateId = updates.find((update) => update.contentType === "game_update" && !update.isMinor)?.id;
 
   return (
     <section className="content-band news-page">
@@ -63,8 +65,8 @@ export default function News() {
             <p>Game updates, balancing notes, fixes, and development commentary.</p>
           </div>
           <div className="news-heading-telemetry" aria-label="Published update archive summary">
-            <div><strong>{loading ? "—" : updates.length}</strong><span>PUBLISHED UPDATES</span></div>
-            <div><strong>{loading ? "—" : totalChanges}</strong><span>TRACKED CHANGES</span></div>
+            <div><strong>{loading ? "—" : updates.length}</strong><span>PUBLISHED POSTS</span></div>
+            <div><strong>{loading ? "—" : currentVersion}</strong><span>CURRENT VERSION</span></div>
             <p><i /> DEVELOPMENT FEED ONLINE</p>
           </div>
         </header>
@@ -101,28 +103,32 @@ export default function News() {
           {visibleUpdates.map((update) => {
             const changes = entryCount(update);
             const blocks = populatedSectionCount(update);
-            const isLatest = update.id === latestUpdateId;
+            const isDeveloperBlog = update.contentType === "developer_blog";
+            const isCompact = isDeveloperBlog || update.isMinor;
+            const hasCoverImage = Boolean(update.coverImage?.downloadUrl);
+            const isTextOnlyCompact = isCompact && !hasCoverImage;
+            const isLatest = update.id === latestFullUpdateId;
             return (
-            <article className={`news-card ${isLatest ? "is-latest" : ""}`} key={update.id}>
-              <Link className="news-card-image" to={`/news/${encodeURIComponent(update.id)}`}>
+            <article className={`news-card ${isLatest ? "is-latest" : ""} ${isCompact ? "is-compact" : ""} ${isTextOnlyCompact ? "is-text-only" : ""} type-${update.contentType}`} key={update.id}>
+              {!isTextOnlyCompact && <Link className="news-card-image" to={`/news/${encodeURIComponent(update.id)}`}>
                 {update.coverImage?.downloadUrl ? (
                   <img src={update.coverImage.downloadUrl} alt="" />
                 ) : (
                   <span>TOWER ECLIPSE</span>
                 )}
                 {isLatest && <span className="news-latest-flag">LATEST UPDATE</span>}
-              </Link>
+              </Link>}
               <div className="news-card-copy">
                 <div className="news-card-meta">
-                  <span>VERSION {update.version}</span>
-                  <time dateTime={update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedAt ?? update.updatedAt)}</time>
+                  <span>{isDeveloperBlog ? "DEVELOPER BLOG" : `${update.isMinor ? "MINOR UPDATE · " : ""}VERSION ${update.version}`}</span>
+                  <time dateTime={update.publishedOn ?? update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedOn ?? update.publishedAt ?? update.updatedAt)}</time>
                 </div>
                 <h3><Link to={`/news/${encodeURIComponent(update.id)}`}>{update.title}</Link></h3>
-                <div className="news-card-facts">
+                {!isDeveloperBlog && <div className="news-card-facts">
                   <span>{changes} {changes === 1 ? "change" : "changes"}</span>
                   <span>{blocks} {blocks === 1 ? "section" : "sections"}</span>
-                </div>
-                <Link className="news-read-link" to={`/news/${encodeURIComponent(update.id)}`}>READ UPDATE <span>→</span></Link>
+                </div>}
+                <Link className="news-read-link" to={`/news/${encodeURIComponent(update.id)}`}>READ {isDeveloperBlog ? "BLOG" : "UPDATE"} <span>→</span></Link>
               </div>
             </article>
             );

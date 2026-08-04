@@ -9,6 +9,7 @@ import type {
   Dictionaries,
   DictionaryEntry,
   DictionaryName,
+  NewsContentType,
   UpdateInput,
   UpdateImage,
   GameUpdate,
@@ -736,12 +737,15 @@ export async function loadAdminUpdates(): Promise<GameUpdate[]> {
   return body.updates;
 }
 
-export async function createGameUpdate(csrfToken: string): Promise<GameUpdate> {
+export async function createGameUpdate(
+  csrfToken: string,
+  contentType: NewsContentType = "game_update",
+): Promise<GameUpdate> {
   const response = await fetch("/api/admin/updates", {
     method: "POST",
     credentials: "include",
     headers: writeHeaders(csrfToken),
-    body: "{}",
+    body: JSON.stringify({ contentType }),
   });
   const body = await readJson<{ update: GameUpdate }>(response);
   return body.update;

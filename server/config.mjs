@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { MAX_IMAGES_PER_UPDATE } from "./update-content.mjs";
 
 function optional(name) {
   const value = process.env[name]?.trim();
@@ -172,7 +173,12 @@ if (configuredR2Values === Object.keys(r2Values).length) {
     maxFileSizeBytes:
       integer("R2_MAX_FILE_SIZE_MB", 25, 1, 100) * 1024 * 1024,
     maxFilesPerReport: integer("R2_MAX_FILES_PER_REPORT", 10, 1, 30),
-    maxImagesPerUpdate: integer("R2_MAX_IMAGES_PER_UPDATE", 50, 1, 120),
+    // Keep older deployments that explicitly set the former limit of 50 from
+    // silently retaining it after this release.
+    maxImagesPerUpdate: Math.max(
+      MAX_IMAGES_PER_UPDATE,
+      integer("R2_MAX_IMAGES_PER_UPDATE", MAX_IMAGES_PER_UPDATE, 1, MAX_IMAGES_PER_UPDATE),
+    ),
   });
 }
 
