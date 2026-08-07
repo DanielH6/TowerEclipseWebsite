@@ -28,6 +28,21 @@ import {
   updateRichTextPlainLength as richTextPlainLength,
 } from "./update-content.mjs";
 
+const publicUpdateCacheTtlMs = Math.max(
+  5_000,
+  Number(process.env.FIRESTORE_PUBLIC_UPDATE_CACHE_TTL_SECONDS ?? 60) * 1000,
+);
+let publicUpdateListCache = null;
+let publicUpdateListCacheExpiresAt = 0;
+const publicUpdateDetailCache = new Map();
+
+function invalidatePublicUpdateCache(updateId = null) {
+  publicUpdateListCache = null;
+  publicUpdateListCacheExpiresAt = 0;
+  if (updateId) publicUpdateDetailCache.delete(updateId);
+  else publicUpdateDetailCache.clear();
+}
+
 const SECTION_DEFINITIONS = Object.freeze([
   { kind: "new_features", title: "New Features" },
   { kind: "balancing", title: "Balancing Changes" },
@@ -195,10 +210,22 @@ function collectImageIds(update) {
   return ids;
 }
 
-async function readyImages(reference) {
-  const snapshot = await reference.collection("images").limit(MAX_IMAGES_PER_UPDATE + 100).get();
+async function readyImages(reference, imageIds = null) {
+  let documents;
+  if (imageIds && imageIds.size > 0) {
+    const snapshots = await db.getAll(
+      ...[...imageIds].map((imageId) => reference.collection("images").doc(imageId)),
+    );
+    documents = snapshots.filter((snapshot) => snapshot.exists);
+  } else if (imageIds && imageIds.size === 0) {
+    documents = [];
+  } else {
+    const snapshot = await reference.collection("images").limit(200).get();
+    documents = snapshot.docs;
+  }
+
   return new Map(
-    snapshot.docs
+    documents
       .filter((document) => document.data().status === "ready")
       .map((document) => [document.id, document]),
   );
@@ -219,7 +246,7 @@ function serializeImageDocument(document) {
 async function hydrateUpdate(document, { includeDraft = false } = {}) {
   const value = serializeDocument(document);
   if (!includeDraft && value.status !== "published") return null;
-  const images = await readyImages(document.ref);
+  const images = await readyImages(document.ref, collectImageIds(value));
   let figureNumber = 0;
 
   const hydrateImage = (imageId) => {
@@ -270,10 +297,29 @@ async function hydrateUpdate(document, { includeDraft = false } = {}) {
   };
 }
 
+async function hydrateUpdateSummary(document, { includeDraft = false } = {}) {
+  const value = serializeDocument(document);
+  if (!includeDraft && value.status !== "published") return null;
+
+  let coverImage = null;
+  if (value.coverImageId) {
+    const snapshot = await document.ref.collection("images").doc(value.coverImageId).get();
+    if (snapshot.exists && snapshot.data().status === "ready") {
+      coverImage = serializeImageDocument(snapshot);
+    }
+  }
+
+  return {
+    ...value,
+    coverImage,
+    imagePolicy: updateImageStoragePolicy(),
+  };
+}
+
 async function validateReferencedImages(reference, update) {
   const ids = collectImageIds(update);
   if (ids.size === 0) return;
-  const images = await readyImages(reference);
+  const images = await readyImages(reference, ids);
   for (const id of ids) {
     if (!images.has(id)) {
       throw httpError(400, `Image ${id} is missing or has not finished uploading.`);
@@ -380,10 +426,18 @@ function archiveTime(update) {
 
 async function listPublishedUpdates(_request, response, next) {
   try {
-    const snapshot = await db.collection("updates").where("status", "==", "published").limit(500).get();
-    const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdate(document))))
+    const now = Date.now();
+    if (publicUpdateListCache && now < publicUpdateListCacheExpiresAt) {
+      response.json({ updates: publicUpdateListCache });
+      return;
+    }
+
+    const snapshot = await db.collection("updates").where("status", "==", "published").limit(100).get();
+    const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdateSummary(document))))
       .filter(Boolean)
-      .sort((left, right) => archiveTime(right) - archiveTime(left));
+      .sort((left, right) => new Date(right.publishedAt ?? right.updatedAt).getTime() - new Date(left.publishedAt ?? left.updatedAt).getTime());
+    publicUpdateListCache = updates;
+    publicUpdateListCacheExpiresAt = Date.now() + publicUpdateCacheTtlMs;
     response.json({ updates });
   } catch (error) {
     next(error);
@@ -392,12 +446,23 @@ async function listPublishedUpdates(_request, response, next) {
 
 async function getPublishedUpdate(request, response, next) {
   try {
+    const cached = publicUpdateDetailCache.get(request.params.updateId);
+    if (cached && Date.now() < cached.expiresAt) {
+      response.json({ update: cached.update });
+      return;
+    }
+
     const reference = db.doc(`updates/${request.params.updateId}`);
     const snapshot = await reference.get();
     if (!snapshot.exists || snapshot.data().status !== "published") {
       throw httpError(404, "Update not found.");
     }
-    response.json({ update: await hydrateUpdate(snapshot) });
+    const update = await hydrateUpdate(snapshot);
+    publicUpdateDetailCache.set(request.params.updateId, {
+      update,
+      expiresAt: Date.now() + publicUpdateCacheTtlMs,
+    });
+    response.json({ update });
   } catch (error) {
     next(error);
   }
@@ -405,8 +470,8 @@ async function getPublishedUpdate(request, response, next) {
 
 async function listAdminUpdates(_request, response, next) {
   try {
-    const snapshot = await db.collection("updates").limit(500).get();
-    const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdate(document, { includeDraft: true }))))
+    const snapshot = await db.collection("updates").limit(200).get();
+    const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdateSummary(document, { includeDraft: true }))))
       .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
     response.json({ updates });
   } catch (error) {
@@ -436,6 +501,7 @@ async function createUpdate(request, response, next) {
       publishedAt: null,
       publishedOn: null,
     });
+    invalidatePublicUpdateCache(reference.id);
     response.status(201).json({
       update: await hydrateUpdate(await reference.get(), { includeDraft: true }),
     });
@@ -472,6 +538,7 @@ async function saveUpdate(request, response, next) {
       ...(publishingNow ? { publishedAt: FieldValue.serverTimestamp() } : {}),
     });
     await cleanupUnreferencedImages(reference, normalized);
+    invalidatePublicUpdateCache(reference.id);
     response.json({
       update: await hydrateUpdate(await reference.get(), { includeDraft: true }),
     });
@@ -486,6 +553,7 @@ async function deleteUpdate(request, response, next) {
     const snapshot = await reference.get();
     if (!snapshot.exists) throw httpError(404, "Update not found.");
     await removeUpdateAndImages(reference);
+    invalidatePublicUpdateCache(reference.id);
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -576,6 +644,7 @@ async function completeImageUpload(request, response, next) {
       uploadedAt: FieldValue.serverTimestamp(),
       uploadExpiresAt: null,
     });
+    invalidatePublicUpdateCache(updateReference.id);
     response.status(201).json({
       image: serializeImageDocument(await imageReference.get()),
     });

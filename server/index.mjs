@@ -28,8 +28,8 @@ import { createBugRouter } from "./bug-routes.mjs";
 import {
   createAdminDictionaryRouter,
   createDictionaryRouter,
-  ensureDefaultDictionaries,
 } from "./dictionaries.mjs";
+import { db } from "./firebase.mjs";
 import {
   OAUTH_COOKIE,
   SESSION_COOKIE,
@@ -51,14 +51,11 @@ const robloxStats = createRobloxStatsService(config.roblox);
 let firestoreState = "initializing";
 let firestoreInitializationError = null;
 
-const firestoreReadyPromise = ensureDefaultDictionaries()
-  .then(({ created }) => {
+const firestoreReadyPromise = db.doc("systemCounters/bugReports")
+  .get()
+  .then(() => {
     firestoreState = "ready";
-    console.log(
-      created > 0
-        ? `Firestore dictionaries are ready (${created} defaults created).`
-        : "Firestore dictionaries are ready.",
-    );
+    console.log("Firestore connection is ready.");
     return true;
   })
   .catch((error) => {

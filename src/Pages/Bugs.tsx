@@ -89,13 +89,6 @@ export default function BugsPage() {
 
   useEffect(() => {
     Promise.all([refresh(emptyFilters), loadDictionaries().then(setDictionaries)]).catch(() => undefined);
-
-    const refreshDictionaryStyles = () => {
-      void loadDictionaries().then(setDictionaries).catch(() => undefined);
-    };
-
-    window.addEventListener("focus", refreshDictionaryStyles);
-    return () => window.removeEventListener("focus", refreshDictionaryStyles);
   }, []);
 
   function setFilter(name: keyof BugFilters, value: string) {

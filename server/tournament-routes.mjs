@@ -34,6 +34,20 @@ import {
   normalizeAttachmentInput,
 } from "./r2.mjs";
 
+const tournamentPublicCacheTtlMs = Math.max(
+  5_000,
+  Number(process.env.FIRESTORE_TOURNAMENT_CACHE_TTL_SECONDS ?? 90) * 1000,
+);
+let publicTournamentListCache = null;
+let publicTournamentListCacheExpiresAt = 0;
+const publicTournamentDetailCache = new Map();
+
+function invalidatePublicTournamentCache() {
+  publicTournamentListCache = null;
+  publicTournamentListCacheExpiresAt = 0;
+  publicTournamentDetailCache.clear();
+}
+
 function forwardError(error, next) {
   if (error instanceof TournamentError) {
     error.status = error.status || 400;
@@ -96,7 +110,7 @@ function presentTournamentSummary(tournament) {
 
 async function mutateTournament(tournamentId, transform) {
   const reference = db.doc(`tournaments/${tournamentId}`);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) throw new TournamentError(404, "Tournament not found.");
     const current = tournamentFromSnapshot(snapshot);
@@ -104,6 +118,8 @@ async function mutateTournament(tournamentId, transform) {
     transaction.set(reference, next);
     return next;
   });
+  invalidatePublicTournamentCache();
+  return result;
 }
 
 export function createTournamentPublicRouter() {
@@ -111,9 +127,16 @@ export function createTournamentPublicRouter() {
 
   router.get("/", async (_request, response, next) => {
     try {
+      if (publicTournamentListCache && Date.now() < publicTournamentListCacheExpiresAt) {
+        response.json({ tournaments: publicTournamentListCache });
+        return;
+      }
+
       const tournaments = (await loadAllTournaments())
         .filter((tournament) => tournament.published && tournament.status !== "archived")
         .map(presentTournamentSummary);
+      publicTournamentListCache = tournaments;
+      publicTournamentListCacheExpiresAt = Date.now() + tournamentPublicCacheTtlMs;
       response.json({ tournaments });
     } catch (error) {
       forwardError(error, next);
@@ -122,18 +145,32 @@ export function createTournamentPublicRouter() {
 
   router.get("/:identifier", optionalAuth, async (request, response, next) => {
     try {
+      const developerPreview = request.authSession?.role === "dev";
+      if (!developerPreview) {
+        const cached = publicTournamentDetailCache.get(request.params.identifier);
+        if (cached && Date.now() < cached.expiresAt) {
+          response.json({ tournament: cached.tournament });
+          return;
+        }
+      }
+
       const snapshot = await findTournament(request.params.identifier);
       const tournament = snapshot ? tournamentFromSnapshot(snapshot) : null;
-      const developerPreview = request.authSession?.role === "dev";
       if (!tournament || ((!tournament.published || tournament.status === "archived") && !developerPreview)) {
         response.status(404).json({ error: "Tournament not found." });
         return;
       }
-      response.json({
-        tournament: developerPreview
-          ? presentAdminTournament(tournament)
-          : presentPublicTournament(tournament),
-      });
+
+      const presented = developerPreview
+        ? presentAdminTournament(tournament)
+        : presentPublicTournament(tournament);
+      if (!developerPreview) {
+        publicTournamentDetailCache.set(request.params.identifier, {
+          tournament: presented,
+          expiresAt: Date.now() + tournamentPublicCacheTtlMs,
+        });
+      }
+      response.json({ tournament: presented });
     } catch (error) {
       forwardError(error, next);
     }
@@ -187,6 +224,7 @@ export function createTournamentAdminRouter() {
       });
       await ensureSlugAvailable(tournament.slug);
       await reference.set(tournament);
+      invalidatePublicTournamentCache();
       response.status(201).json({ tournament: presentAdminTournament(tournament) });
     } catch (error) {
       forwardError(error, next);
