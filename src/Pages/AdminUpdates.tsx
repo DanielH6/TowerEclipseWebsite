@@ -2,12 +2,23 @@ import { useEffect, useState } from "react";
 import { createGameUpdate, deleteGameUpdate, loadAdminUpdates } from "../api";
 import { useAuth } from "../AuthContext";
 import { Link, useNavigate } from "../router";
-import type { GameUpdate } from "../types";
+import type { GameUpdate, NewsContentType } from "../types";
 import "./Updates.css";
 
 function formatDate(value: string | null) {
   if (!value) return "Not published";
   return new Date(value).toLocaleString();
+}
+
+function formatPublishedDate(value: string | null) {
+  if (!value) return "Not published";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export default function AdminUpdatesPage() {
@@ -34,35 +45,35 @@ export default function AdminUpdatesPage() {
     void refresh();
   }, []);
 
+  async function createDraft(contentType: NewsContentType) {
+    if (!auth) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const update = await createGameUpdate(auth.csrfToken, contentType);
+      navigate(`/admin/updates/${encodeURIComponent(update.id)}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create a news draft.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   return (
     <section className="workspace-page updates-admin-page">
       <div className="workspace-header">
         <div>
           <p className="workspace-kicker">DEVELOPER ADMIN</p>
           <h2>UPDATE EDITOR</h2>
-          <p>Create structured patch notes with WYSIWYG fields, images, figure numbering, and draft publishing.</p>
+          <p>Create structured patch notes and monthly developer blogs with manual archive dates and rich-text formatting.</p>
         </div>
         <div className="workspace-header-actions">
           <Link className="ghost-link" to="/admin">DICTIONARIES</Link>
-          <button
-            className="primary-action"
-            type="button"
-            disabled={!auth || working}
-            onClick={async () => {
-              if (!auth) return;
-              setWorking(true);
-              setError(null);
-              try {
-                const update = await createGameUpdate(auth.csrfToken);
-                navigate(`/admin/updates/${encodeURIComponent(update.id)}`);
-              } catch (reason) {
-                setError(reason instanceof Error ? reason.message : "Could not create an update draft.");
-              } finally {
-                setWorking(false);
-              }
-            }}
-          >
-            {working ? "CREATING…" : "CREATE UPDATE"}
+          <button className="ghost-action" type="button" disabled={!auth || working} onClick={() => void createDraft("developer_blog")}>
+            {working ? "CREATING…" : "NEW DEVELOPER BLOG"}
+          </button>
+          <button className="primary-action" type="button" disabled={!auth || working} onClick={() => void createDraft("game_update")}>
+            {working ? "CREATING…" : "NEW GAME UPDATE"}
           </button>
         </div>
       </div>
@@ -78,9 +89,11 @@ export default function AdminUpdatesPage() {
           </div>
         )}
         {!loading && updates.map((update) => (
-          <article className="panel-card update-admin-card" key={update.id}>
+          <article className={`panel-card update-admin-card type-${update.contentType} ${update.isMinor ? "is-minor" : ""}`} key={update.id}>
             <div className="update-admin-thumbnail">
-              {update.coverImage?.downloadUrl ? (
+              {update.contentType === "developer_blog" ? (
+                <span>DEV BLOG</span>
+              ) : update.coverImage?.downloadUrl ? (
                 <img src={update.coverImage.downloadUrl} alt="" />
               ) : (
                 <span>NO COVER</span>
@@ -89,11 +102,12 @@ export default function AdminUpdatesPage() {
             <div className="update-admin-copy">
               <div className="update-admin-title-row">
                 <h3>{update.title}</h3>
+                <span className={`update-type ${update.contentType}`}>{update.contentType === "developer_blog" ? "DEV BLOG" : update.isMinor ? "MINOR UPDATE" : "GAME UPDATE"}</span>
                 <span className={`update-state ${update.status}`}>{update.status.toUpperCase()}</span>
               </div>
-              <p>Version {update.version || "not set"}</p>
+              <p>{update.contentType === "developer_blog" ? "Monthly developer journal" : `${update.isMinor ? "Minor update" : "Version"} ${update.version || "not set"}`}</p>
               <small>
-                Last edited {formatDate(update.updatedAt)} · Published {formatDate(update.publishedAt)}
+                Last edited {formatDate(update.updatedAt)} · Display date {formatPublishedDate(update.publishedOn)}
               </small>
             </div>
             <div className="update-admin-actions">
@@ -106,7 +120,7 @@ export default function AdminUpdatesPage() {
                 type="button"
                 disabled={!auth || working}
                 onClick={async () => {
-                  if (!auth || !window.confirm(`Delete ${update.title}? Its R2 images will also be removed.`)) return;
+                  if (!auth || !window.confirm(`Delete ${update.title}? Any associated R2 images will also be removed.`)) return;
                   setWorking(true);
                   setError(null);
                   try {

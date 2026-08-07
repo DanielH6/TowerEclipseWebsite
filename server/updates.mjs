@@ -15,6 +15,18 @@ import {
   normalizeAttachmentInput,
   updateImageStoragePolicy,
 } from "./r2.mjs";
+import {
+  assertPublishableNewsContent,
+  dateOnlyFromValue,
+  MAX_IMAGES_PER_UPDATE,
+  normalizeEntryImages,
+  normalizeMinorFlag,
+  normalizeNewsContentType,
+  normalizePublishedOn,
+  sanitizeUpdateRichText as sanitizeRichText,
+  storedEntryImages,
+  updateRichTextPlainLength as richTextPlainLength,
+} from "./update-content.mjs";
 
 const publicUpdateCacheTtlMs = Math.max(
   5_000,
@@ -38,30 +50,11 @@ const SECTION_DEFINITIONS = Object.freeze([
   { kind: "small_changes", title: "Small Changes" },
 ]);
 const SECTION_KINDS = new Set(SECTION_DEFINITIONS.map((section) => section.kind));
-const IMAGE_LAYOUTS = new Set(["none", "left", "right"]);
+const IMAGE_LAYOUTS = new Set(["none", "left", "right", "gallery"]);
 const BUG_FIX_LEVELS = new Set(["major", "minor"]);
 const UPDATE_STATUSES = new Set(["draft", "published"]);
+const CONTENT_TYPES = new Set(["game_update", "developer_blog"]);
 const ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
-const ALLOWED_TAGS = new Set([
-  "p",
-  "br",
-  "strong",
-  "em",
-  "u",
-  "ul",
-  "ol",
-  "li",
-  "h3",
-  "h4",
-  "blockquote",
-  "a",
-]);
-const TAG_ALIASES = new Map([
-  ["b", "strong"],
-  ["i", "em"],
-  ["div", "p"],
-]);
-const VOID_TAGS = new Set(["br"]);
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -85,96 +78,6 @@ function cleanId(value, field) {
     throw httpError(400, `${field} must be a valid identifier.`);
   }
   return value;
-}
-
-function decodeHtmlEntities(value) {
-  return value
-    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
-    .replace(/&nbsp;/gi, "\u00a0")
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&amp;/gi, "&");
-}
-
-function escapeHtml(value) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function safeHref(rawHref) {
-  if (!rawHref) return null;
-  const decoded = decodeHtmlEntities(rawHref.trim());
-  try {
-    const url = new URL(decoded, "https://towereclipse.invalid");
-    if (!["http:", "https:", "mailto:"].includes(url.protocol)) return null;
-    if (url.origin === "https://towereclipse.invalid") return null;
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeRichText(value, field, { max = 50000 } = {}) {
-  if (typeof value !== "string") {
-    throw httpError(400, `${field} must be rich-text HTML.`);
-  }
-  if (value.length > max) {
-    throw httpError(400, `${field} is too long.`);
-  }
-
-  const withoutDangerousBlocks = value.replace(
-    /<(script|style|iframe|object|embed|svg|math)[^>]*>[\s\S]*?<\/\1\s*>/gi,
-    "",
-  );
-  const tokens = withoutDangerousBlocks.match(/<[^>]*>|[^<]+/g) ?? [];
-  const output = [];
-
-  for (const token of tokens) {
-    if (!token.startsWith("<")) {
-      output.push(escapeHtml(decodeHtmlEntities(token)));
-      continue;
-    }
-
-    const match = token.match(/^<\s*(\/?)\s*([a-zA-Z0-9]+)([^>]*)>/);
-    if (!match) continue;
-    const closing = match[1] === "/";
-    const originalTag = match[2].toLowerCase();
-    const tag = TAG_ALIASES.get(originalTag) ?? originalTag;
-    if (!ALLOWED_TAGS.has(tag)) continue;
-
-    if (closing) {
-      if (!VOID_TAGS.has(tag)) output.push(`</${tag}>`);
-      continue;
-    }
-
-    if (tag === "a") {
-      const hrefMatch = match[3].match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-      const href = safeHref(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "");
-      if (href) {
-        output.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">`);
-      } else {
-        output.push("<a>");
-      }
-      continue;
-    }
-
-    output.push(VOID_TAGS.has(tag) ? `<${tag}>` : `<${tag}>`);
-  }
-
-  return output.join("").trim();
-}
-
-function richTextPlainLength(html) {
-  return decodeHtmlEntities(html.replace(/<[^>]+>/g, " "))
-    .replace(/\s+/g, " ")
-    .trim().length;
 }
 
 function serialize(value) {
@@ -219,17 +122,16 @@ function normalizeItem(rawItem, sectionKind, index) {
     throw httpError(400, `${title} needs a description.`);
   }
 
-  const imageId = rawItem.imageId == null || rawItem.imageId === ""
-    ? null
-    : cleanId(rawItem.imageId, `sections.${sectionKind}.items.${index}.imageId`);
-  const imageLayout = imageId
-    ? (IMAGE_LAYOUTS.has(rawItem.imageLayout) ? rawItem.imageLayout : "right")
-    : "none";
-  const caption = cleanText(
-    rawItem.caption ?? "",
-    `sections.${sectionKind}.items.${index}.caption`,
-    { min: 0, max: 300 },
+  const images = normalizeEntryImages(
+    rawItem,
+    `sections.${sectionKind}.items.${index}`,
+    title,
   );
+  const imageLayout = images.length > 0
+    ? (IMAGE_LAYOUTS.has(rawItem.imageLayout) && rawItem.imageLayout !== "none"
+      ? rawItem.imageLayout
+      : (images.length > 1 ? "gallery" : "right"))
+    : "none";
   const bugFixLevel = sectionKind === "bug_fixes"
     ? (BUG_FIX_LEVELS.has(rawItem.bugFixLevel) ? rawItem.bugFixLevel : "minor")
     : null;
@@ -238,9 +140,8 @@ function normalizeItem(rawItem, sectionKind, index) {
     id,
     title,
     bodyHtml,
-    imageId,
+    images,
     imageLayout,
-    caption,
     bugFixLevel,
   };
 }
@@ -297,7 +198,13 @@ function collectImageIds(update) {
   if (update.coverImageId) ids.add(update.coverImageId);
   for (const section of update.sections ?? []) {
     for (const item of section.items ?? []) {
-      if (item.imageId) ids.add(item.imageId);
+      if (Array.isArray(item.images)) {
+        item.images.forEach((image) => {
+          if (image?.imageId) ids.add(image.imageId);
+        });
+      } else if (item.imageId) {
+        ids.add(item.imageId);
+      }
     }
   }
   return ids;
@@ -351,19 +258,40 @@ async function hydrateUpdate(document, { includeDraft = false } = {}) {
   const sections = (value.sections ?? defaultSections()).map((section) => ({
     ...section,
     items: (section.items ?? []).map((item) => {
-      const image = hydrateImage(item.imageId);
-      if (image) figureNumber += 1;
+      const storedImages = storedEntryImages(item);
+      const images = storedImages.flatMap((storedImage) => {
+        const image = hydrateImage(storedImage?.imageId);
+        if (!image) return [];
+        figureNumber += 1;
+        return [{
+          imageId: storedImage.imageId,
+          caption: typeof storedImage.caption === "string" ? storedImage.caption : "",
+          image,
+          figureNumber,
+        }];
+      });
       return {
-        ...item,
-        image,
-        figureNumber: image ? figureNumber : null,
+        id: item.id,
+        title: item.title,
+        bodyHtml: item.bodyHtml,
+        imageLayout: images.length > 0
+          ? (IMAGE_LAYOUTS.has(item.imageLayout) && item.imageLayout !== "none"
+            ? item.imageLayout
+            : (images.length > 1 ? "gallery" : "right"))
+          : "none",
+        bugFixLevel: item.bugFixLevel ?? null,
+        images,
       };
     }),
   }));
 
   return {
     ...value,
-    coverImage: hydrateImage(value.coverImageId),
+    contentType: CONTENT_TYPES.has(value.contentType) ? value.contentType : "game_update",
+    isMinor: value.contentType !== "developer_blog" && value.isMinor === true,
+    blogHtml: typeof value.blogHtml === "string" ? value.blogHtml : "",
+    publishedOn: dateOnlyFromValue(value.publishedOn) ?? dateOnlyFromValue(value.publishedAt),
+    coverImage: value.contentType === "developer_blog" ? null : hydrateImage(value.coverImageId),
     sections,
     imagePolicy: updateImageStoragePolicy(),
   };
@@ -401,7 +329,7 @@ async function validateReferencedImages(reference, update) {
 
 async function cleanupUnreferencedImages(reference, update) {
   const referenced = collectImageIds(update);
-  const snapshot = await reference.collection("images").limit(200).get();
+  const snapshot = await reference.collection("images").limit(MAX_IMAGES_PER_UPDATE + 100).get();
   for (const document of snapshot.docs) {
     if (referenced.has(document.id)) continue;
     const image = document.data();
@@ -416,7 +344,7 @@ async function cleanupUnreferencedImages(reference, update) {
 }
 
 async function removeUpdateAndImages(reference) {
-  const snapshot = await reference.collection("images").limit(200).get();
+  const snapshot = await reference.collection("images").limit(MAX_IMAGES_PER_UPDATE + 100).get();
   for (const document of snapshot.docs) {
     const image = document.data();
     try {
@@ -425,42 +353,75 @@ async function removeUpdateAndImages(reference) {
       console.warn(`Could not remove R2 update image ${image.objectKey}:`, error);
     }
   }
-  const batch = db.batch();
-  snapshot.docs.forEach((document) => batch.delete(document.ref));
-  batch.delete(reference);
-  await batch.commit();
+  for (let index = 0; index < snapshot.docs.length; index += 450) {
+    const batch = db.batch();
+    snapshot.docs.slice(index, index + 450).forEach((document) => batch.delete(document.ref));
+    await batch.commit();
+  }
+  await reference.delete();
 }
 
 function normalizeUpdateInput(body, current) {
+  const contentType = normalizeNewsContentType(body.contentType ?? current.contentType ?? "game_update");
+  const isMinor = normalizeMinorFlag(body.isMinor ?? current.isMinor ?? false, contentType);
   const title = cleanText(body.title ?? current.title ?? "", "title", { min: 1, max: 180 });
-  const version = cleanText(body.version ?? current.version ?? "", "version", { min: 0, max: 80 });
-  const developerCommentHtml = sanitizeRichText(
-    body.developerCommentHtml ?? current.developerCommentHtml ?? "",
-    "developerCommentHtml",
-  );
+  const version = contentType === "game_update"
+    ? cleanText(body.version ?? current.version ?? "", "version", { min: 0, max: 80 })
+    : "";
+  const developerCommentHtml = contentType === "game_update"
+    ? sanitizeRichText(
+      body.developerCommentHtml ?? current.developerCommentHtml ?? "",
+      "developerCommentHtml",
+    )
+    : "";
+  const blogHtml = contentType === "developer_blog"
+    ? sanitizeRichText(body.blogHtml ?? current.blogHtml ?? "", "blogHtml", { max: 120000 })
+    : "";
   const status = body.status ?? current.status ?? "draft";
   if (!UPDATE_STATUSES.has(status)) {
     throw httpError(400, "status must be draft or published.");
   }
-  const coverImageId = body.coverImageId == null || body.coverImageId === ""
+  const coverImageId = contentType === "developer_blog" || body.coverImageId == null || body.coverImageId === ""
     ? null
     : cleanId(body.coverImageId, "coverImageId");
-  const sections = normalizeSections(body.sections ?? current.sections ?? defaultSections());
+  const sections = contentType === "game_update"
+    ? normalizeSections(body.sections ?? current.sections ?? defaultSections())
+    : defaultSections();
+  const suppliedPublishedOn = Object.prototype.hasOwnProperty.call(body, "publishedOn")
+    ? body.publishedOn
+    : (current.publishedOn ?? dateOnlyFromValue(current.publishedAt));
+  let publishedOn = normalizePublishedOn(suppliedPublishedOn);
+  publishedOn ??= dateOnlyFromValue(current.publishedAt);
 
   if (status === "published") {
-    if (!version) throw httpError(400, "A published update needs a version.");
-    const itemCount = sections.reduce((total, section) => total + section.items.length, 0);
-    if (itemCount === 0) throw httpError(400, "A published update needs at least one entry.");
+    publishedOn ??= new Date().toISOString().slice(0, 10);
+    assertPublishableNewsContent({
+      contentType,
+      version,
+      blogHtml,
+      itemCount: sections.reduce((total, section) => total + section.items.length, 0),
+    });
   }
 
   return {
+    contentType,
+    isMinor,
     title,
     version,
     developerCommentHtml,
+    blogHtml,
     coverImageId,
     sections,
     status,
+    publishedOn,
   };
+}
+
+function archiveTime(update) {
+  const value = update.publishedOn
+    ? `${update.publishedOn}T00:00:00.000Z`
+    : (update.publishedAt ?? update.updatedAt);
+  return new Date(value).getTime();
 }
 
 async function listPublishedUpdates(_request, response, next) {
@@ -520,12 +481,16 @@ async function listAdminUpdates(_request, response, next) {
 
 async function createUpdate(request, response, next) {
   try {
+    const contentType = normalizeNewsContentType(request.body?.contentType ?? "game_update");
     const reference = db.collection("updates").doc();
     const actor = actorSnapshot(request.authSession);
     await reference.set({
-      title: "Untitled Update",
+      contentType,
+      isMinor: false,
+      title: contentType === "developer_blog" ? "Untitled Developer Blog" : "Untitled Update",
       version: "",
       developerCommentHtml: "",
+      blogHtml: "",
       coverImageId: null,
       status: "draft",
       sections: defaultSections(),
@@ -534,6 +499,7 @@ async function createUpdate(request, response, next) {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       publishedAt: null,
+      publishedOn: null,
     });
     invalidatePublicUpdateCache(reference.id);
     response.status(201).json({
@@ -564,7 +530,7 @@ async function saveUpdate(request, response, next) {
     const normalized = normalizeUpdateInput(request.body ?? {}, current);
     await validateReferencedImages(reference, normalized);
 
-    const publishingNow = normalized.status === "published" && current.status !== "published";
+    const publishingNow = normalized.status === "published" && current.status !== "published" && !current.publishedAt;
     await reference.update({
       ...normalized,
       lastEditedBy: actorSnapshot(request.authSession),
@@ -602,8 +568,11 @@ async function beginImageUpload(request, response, next) {
     const updateReference = db.doc(`updates/${request.params.updateId}`);
     const updateSnapshot = await updateReference.get();
     if (!updateSnapshot.exists) throw httpError(404, "Update not found.");
+    if (updateSnapshot.data().contentType === "developer_blog") {
+      throw httpError(400, "Developer blogs do not support image uploads.");
+    }
 
-    const imagesSnapshot = await updateReference.collection("images").limit(200).get();
+    const imagesSnapshot = await updateReference.collection("images").limit(policy.maxImagesPerUpdate + 1).get();
     if (imagesSnapshot.size >= policy.maxImagesPerUpdate) {
       throw httpError(409, `An update can contain at most ${policy.maxImagesPerUpdate} uploaded images.`);
     }
@@ -684,6 +653,29 @@ async function completeImageUpload(request, response, next) {
   }
 }
 
+async function cancelPendingImageUpload(request, response, next) {
+  try {
+    const updateReference = db.doc(`updates/${request.params.updateId}`);
+    const imageReference = updateReference.collection("images").doc(request.params.imageId);
+    const [updateSnapshot, imageSnapshot] = await Promise.all([
+      updateReference.get(),
+      imageReference.get(),
+    ]);
+    if (!updateSnapshot.exists) throw httpError(404, "Update not found.");
+    if (!imageSnapshot.exists || imageSnapshot.data().status !== "pending") {
+      response.sendStatus(204);
+      return;
+    }
+
+    const image = imageSnapshot.data();
+    await deleteAttachmentObject(image.objectKey, { ignoreMissing: true }).catch(() => false);
+    await imageReference.delete();
+    response.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export function createPublicUpdateRouter() {
   const router = express.Router();
   router.get("/", listPublishedUpdates);
@@ -701,5 +693,6 @@ export function createAdminUpdateRouter() {
   router.delete("/:updateId", requireCsrf, deleteUpdate);
   router.post("/:updateId/images", requireCsrf, beginImageUpload);
   router.post("/:updateId/images/:imageId/complete", requireCsrf, completeImageUpload);
+  router.delete("/:updateId/images/pending/:imageId", requireCsrf, cancelPendingImageUpload);
   return router;
 }

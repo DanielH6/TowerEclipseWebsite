@@ -332,12 +332,13 @@ export type TournamentSummary = Omit<
 };
 
 export type UpdateStatus = "draft" | "published";
+export type NewsContentType = "game_update" | "developer_blog";
 export type UpdateSectionKind =
   | "new_features"
   | "balancing"
   | "bug_fixes"
   | "small_changes";
-export type UpdateImageLayout = "none" | "left" | "right";
+export type UpdateImageLayout = "none" | "left" | "right" | "gallery";
 export type BugFixLevel = "major" | "minor";
 
 export interface UpdateImagePolicy {
@@ -362,16 +363,20 @@ export interface UpdateImage {
   downloadUrl: string | null;
 }
 
+export interface UpdateEntryImage {
+  imageId: string;
+  caption: string;
+  image?: UpdateImage | null;
+  figureNumber?: number | null;
+}
+
 export interface UpdateEntry {
   id: string;
   title: string;
   bodyHtml: string;
-  imageId: string | null;
+  images: UpdateEntryImage[];
   imageLayout: UpdateImageLayout;
-  caption: string;
   bugFixLevel: BugFixLevel | null;
-  image?: UpdateImage | null;
-  figureNumber?: number | null;
 }
 
 export interface UpdateSection {
@@ -384,9 +389,12 @@ export interface UpdateSection {
 
 export interface GameUpdate {
   id: string;
+  contentType: NewsContentType;
+  isMinor: boolean;
   title: string;
   version: string;
   developerCommentHtml: string;
+  blogHtml: string;
   coverImageId: string | null;
   coverImage: UpdateImage | null;
   status: UpdateStatus;
@@ -396,15 +404,20 @@ export interface GameUpdate {
   createdAt: string;
   updatedAt: string;
   publishedAt: string | null;
+  publishedOn: string | null;
   imagePolicy: UpdateImagePolicy;
 }
 
 export interface UpdateInput {
+  contentType: NewsContentType;
+  isMinor: boolean;
   title: string;
   version: string;
   developerCommentHtml: string;
+  blogHtml: string;
   coverImageId: string | null;
   status: UpdateStatus;
+  publishedOn: string | null;
   sections: Array<{
     id: string;
     kind: UpdateSectionKind;
@@ -414,9 +427,11 @@ export interface UpdateInput {
       id: string;
       title: string;
       bodyHtml: string;
-      imageId: string | null;
+      images: Array<{
+        imageId: string;
+        caption: string;
+      }>;
       imageLayout: UpdateImageLayout;
-      caption: string;
       bugFixLevel: BugFixLevel | null;
     }>;
   }>;

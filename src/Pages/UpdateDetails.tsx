@@ -1,15 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { loadPublishedUpdate } from "../api";
 import { Link, useParams } from "../router";
-import type { GameUpdate, UpdateEntry, UpdateImage } from "../types";
+import type { GameUpdate, UpdateEntry, UpdateEntryImage, UpdateImage } from "../types";
 import "./Updates.css";
 
 function formatDate(value: string | null) {
   if (!value) return "";
-  return new Date(value).toLocaleDateString(undefined, {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return date.toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -18,30 +20,51 @@ function RichContent({ html, className = "" }: { html: string; className?: strin
   return <div className={`published-rich-text ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function UpdateImageFigure({ entry, onOpen }: { entry: UpdateEntry; onOpen: (image: UpdateImage) => void }) {
-  if (!entry.image?.downloadUrl || !entry.figureNumber) return null;
+function UpdateImageFigure({ entryImage, fallbackCaption, onOpen }: {
+  entryImage: UpdateEntryImage;
+  fallbackCaption: string;
+  onOpen: (image: UpdateImage) => void;
+}) {
+  if (!entryImage.image?.downloadUrl || !entryImage.figureNumber) return null;
   return (
     <figure className="update-figure">
-      <button type="button" onClick={() => onOpen(entry.image as UpdateImage)} aria-label={`Enlarge ${entry.image.originalName}`}>
-        <img src={entry.image.downloadUrl} alt={entry.caption || entry.title} loading="lazy" />
+      <button type="button" onClick={() => onOpen(entryImage.image as UpdateImage)} aria-label={`Enlarge ${entryImage.image.originalName}`}>
+        <img src={entryImage.image.downloadUrl} alt={entryImage.caption || fallbackCaption} loading="lazy" />
         <span>CLICK TO ENLARGE</span>
       </button>
-      <figcaption>Figure {entry.figureNumber}. {entry.caption || entry.title}</figcaption>
+      <figcaption>Figure {entryImage.figureNumber}. {entryImage.caption || fallbackCaption}</figcaption>
     </figure>
   );
 }
 
+function UpdateEntryMedia({ entry, onOpen }: { entry: UpdateEntry; onOpen: (image: UpdateImage) => void }) {
+  const visibleImages = entry.images.filter((entryImage) => entryImage.image?.downloadUrl);
+  if (visibleImages.length === 0) return null;
+  return (
+    <div className={`update-entry-media ${visibleImages.length > 1 ? "is-gallery" : "is-single"}`}>
+      {visibleImages.map((entryImage) => (
+        <UpdateImageFigure
+          entryImage={entryImage}
+          fallbackCaption={entry.title}
+          onOpen={onOpen}
+          key={entryImage.imageId}
+        />
+      ))}
+    </div>
+  );
+}
+
 function UpdateEntryView({ entry, onOpen }: { entry: UpdateEntry; onOpen: (image: UpdateImage) => void }) {
-  const hasImage = Boolean(entry.image?.downloadUrl);
+  const hasImage = entry.images.some((entryImage) => entryImage.image?.downloadUrl);
   const layout = hasImage ? entry.imageLayout : "none";
   return (
     <article className={`published-update-entry layout-${layout}`}>
-      {layout === "left" && <UpdateImageFigure entry={entry} onOpen={onOpen} />}
+      {layout === "left" && <UpdateEntryMedia entry={entry} onOpen={onOpen} />}
       <div className="published-update-entry-copy">
         <h4>{entry.title}</h4>
         <RichContent html={entry.bodyHtml} />
       </div>
-      {layout === "right" && <UpdateImageFigure entry={entry} onOpen={onOpen} />}
+      {(layout === "right" || layout === "gallery") && <UpdateEntryMedia entry={entry} onOpen={onOpen} />}
     </article>
   );
 }
@@ -52,6 +75,24 @@ export default function UpdateDetailsPage() {
   const [viewer, setViewer] = useState<UpdateImage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const viewerImages = useMemo(() => {
+    if (!update) return [];
+    const images = [
+      ...(update.coverImage?.downloadUrl ? [update.coverImage] : []),
+      ...update.sections.flatMap((section) => section.items.flatMap((entry) => (
+        entry.images.flatMap((entryImage) => entryImage.image?.downloadUrl ? [entryImage.image] : [])
+      ))),
+    ];
+    return [...new Map(images.map((image) => [image.id, image])).values()];
+  }, [update]);
+
+  const viewerIndex = viewer ? viewerImages.findIndex((image) => image.id === viewer.id) : -1;
+
+  function moveViewer(direction: -1 | 1) {
+    if (viewerImages.length < 2 || viewerIndex < 0) return;
+    setViewer(viewerImages[(viewerIndex + direction + viewerImages.length) % viewerImages.length] ?? null);
+  }
 
   useEffect(() => {
     let active = true;
@@ -74,10 +115,12 @@ export default function UpdateDetailsPage() {
     if (!viewer) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") setViewer(null);
+      if (event.key === "ArrowLeft") moveViewer(-1);
+      if (event.key === "ArrowRight") moveViewer(1);
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [viewer]);
+  }, [viewer, viewerImages, viewerIndex]);
 
   if (loading) {
     return <section className="content-band"><div className="news-message">Loading update…</div></section>;
@@ -96,35 +139,40 @@ export default function UpdateDetailsPage() {
   }
 
   const bugFixSection = update.sections.find((section) => section.kind === "bug_fixes");
+  const isDeveloperBlog = update.contentType === "developer_blog";
 
   return (
     <section className="content-band update-article-page">
-      <article className="update-article">
+      <article className={`update-article ${isDeveloperBlog ? "developer-blog-article" : ""}`}>
         <Link className="update-back-link" to="/news">← ALL UPDATES</Link>
         <header className="update-article-header">
           <div className="update-article-meta">
-            <span>VERSION {update.version}</span>
-            <time dateTime={update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedAt ?? update.updatedAt)}</time>
+            <span>{isDeveloperBlog ? "DEVELOPER BLOG" : `${update.isMinor ? "MINOR UPDATE · " : ""}VERSION ${update.version}`}</span>
+            <time dateTime={update.publishedOn ?? update.publishedAt ?? update.updatedAt}>{formatDate(update.publishedOn ?? update.publishedAt ?? update.updatedAt)}</time>
           </div>
           <h2>{update.title}</h2>
           <p>Published by {update.author.displayName}</p>
         </header>
 
-        {update.coverImage?.downloadUrl && (
+        {!isDeveloperBlog && update.coverImage?.downloadUrl && (
           <button className="update-cover-viewer-button" type="button" onClick={() => setViewer(update.coverImage)}>
             <img src={update.coverImage.downloadUrl} alt={`${update.title} cover`} />
             <span>CLICK TO ENLARGE</span>
           </button>
         )}
 
-        {update.developerCommentHtml && (
+        {!isDeveloperBlog && update.developerCommentHtml && (
           <section className="developer-comment-block">
             <p className="workspace-kicker">DEVELOPER COMMENT</p>
             <RichContent html={update.developerCommentHtml} />
           </section>
         )}
 
-        <div className="published-update-sections">
+        {isDeveloperBlog ? (
+          <section className="developer-blog-body">
+            <RichContent html={update.blogHtml} />
+          </section>
+        ) : <div className="published-update-sections">
           {update.sections.filter((section) => section.kind !== "bug_fixes" && (section.items.length > 0 || section.introHtml)).map((section) => (
             <section className={`published-update-section published-${section.kind}`} key={section.kind}>
               <header>
@@ -159,7 +207,7 @@ export default function UpdateDetailsPage() {
               })}
             </section>
           )}
-        </div>
+        </div>}
       </article>
 
       {viewer?.downloadUrl && (
@@ -168,8 +216,13 @@ export default function UpdateDetailsPage() {
         }}>
           <div className="update-image-viewer" role="dialog" aria-modal="true" aria-label={`Image viewer: ${viewer.originalName}`}>
             <div className="update-image-viewer-toolbar">
-              <strong>{viewer.originalName}</strong>
+              <strong>
+                {viewer.originalName}
+                {viewerImages.length > 1 && <small>{viewerIndex + 1} / {viewerImages.length}</small>}
+              </strong>
               <div>
+                {viewerImages.length > 1 && <button type="button" onClick={() => moveViewer(-1)} aria-label="Previous image">← PREVIOUS</button>}
+                {viewerImages.length > 1 && <button type="button" onClick={() => moveViewer(1)} aria-label="Next image">NEXT →</button>}
                 <a href={viewer.downloadUrl} target="_blank" rel="noreferrer">OPEN ORIGINAL</a>
                 <button type="button" onClick={() => setViewer(null)}>CLOSE</button>
               </div>

@@ -73,7 +73,7 @@ Supported update sections:
 Optional environment setting:
 
 ```env
-R2_MAX_IMAGES_PER_UPDATE=50
+R2_MAX_IMAGES_PER_UPDATE=500
 ```
 
 The existing R2 credentials and CORS policy are reused for update images.
