@@ -171,15 +171,9 @@ export default function BugDetailsPage() {
   }
 
   useEffect(() => {
-    const refreshCurrentReport = () => {
-      void refresh().catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "Could not load the bug report.");
-      });
-    };
-
-    refreshCurrentReport();
-    window.addEventListener("focus", refreshCurrentReport);
-    return () => window.removeEventListener("focus", refreshCurrentReport);
+    void refresh().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "Could not load the bug report.");
+    });
   }, [reportId]);
 
   useEffect(() => {
@@ -263,7 +257,21 @@ export default function BugDetailsPage() {
             </p>
           </div>
         </div>
-        <Link className="ghost-link" to="/bugs">BACK TO REPORTS</Link>
+        <div className="workspace-header-actions">
+          <button
+            className="ghost-link"
+            type="button"
+            disabled={working}
+            onClick={() => {
+              void refresh().catch((reason: unknown) => {
+                setError(reason instanceof Error ? reason.message : "Could not refresh the report.");
+              });
+            }}
+          >
+            REFRESH
+          </button>
+          <Link className="ghost-link" to="/bugs">BACK TO REPORTS</Link>
+        </div>
       </div>
 
       {error && <div className="workspace-error" role="alert">{error}</div>}

@@ -1,5 +1,6 @@
 import express from "express";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
+import { deleteLocalJsonCache, readLocalJsonCache, writeLocalJsonCache } from "./local-cache.mjs";
 import {
   actorSnapshot,
   optionalAuth,
@@ -8,7 +9,7 @@ import {
   requireExactRole,
   requireRole,
 } from "./auth-context.mjs";
-import { dictionarySnapshot, getDictionaryEntry } from "./dictionaries.mjs";
+import { dictionarySnapshot, getDictionaryCatalog, getDictionaryEntry } from "./dictionaries.mjs";
 import {
   attachmentStoragePolicy,
   createAttachmentDownloadUrl,
@@ -34,6 +35,109 @@ const REPORT_DICTIONARIES = Object.freeze({
   type: "types",
   device: "devices",
 });
+
+const BUG_REPORT_CACHE_FILE = "bug-reports";
+let bugListCache = readLocalJsonCache(BUG_REPORT_CACHE_FILE);
+let bugListCachePromise = null;
+
+function validBugListCache(value) {
+  return Array.isArray(value) && value.every((report) => report && typeof report.id === "string");
+}
+
+if (!validBugListCache(bugListCache)) {
+  bugListCache = null;
+}
+
+function persistBugListCache() {
+  if (bugListCache) writeLocalJsonCache(BUG_REPORT_CACHE_FILE, bugListCache);
+}
+
+function normalizeCachedReport(report) {
+  return {
+    ...report,
+    commentsCount: Number(report.commentsCount ?? 0),
+    developerNotesCount: Number(report.developerNotesCount ?? 0),
+    attachmentsCount: Number(report.attachmentsCount ?? 0),
+  };
+}
+
+function sortCachedReports(reports) {
+  return reports.sort((a, b) => {
+    const aTime = Date.parse(a.createdAt ?? "") || 0;
+    const bTime = Date.parse(b.createdAt ?? "") || 0;
+    return bTime - aTime;
+  });
+}
+
+function restoreBugListCacheIfNeeded() {
+  if (bugListCache) return true;
+  const restored = readLocalJsonCache(BUG_REPORT_CACHE_FILE);
+  if (!validBugListCache(restored)) return false;
+  bugListCache = restored.map(normalizeCachedReport);
+  return true;
+}
+
+function upsertBugListCache(report) {
+  if (!restoreBugListCacheIfNeeded()) return;
+  const normalized = normalizeCachedReport(report);
+  bugListCache = sortCachedReports([
+    normalized,
+    ...bugListCache.filter((candidate) => candidate.id !== normalized.id),
+  ]);
+  persistBugListCache();
+}
+
+function patchBugListCache(reportId, changes) {
+  if (!restoreBugListCacheIfNeeded()) return;
+  const index = bugListCache.findIndex((report) => report.id === reportId);
+  if (index < 0) return;
+  const current = bugListCache[index];
+  const resolvedChanges = typeof changes === "function" ? changes(current) : changes;
+  bugListCache[index] = normalizeCachedReport({ ...current, ...resolvedChanges });
+  sortCachedReports(bugListCache);
+  persistBugListCache();
+}
+
+function removeBugListCache(reportId) {
+  if (!restoreBugListCacheIfNeeded()) return;
+  const next = bugListCache.filter((report) => report.id !== reportId);
+  if (next.length === bugListCache.length) return;
+  bugListCache = next;
+  persistBugListCache();
+}
+
+function invalidateBugListCache({ dropDisk = true } = {}) {
+  bugListCache = null;
+  if (dropDisk) deleteLocalJsonCache(BUG_REPORT_CACHE_FILE);
+}
+
+async function loadBugListBase({ force = false } = {}) {
+  if (!force && restoreBugListCacheIfNeeded()) return bugListCache;
+  if (!force && bugListCachePromise) return bugListCachePromise;
+
+  bugListCachePromise = db.collection("bugReports")
+    .orderBy("createdAt", "desc")
+    .limit(1000)
+    .get()
+    .then((snapshot) => {
+      bugListCache = snapshot.docs.map((document) =>
+        normalizeCachedReport(serializeDocument(document)),
+      );
+      persistBugListCache();
+      console.log(`Bug-report cache loaded ${bugListCache.length} report(s) from Firestore and saved locally.`);
+      return bugListCache;
+    })
+    .finally(() => {
+      bugListCachePromise = null;
+    });
+
+  return bugListCachePromise;
+}
+
+export async function refreshBugReportCacheFromFirestore() {
+  invalidateBugListCache();
+  return loadBugListBase({ force: true });
+}
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -193,39 +297,15 @@ function serializeAttachmentDocument(document) {
 }
 
 async function hydrateReportDictionaries(reports) {
-  const referencesByKey = new Map();
+  if (reports.length === 0) return reports;
 
-  for (const report of reports) {
-    for (const [field, dictionary] of Object.entries(REPORT_DICTIONARIES)) {
-      const entryId = report[field]?.id;
-      if (!entryId) continue;
-
-      const key = `${dictionary}/${entryId}`;
-      if (!referencesByKey.has(key)) {
-        referencesByKey.set(
-          key,
-          db.doc(`dictionaries/${dictionary}/items/${entryId}`),
-        );
-      }
-    }
-  }
-
-  if (referencesByKey.size === 0) return reports;
-
-  const referenceEntries = [...referencesByKey.entries()];
-  const snapshots = await db.getAll(
-    ...referenceEntries.map(([, reference]) => reference),
+  const catalog = await getDictionaryCatalog({ activeOnly: false });
+  const entriesByDictionary = Object.fromEntries(
+    Object.entries(catalog).map(([dictionary, entries]) => [
+      dictionary,
+      new Map(entries.map((entry) => [entry.id, dictionarySnapshot(entry)])),
+    ]),
   );
-  const currentEntries = new Map();
-
-  snapshots.forEach((snapshot, index) => {
-    if (!snapshot.exists) return;
-    const [key] = referenceEntries[index];
-    currentEntries.set(
-      key,
-      dictionarySnapshot({ id: snapshot.id, ...snapshot.data() }),
-    );
-  });
 
   return reports.map((report) => {
     const hydrated = { ...report };
@@ -233,8 +313,7 @@ async function hydrateReportDictionaries(reports) {
     for (const [field, dictionary] of Object.entries(REPORT_DICTIONARIES)) {
       const savedValue = report[field];
       if (!savedValue?.id) continue;
-
-      const currentValue = currentEntries.get(`${dictionary}/${savedValue.id}`);
+      const currentValue = entriesByDictionary[dictionary]?.get(savedValue.id);
       if (currentValue) hydrated[field] = currentValue;
     }
 
@@ -323,6 +402,7 @@ async function createReport(request, response, next) {
     });
 
     const created = await reportReference.get();
+    upsertBugListCache(serializeDocument(created));
     response.status(201).json({ report: await serializeReportDocument(created) });
   } catch (error) {
     next(error);
@@ -331,8 +411,7 @@ async function createReport(request, response, next) {
 
 async function listReports(request, response, next) {
   try {
-    const snapshot = await db.collection("bugReports").orderBy("createdAt", "desc").limit(250).get();
-    let reports = await serializeReportDocuments(snapshot.docs);
+    let reports = await hydrateReportDictionaries(await loadBugListBase());
 
     const search = typeof request.query.search === "string" ? request.query.search.trim().toLowerCase() : "";
     const filters = {
@@ -345,8 +424,6 @@ async function listReports(request, response, next) {
     };
 
     reports = reports.filter((report) => {
-      if (!reportIsSubmitted(report)) return false;
-
       if (search) {
         const haystack = [
           report.displayId,
@@ -390,6 +467,8 @@ async function getReport(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+
+    upsertBugListCache(serializeDocument(report));
 
     let developerNotes = [];
     if (viewerSession?.role === "dev" || viewerSession?.role === "leadqa") {
@@ -496,7 +575,9 @@ async function patchReport(request, response, next) {
     );
     await batch.commit();
 
-    response.json({ report: await serializeReportDocument(await reference.get()) });
+    const updated = await reference.get();
+    upsertBugListCache(serializeDocument(updated));
+    response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
   }
@@ -541,7 +622,9 @@ async function approveReport(request, response, next) {
     });
     await addActivity(batch, reference, "report_approved", actor, { comment });
     await batch.commit();
-    response.json({ report: await serializeReportDocument(await reference.get()) });
+    const updated = await reference.get();
+    upsertBugListCache(serializeDocument(updated));
+    response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
   }
@@ -586,7 +669,9 @@ async function rejectReport(request, response, next) {
     });
     await addActivity(batch, reference, "report_rejected", actor, { comment });
     await batch.commit();
-    response.json({ report: await serializeReportDocument(await reference.get()) });
+    const updated = await reference.get();
+    upsertBugListCache(serializeDocument(updated));
+    response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
   }
@@ -617,6 +702,10 @@ async function addComment(request, response, next) {
     });
     await addActivity(batch, reportReference, "comment_added", actorSnapshot(request.authSession));
     await batch.commit();
+    patchBugListCache(reportReference.id, (cached) => ({
+      commentsCount: Number(cached.commentsCount ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    }));
     response.status(201).json({ comment: serializeDocument(await reference.get()) });
   } catch (error) {
     next(error);
@@ -648,6 +737,10 @@ async function addDeveloperNote(request, response, next) {
     });
     await addActivity(batch, reportReference, "developer_note_added", actorSnapshot(request.authSession));
     await batch.commit();
+    patchBugListCache(reportReference.id, (cached) => ({
+      developerNotesCount: Number(cached.developerNotesCount ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    }));
     response.status(201).json({ note: serializeDocument(await reference.get()) });
   } catch (error) {
     next(error);
@@ -707,7 +800,9 @@ async function finalizeReportSubmission(request, response, next) {
     });
     await batch.commit();
 
-    response.json({ report: await serializeReportDocument(await reference.get()) });
+    const updated = await reference.get();
+    upsertBugListCache(serializeDocument(updated));
+    response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
   }
@@ -732,6 +827,7 @@ async function cancelReportSubmission(request, response, next) {
     }
 
     await removeReportAndStoredAttachments(reference);
+    removeBugListCache(reference.id);
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -904,6 +1000,12 @@ async function completeAttachmentUpload(request, response, next) {
       return { created: true };
     });
 
+    if (completion.created) {
+      patchBugListCache(reportReference.id, (cached) => ({
+        attachmentsCount: Number(cached.attachmentsCount ?? 0) + 1,
+        updatedAt: new Date().toISOString(),
+      }));
+    }
     response.status(completion.created ? 201 : 200).json({
       attachment: serializeAttachmentDocument(await attachmentReference.get()),
     });
@@ -951,6 +1053,12 @@ async function deleteAttachment(request, response, next) {
       );
     }
     await batch.commit();
+    if (attachment.status === "ready") {
+      patchBugListCache(reportReference.id, (cached) => ({
+        attachmentsCount: Math.max(0, Number(cached.attachmentsCount ?? 0) - 1),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -966,6 +1074,7 @@ async function deleteReport(request, response, next) {
       return;
     }
     await removeReportAndStoredAttachments(reference);
+    removeBugListCache(reference.id);
     response.sendStatus(204);
   } catch (error) {
     next(error);

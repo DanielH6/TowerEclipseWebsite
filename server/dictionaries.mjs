@@ -1,5 +1,6 @@
 import express from "express";
 import { FieldValue, db } from "./firebase.mjs";
+import { deleteLocalJsonCache, readLocalJsonCache, writeLocalJsonCache } from "./local-cache.mjs";
 import { actorSnapshot, requireAuth, requireCsrf, requireExactRole } from "./auth-context.mjs";
 
 export const DICTIONARY_NAMES = Object.freeze([
@@ -49,6 +50,101 @@ const DEFAULTS = Object.freeze({
     { id: "console", code: "console", label: "Console", color: null, sortOrder: 30 },
   ],
 });
+
+const DICTIONARY_CACHE_FILE = "dictionaries";
+let dictionaryCache = readLocalJsonCache(DICTIONARY_CACHE_FILE);
+let dictionaryCachePromise = null;
+
+function validCachedCatalog(value) {
+  return value
+    && typeof value === "object"
+    && DICTIONARY_NAMES.every((dictionary) => Array.isArray(value[dictionary]));
+}
+
+if (!validCachedCatalog(dictionaryCache)) {
+  dictionaryCache = null;
+}
+
+function persistDictionaryCache() {
+  if (dictionaryCache) {
+    writeLocalJsonCache(DICTIONARY_CACHE_FILE, dictionaryCache);
+  }
+}
+
+export function invalidateDictionaryCache({ dropDisk = true } = {}) {
+  dictionaryCache = null;
+  if (dropDisk) deleteLocalJsonCache(DICTIONARY_CACHE_FILE);
+}
+
+function upsertDictionaryCacheEntry(dictionary, entry) {
+  if (!dictionaryCache) {
+    const restored = readLocalJsonCache(DICTIONARY_CACHE_FILE);
+    if (validCachedCatalog(restored)) dictionaryCache = restored;
+  }
+
+  if (!dictionaryCache) return;
+
+  const entries = dictionaryCache[dictionary] ?? [];
+  const nextEntries = entries.filter((candidate) => candidate.id !== entry.id);
+  nextEntries.push(entry);
+  nextEntries.sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+  dictionaryCache = {
+    ...dictionaryCache,
+    [dictionary]: nextEntries,
+  };
+  persistDictionaryCache();
+}
+
+async function loadDictionaryCache({ force = false } = {}) {
+  if (!force && dictionaryCache) return dictionaryCache;
+  if (!force && dictionaryCachePromise) return dictionaryCachePromise;
+
+  if (!force) {
+    const restored = readLocalJsonCache(DICTIONARY_CACHE_FILE);
+    if (validCachedCatalog(restored)) {
+      dictionaryCache = restored;
+      return dictionaryCache;
+    }
+  }
+
+  dictionaryCachePromise = Promise.all(
+    DICTIONARY_NAMES.map(async (dictionary) => {
+      const snapshot = await db.collection(`dictionaries/${dictionary}/items`).get();
+      const entries = snapshot.docs
+        .map(publicEntry)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+      return [dictionary, entries];
+    }),
+  )
+    .then((pairs) => {
+      dictionaryCache = Object.fromEntries(pairs);
+      persistDictionaryCache();
+      console.log("Dictionary cache loaded from Firestore and saved locally.");
+      return dictionaryCache;
+    })
+    .finally(() => {
+      dictionaryCachePromise = null;
+    });
+
+  return dictionaryCachePromise;
+}
+
+export async function refreshDictionaryCacheFromFirestore() {
+  invalidateDictionaryCache();
+  return loadDictionaryCache({ force: true });
+}
+
+export async function getDictionaryCatalog({ activeOnly = true } = {}) {
+  const catalog = await loadDictionaryCache();
+  if (!activeOnly) return catalog;
+
+  return Object.fromEntries(
+    DICTIONARY_NAMES.map((dictionary) => [
+      dictionary,
+      catalog[dictionary].filter((entry) => entry.active),
+    ]),
+  );
+}
 
 function assertDictionaryName(name) {
   if (!dictionarySet.has(name)) {
@@ -126,13 +222,10 @@ function normalizeEntry(input, dictionary, partial = false) {
 
 
 async function ensureUniqueCode(dictionary, code, ignoredEntryId = null) {
-  const snapshot = await db
-    .collection(`dictionaries/${dictionary}/items`)
-    .where("code", "==", code)
-    .limit(2)
-    .get();
-
-  const duplicate = snapshot.docs.find((document) => document.id !== ignoredEntryId);
+  const catalog = await getDictionaryCatalog({ activeOnly: false });
+  const duplicate = catalog[dictionary].find(
+    (entry) => entry.code === code && entry.id !== ignoredEntryId,
+  );
   if (duplicate) {
     const error = new Error(`An entry with code "${code}" already exists.`);
     error.status = 409;
@@ -214,6 +307,7 @@ export async function ensureDefaultDictionaries() {
 
   if (writes > 0) {
     await batch.commit();
+    await refreshDictionaryCacheFromFirestore();
   }
 
   return { created: writes };
@@ -221,15 +315,16 @@ export async function ensureDefaultDictionaries() {
 
 export async function getDictionaryEntry(dictionary, entryId, { activeOnly = true } = {}) {
   assertDictionaryName(dictionary);
-  const snapshot = await db.doc(`dictionaries/${dictionary}/items/${entryId}`).get();
+  const catalog = await getDictionaryCatalog({ activeOnly: false });
+  const entry = catalog[dictionary].find((candidate) => candidate.id === entryId);
 
-  if (!snapshot.exists || (activeOnly && snapshot.data().active === false)) {
+  if (!entry || (activeOnly && entry.active === false)) {
     const error = new Error(`Dictionary entry not found: ${dictionary}/${entryId}`);
     error.status = 400;
     throw error;
   }
 
-  return publicEntry(snapshot);
+  return entry;
 }
 
 export function dictionarySnapshot(entry) {
@@ -248,15 +343,9 @@ export function createDictionaryRouter() {
 
   router.get("/", async (_request, response, next) => {
     try {
-      const result = {};
-      for (const dictionary of DICTIONARY_NAMES) {
-        const snapshot = await db.collection(`dictionaries/${dictionary}/items`).get();
-        result[dictionary] = snapshot.docs
-          .map(publicEntry)
-          .filter((entry) => entry.active)
-          .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
-      }
-      response.json({ dictionaries: result });
+      response.json({
+        dictionaries: await getDictionaryCatalog({ activeOnly: true }),
+      });
     } catch (error) {
       next(error);
     }
@@ -273,11 +362,8 @@ export function createAdminDictionaryRouter() {
   router.get("/:dictionary", async (request, response, next) => {
     try {
       assertDictionaryName(request.params.dictionary);
-      const snapshot = await db.collection(`dictionaries/${request.params.dictionary}/items`).get();
-      const entries = snapshot.docs
-        .map(publicEntry)
-        .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
-      response.json({ entries });
+      const catalog = await getDictionaryCatalog({ activeOnly: false });
+      response.json({ entries: catalog[request.params.dictionary] });
     } catch (error) {
       next(error);
     }
@@ -300,8 +386,9 @@ export function createAdminDictionaryRouter() {
         updatedBy: actor,
       });
 
-      const created = await reference.get();
-      response.status(201).json({ entry: publicEntry(created) });
+      const created = { id: reference.id, ...data };
+      upsertDictionaryCacheEntry(dictionary, created);
+      response.status(201).json({ entry: created });
     } catch (error) {
       next(error);
     }
@@ -312,10 +399,15 @@ export function createAdminDictionaryRouter() {
       const dictionary = request.params.dictionary;
       assertDictionaryName(dictionary);
       const reference = db.doc(`dictionaries/${dictionary}/items/${request.params.entryId}`);
-      const existing = await reference.get();
-      if (!existing.exists) {
-        response.status(404).json({ error: "Dictionary entry not found." });
-        return;
+      let existing;
+      try {
+        existing = await getDictionaryEntry(dictionary, request.params.entryId, { activeOnly: false });
+      } catch (error) {
+        if (error?.status === 400) {
+          response.status(404).json({ error: "Dictionary entry not found." });
+          return;
+        }
+        throw error;
       }
 
       const changes = normalizeEntry(request.body ?? {}, dictionary, true);
@@ -333,8 +425,9 @@ export function createAdminDictionaryRouter() {
         updatedBy: actorSnapshot(request.authSession),
       });
 
-      const updated = await reference.get();
-      response.json({ entry: publicEntry(updated) });
+      const updated = { ...existing, ...changes, id: request.params.entryId };
+      upsertDictionaryCacheEntry(dictionary, updated);
+      response.json({ entry: updated });
     } catch (error) {
       next(error);
     }
@@ -349,10 +442,15 @@ export function createAdminDictionaryRouter() {
         return;
       }
       const reference = db.doc(`dictionaries/${dictionary}/items/${request.params.entryId}`);
-      const existing = await reference.get();
-      if (!existing.exists) {
-        response.status(404).json({ error: "Dictionary entry not found." });
-        return;
+      let existing;
+      try {
+        existing = await getDictionaryEntry(dictionary, request.params.entryId, { activeOnly: false });
+      } catch (error) {
+        if (error?.status === 400) {
+          response.status(404).json({ error: "Dictionary entry not found." });
+          return;
+        }
+        throw error;
       }
 
       await reference.update({
@@ -360,6 +458,7 @@ export function createAdminDictionaryRouter() {
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: actorSnapshot(request.authSession),
       });
+      upsertDictionaryCacheEntry(dictionary, { ...existing, active: false });
       response.sendStatus(204);
     } catch (error) {
       next(error);

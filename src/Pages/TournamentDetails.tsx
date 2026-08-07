@@ -32,7 +32,7 @@ export default function TournamentDetailsPage() {
           setTournament(result);
           setError(null);
           if (result.status === "live" && timer === undefined) {
-            timer = window.setInterval(() => void refresh(true), 30_000);
+            timer = window.setInterval(() => void refresh(true), 60_000);
           }
         }
       } catch (reason) {
