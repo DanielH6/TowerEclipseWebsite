@@ -74,6 +74,19 @@ test("rich-text sanitizer preserves editor tables and strips unsafe content", ()
   );
 });
 
+
+test("rich-text sanitizer preserves safe text colors and strips unsafe styles", () => {
+  const result = sanitizeUpdateRichText(
+    '<p><font color="#ff3366">Pink</font> <span style="font-size:99px;color:rgb(12, 34, 56);background:url(javascript:bad)">Blue</span> <span style="color:expression(alert(1))">Unsafe</span></p>',
+    "bodyHtml",
+  );
+
+  assert.equal(
+    result,
+    '<p><span style="color:#ff3366">Pink</span> <span style="color:rgb(12, 34, 56)">Blue</span> <span>Unsafe</span></p>',
+  );
+});
+
 test("entry image normalization accepts twenty ordered images with captions", () => {
   const images = Array.from({ length: MAX_IMAGES_PER_ENTRY }, (_value, index) => ({
     imageId: `image-${index + 1}`,

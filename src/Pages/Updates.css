@@ -104,9 +104,16 @@
 
 .news-heading-telemetry strong {
   color: #fff;
-  font-size: clamp(2rem, 4vw, 3.1rem);
+  font-size: clamp(1.6rem, 1vw, 2.6rem);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+
+.news-heading-telemetry strong.news-current-version {
+  max-width: 100%;
+  font-size: clamp(1.3rem, 1.55vw, 2rem);
+  letter-spacing: -0.04em;
+  white-space: nowrap;
 }
 
 .news-heading-telemetry span,

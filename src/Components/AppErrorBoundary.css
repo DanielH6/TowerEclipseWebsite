@@ -1,0 +1,70 @@
+.app-error-boundary {
+  min-height: 100vh;
+  padding: 28px;
+  display: grid;
+  place-items: center;
+  color: #f5f7fb;
+  background: #06080c;
+}
+
+.app-error-boundary section {
+  width: min(100%, 640px);
+  padding: 30px;
+  border: 1px solid rgba(255, 88, 103, 0.32);
+  border-radius: 14px;
+  background: rgba(18, 8, 11, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.app-error-boundary p {
+  margin: 0 0 8px;
+  color: #ff6b78;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.app-error-boundary h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 5vw, 3.1rem);
+  line-height: 0.98;
+}
+
+.app-error-boundary span {
+  margin-top: 16px;
+  display: block;
+  color: #adb5c5;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.app-error-boundary div {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.app-error-boundary button,
+.app-error-boundary a {
+  min-height: 40px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  color: #f5f7fb;
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.app-error-boundary button:hover,
+.app-error-boundary a:hover {
+  background: rgba(255, 255, 255, 0.11);
+}

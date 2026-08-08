@@ -6,7 +6,7 @@ import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
 import { synchronizeReportDictionaries } from "../dictionary-sync";
 import { isBugStaff } from "../roles";
-import type { BugFilters } from "../api";
+import type { BugFilters, BugPagination } from "../api";
 import type { BugReport, Dictionaries, DictionaryName, DictionarySnapshot } from "../types";
 import "./Bugs.css";
 
@@ -19,6 +19,78 @@ const emptyFilters: BugFilters = {
   type: "",
   device: "",
 };
+
+const initialPagination: BugPagination = {
+  page: 1,
+  pageSize: 50,
+  total: 0,
+  totalPages: 1,
+};
+
+function paginationItems(page: number, totalPages: number): Array<number | "ellipsis-left" | "ellipsis-right"> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const items: Array<number | "ellipsis-left" | "ellipsis-right"> = [1];
+  const start = Math.max(2, page - 1);
+  const end = Math.min(totalPages - 1, page + 1);
+
+  if (start > 2) items.push("ellipsis-left");
+  for (let value = start; value <= end; value += 1) items.push(value);
+  if (end < totalPages - 1) items.push("ellipsis-right");
+  items.push(totalPages);
+
+  return items;
+}
+
+function PaginationControls({
+  pagination,
+  onPageChange,
+  compact = false,
+}: {
+  pagination: BugPagination;
+  onPageChange: (page: number) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`pagination-controls${compact ? " is-compact" : ""}`}>
+      <button
+        type="button"
+        className="pagination-nav"
+        disabled={pagination.page <= 1}
+        onClick={() => onPageChange(pagination.page - 1)}
+      >
+        PREVIOUS
+      </button>
+
+      {paginationItems(pagination.page, pagination.totalPages).map((item) =>
+        typeof item === "number" ? (
+          <button
+            type="button"
+            className={`pagination-page${item === pagination.page ? " is-active" : ""}`}
+            aria-current={item === pagination.page ? "page" : undefined}
+            key={item}
+            onClick={() => onPageChange(item)}
+          >
+            {item}
+          </button>
+        ) : (
+          <span className="pagination-ellipsis" aria-hidden="true" key={item}>…</span>
+        ),
+      )}
+
+      <button
+        type="button"
+        className="pagination-nav"
+        disabled={pagination.page >= pagination.totalPages}
+        onClick={() => onPageChange(pagination.page + 1)}
+      >
+        NEXT
+      </button>
+    </div>
+  );
+}
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -72,14 +144,18 @@ export default function BugsPage() {
   const [reports, setReports] = useState<BugReport[]>([]);
   const [dictionaries, setDictionaries] = useState<Dictionaries | null>(null);
   const [filters, setFilters] = useState<BugFilters>(emptyFilters);
+  const [appliedFilters, setAppliedFilters] = useState<BugFilters>(emptyFilters);
+  const [pagination, setPagination] = useState<BugPagination>(initialPagination);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh(nextFilters = filters) {
+  async function refresh(nextFilters = filters, nextPage = pagination.page) {
     setLoading(true);
     setError(null);
     try {
-      setReports(await loadBugs(nextFilters));
+      const result = await loadBugs(nextFilters, nextPage);
+      setReports(result.reports);
+      setPagination(result.pagination);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load bug reports.");
     } finally {
@@ -88,7 +164,7 @@ export default function BugsPage() {
   }
 
   useEffect(() => {
-    Promise.all([refresh(emptyFilters), loadDictionaries().then(setDictionaries)]).catch(() => undefined);
+    Promise.all([refresh(emptyFilters, 1), loadDictionaries().then(setDictionaries)]).catch(() => undefined);
   }, []);
 
   function setFilter(name: keyof BugFilters, value: string) {
@@ -103,7 +179,19 @@ export default function BugsPage() {
         <div>
           <p className="workspace-kicker">QA WORKSPACE</p>
           <h2>BUG REPORTS</h2>
-          <p>{reports.length} report{reports.length === 1 ? "" : "s"} in the current view.</p>
+          <div className="bug-results-line">
+            <p>
+              {pagination.total} report{pagination.total === 1 ? "" : "s"} match the current filters.
+              {pagination.total > 0 ? ` Page ${pagination.page} of ${pagination.totalPages}.` : ""}
+            </p>
+            {!loading && pagination.total > 0 && pagination.totalPages > 1 && (
+              <PaginationControls
+                pagination={pagination}
+                compact
+                onPageChange={(page) => refresh(appliedFilters, page)}
+              />
+            )}
+          </div>
         </div>
         {!authLoading && canCreateReports ? (
           <Link className="primary-action" to="/bugs/new">NEW BUG REPORT</Link>
@@ -116,7 +204,8 @@ export default function BugsPage() {
         className="bug-filters"
         onSubmit={(event) => {
           event.preventDefault();
-          refresh();
+          setAppliedFilters(filters);
+          refresh(filters, 1);
         }}
       >
         <label className="filter-field filter-search">
@@ -140,7 +229,8 @@ export default function BugsPage() {
             className="ghost-action"
             onClick={() => {
               setFilters(emptyFilters);
-              refresh(emptyFilters);
+              setAppliedFilters(emptyFilters);
+              refresh(emptyFilters, 1);
             }}
           >
             RESET
@@ -214,6 +304,19 @@ export default function BugsPage() {
           </tbody>
         </table>
       </div>
+
+      {!loading && pagination.total > 0 && (
+        <nav className="bug-pagination" aria-label="Bug report pages">
+          <span className="pagination-summary">
+            {((pagination.page - 1) * pagination.pageSize) + 1}–{Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total}
+          </span>
+
+          <PaginationControls
+            pagination={pagination}
+            onPageChange={(page) => refresh(appliedFilters, page)}
+          />
+        </nav>
+      )}
     </section>
   );
 }

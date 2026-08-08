@@ -24,11 +24,13 @@ const ALLOWED_TAGS = new Set([
   "tr",
   "th",
   "td",
+  "span",
 ]);
 const TAG_ALIASES = new Map([
   ["b", "strong"],
   ["i", "em"],
   ["div", "p"],
+  ["font", "span"],
 ]);
 const VOID_TAGS = new Set(["br"]);
 
@@ -124,6 +126,30 @@ function safeHref(rawHref) {
   }
 }
 
+function safeTextColor(rawColor) {
+  if (!rawColor) return null;
+  const color = decodeHtmlEntities(rawColor).trim().toLowerCase();
+  if (/^#[0-9a-f]{3}$/.test(color) || /^#[0-9a-f]{6}$/.test(color)) return color;
+
+  const rgbMatch = color.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/);
+  if (!rgbMatch) return null;
+  const channels = rgbMatch.slice(1).map(Number);
+  if (channels.some((channel) => channel < 0 || channel > 255)) return null;
+  return `rgb(${channels.join(", ")})`;
+}
+
+function colorFromAttributes(originalTag, rawAttributes) {
+  if (originalTag === "font") {
+    const colorMatch = rawAttributes.match(/\bcolor\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    return safeTextColor(colorMatch?.[1] ?? colorMatch?.[2] ?? colorMatch?.[3] ?? "");
+  }
+
+  const styleMatch = rawAttributes.match(/\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+  const style = styleMatch?.[1] ?? styleMatch?.[2] ?? "";
+  const declaration = style.split(";").find((part) => part.trim().toLowerCase().startsWith("color:"));
+  return safeTextColor(declaration?.slice(declaration.indexOf(":") + 1) ?? "");
+}
+
 export function sanitizeUpdateRichText(value, field, { max = 50000 } = {}) {
   if (typeof value !== "string") {
     throw validationError(`${field} must be rich-text HTML.`);
@@ -165,6 +191,12 @@ export function sanitizeUpdateRichText(value, field, { max = 50000 } = {}) {
       } else {
         output.push("<a>");
       }
+      continue;
+    }
+
+    if (tag === "span") {
+      const color = colorFromAttributes(originalTag, match[3]);
+      output.push(color ? `<span style="color:${escapeHtml(color)}">` : "<span>");
       continue;
     }
 

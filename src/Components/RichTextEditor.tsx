@@ -36,6 +36,7 @@ export default function RichTextEditor({
   const [tableRows, setTableRows] = useState(3);
   const [tableColumns, setTableColumns] = useState(3);
   const [tableHasHeader, setTableHasHeader] = useState(true);
+  const [textColor, setTextColor] = useState("#e6eaf3");
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -83,6 +84,15 @@ export default function RichTextEditor({
     rememberSelection();
   }
 
+  function applyTextColor(color: string) {
+    if (disabled) return;
+    setTextColor(color);
+    restoreSelection();
+    execute("foreColor", color);
+    updateValue();
+    rememberSelection();
+  }
+
   function insertTable() {
     const rows = Math.max(1, Math.min(12, tableRows));
     const columns = Math.max(1, Math.min(8, tableColumns));
@@ -126,6 +136,17 @@ export default function RichTextEditor({
           <button type="button" disabled={disabled} title="Bold" aria-label="Bold" onMouseDown={(event) => toolbarAction(event, "bold")}><strong>B</strong></button>
           <button type="button" disabled={disabled} title="Italic" aria-label="Italic" onMouseDown={(event) => toolbarAction(event, "italic")}><em>I</em></button>
           <button type="button" disabled={disabled} title="Underline" aria-label="Underline" onMouseDown={(event) => toolbarAction(event, "underline")}><u>U</u></button>
+          <label className="rich-editor-color-control" title="Text color">
+            <span>COLOR</span>
+            <input
+              type="color"
+              aria-label="Text color"
+              disabled={disabled}
+              value={textColor}
+              onMouseDown={rememberSelection}
+              onChange={(event) => applyTextColor(event.target.value)}
+            />
+          </label>
           <button type="button" disabled={disabled} title="Bulleted list" aria-label="Bulleted list" onMouseDown={(event) => toolbarAction(event, "insertUnorderedList")}>• LIST</button>
           <button type="button" disabled={disabled} title="Numbered list" aria-label="Numbered list" onMouseDown={(event) => toolbarAction(event, "insertOrderedList")}>1. LIST</button>
           <button
