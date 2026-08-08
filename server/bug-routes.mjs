@@ -409,6 +409,13 @@ async function createReport(request, response, next) {
   }
 }
 
+const BUG_REPORTS_PER_PAGE = 50;
+
+function requestedBugPage(value) {
+  const parsed = Number.parseInt(typeof value === "string" ? value : "1", 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
+}
+
 async function listReports(request, response, next) {
   try {
     let reports = await hydrateReportDictionaries(await loadBugListBase());
@@ -437,7 +444,21 @@ async function listReports(request, response, next) {
       return Object.entries(filters).every(([field, code]) => !code || report[field]?.code === code);
     });
 
-    response.json({ reports });
+    const total = reports.length;
+    const totalPages = Math.max(1, Math.ceil(total / BUG_REPORTS_PER_PAGE));
+    const page = Math.min(requestedBugPage(request.query.page), totalPages);
+    const start = (page - 1) * BUG_REPORTS_PER_PAGE;
+    const pagedReports = reports.slice(start, start + BUG_REPORTS_PER_PAGE);
+
+    response.json({
+      reports: pagedReports,
+      pagination: {
+        page,
+        pageSize: BUG_REPORTS_PER_PAGE,
+        total,
+        totalPages,
+      },
+    });
   } catch (error) {
     next(error);
   }

@@ -13,6 +13,7 @@ import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
 import {
   attachmentAccept,
+  extractClipboardImageFiles,
   formatFileSize,
   mergeSelectedFiles,
 } from "../attachments";
@@ -194,13 +195,33 @@ export default function NewBugPage() {
           <small>{form.description.length}/10000</small>
         </label>
 
-        <section className="attachment-picker">
+        <section
+          className="attachment-picker attachment-paste-zone"
+          tabIndex={attachmentPolicy.enabled ? 0 : -1}
+          aria-label="Bug report image attachments. Click this area and paste an image with Control V."
+          onClick={(event) => {
+            if (event.target === event.currentTarget) event.currentTarget.focus();
+          }}
+          onPaste={(event) => {
+            if (!attachmentPolicy.enabled || saving) return;
+            const pasted = extractClipboardImageFiles(event.clipboardData);
+            if (pasted.length === 0) return;
+            event.preventDefault();
+            try {
+              const nextFiles = mergeSelectedFiles(files, pasted, attachmentPolicy);
+              setFiles(nextFiles);
+              setError(null);
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "Could not paste that image.");
+            }
+          }}
+        >
           <div className="attachment-section-heading">
             <div>
               <span className="attachment-label">Attachments</span>
               {attachmentPolicy.enabled ? (
                 <small>
-                  PNG, JPG, or JPEG only. Up to {attachmentPolicy.maxFilesPerReport} images, {formatFileSize(attachmentPolicy.maxFileSizeBytes)} each.
+                  PNG, JPG, or JPEG only. Up to {attachmentPolicy.maxFilesPerReport} images, {formatFileSize(attachmentPolicy.maxFileSizeBytes)} each. Click this area and press Ctrl+V to paste an image.
                 </small>
               ) : (
                 <small>R2 image storage is not configured on the API.</small>
@@ -218,7 +239,8 @@ export default function NewBugPage() {
                     const selected = Array.from(event.target.files ?? []);
                     event.target.value = "";
                     try {
-                      setFiles((current) => mergeSelectedFiles(current, selected, attachmentPolicy));
+                      const nextFiles = mergeSelectedFiles(files, selected, attachmentPolicy);
+                      setFiles(nextFiles);
                       setError(null);
                     } catch (reason) {
                       setError(reason instanceof Error ? reason.message : "Could not select those images.");

@@ -9,10 +9,10 @@ import type {
   Dictionaries,
   DictionaryEntry,
   DictionaryName,
-  NewsContentType,
   UpdateInput,
   UpdateImage,
   GameUpdate,
+  NewsContentType,
   RobloxStats,
   Tournament,
   TournamentParticipant,
@@ -104,18 +104,29 @@ export interface BugFilters {
   device?: string;
 }
 
-export async function loadBugs(filters: BugFilters = {}): Promise<BugReport[]> {
+export interface BugPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface BugListResult {
+  reports: BugReport[];
+  pagination: BugPagination;
+}
+
+export async function loadBugs(filters: BugFilters = {}, page = 1): Promise<BugListResult> {
   const parameters = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value) parameters.set(key, value);
   });
-  const suffix = parameters.size ? `?${parameters.toString()}` : "";
-  const response = await fetch(`/api/bugs${suffix}`, {
+  parameters.set("page", String(page));
+  const response = await fetch(`/api/bugs?${parameters.toString()}`, {
     credentials: "include",
     headers: { Accept: "application/json" },
   });
-  const body = await readJson<{ reports: BugReport[] }>(response);
-  return body.reports;
+  return readJson<BugListResult>(response);
 }
 
 export interface BugInput {
@@ -842,14 +853,6 @@ export async function uploadUpdateImage(
     const completed = await readJson<{ image: UpdateImage }>(completeResponse);
     return completed.image;
   } catch (error) {
-    await fetch(
-      `/api/admin/updates/${encodedUpdateId}/images/pending/${encodeURIComponent(ticket.imageId)}`,
-      {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "X-CSRF-Token": csrfToken },
-      },
-    ).catch(() => undefined);
     throw error;
   }
 }

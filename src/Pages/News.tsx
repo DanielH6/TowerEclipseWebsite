@@ -66,7 +66,7 @@ export default function News() {
           </div>
           <div className="news-heading-telemetry" aria-label="Published update archive summary">
             <div><strong>{loading ? "—" : updates.length}</strong><span>PUBLISHED POSTS</span></div>
-            <div><strong>{loading ? "—" : currentVersion}</strong><span>CURRENT VERSION</span></div>
+            <div><strong className="news-current-version">{loading ? "—" : currentVersion}</strong><span>CURRENT VERSION</span></div>
             <p><i /> DEVELOPMENT FEED ONLINE</p>
           </div>
         </header>

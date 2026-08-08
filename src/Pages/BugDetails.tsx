@@ -19,6 +19,7 @@ import { isBugStaff } from "../roles";
 import { synchronizeReportDictionaries } from "../dictionary-sync";
 import {
   attachmentAccept,
+  extractClipboardImageFiles,
   formatFileSize,
   mergeSelectedFiles,
 } from "../attachments";
@@ -433,13 +434,38 @@ export default function BugDetailsPage() {
         </aside>
       </div>
 
-      <article className="panel-card attachments-panel">
+      <article
+        className="panel-card attachments-panel attachment-paste-zone"
+        tabIndex={canEdit && details.attachmentPolicy.enabled ? 0 : -1}
+        aria-label="Bug report image attachments. Click this area and paste an image with Control V."
+        onClick={(event) => {
+          if (event.target === event.currentTarget) event.currentTarget.focus();
+        }}
+        onPaste={(event) => {
+          if (!canEdit || !details.attachmentPolicy.enabled || working) return;
+          const pasted = extractClipboardImageFiles(event.clipboardData);
+          if (pasted.length === 0) return;
+          event.preventDefault();
+          try {
+            const nextFiles = mergeSelectedFiles(
+              attachmentFiles,
+              pasted,
+              details.attachmentPolicy,
+              details.attachments.length,
+            );
+            setAttachmentFiles(nextFiles);
+            setError(null);
+          } catch (reason) {
+            setError(reason instanceof Error ? reason.message : "Could not paste that image.");
+          }
+        }}
+      >
         <div className="attachment-section-heading">
           <div>
             <h3>ATTACHMENTS ({details.attachments.length})</h3>
             {details.attachmentPolicy.enabled ? (
               <small>
-                PNG, JPG, or JPEG only. Up to {details.attachmentPolicy.maxFilesPerReport} images, {formatFileSize(details.attachmentPolicy.maxFileSizeBytes)} each.
+                PNG, JPG, or JPEG only. Up to {details.attachmentPolicy.maxFilesPerReport} images, {formatFileSize(details.attachmentPolicy.maxFileSizeBytes)} each. Click this area and press Ctrl+V to paste an image.
               </small>
             ) : (
               <small>R2 image storage is not configured on the API.</small>
@@ -458,12 +484,13 @@ export default function BugDetailsPage() {
                   const selected = Array.from(event.target.files ?? []);
                   event.target.value = "";
                   try {
-                    setAttachmentFiles((current) => mergeSelectedFiles(
-                      current,
+                    const nextFiles = mergeSelectedFiles(
+                      attachmentFiles,
                       selected,
                       details.attachmentPolicy,
                       details.attachments.length,
-                    ));
+                    );
+                    setAttachmentFiles(nextFiles);
                     setError(null);
                   } catch (reason) {
                     setError(reason instanceof Error ? reason.message : "Could not select those images.");

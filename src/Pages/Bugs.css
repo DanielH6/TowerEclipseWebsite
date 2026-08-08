@@ -1148,3 +1148,134 @@ button:disabled {
     max-height: calc(100vh - 150px);
   }
 }
+
+.bug-pagination {
+  max-width: 1600px;
+  margin: 16px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: #8b93a3;
+  font-size: 0.74rem;
+}
+
+.pagination-summary {
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.pagination-nav,
+.pagination-page {
+  min-width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  padding: 0 11px;
+  color: #dbe3f4;
+  background: #151820;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.pagination-nav:hover:not(:disabled),
+.pagination-page:hover:not(:disabled) {
+  border-color: rgba(104, 117, 245, 0.7);
+  background: #22283a;
+}
+
+.pagination-page.is-active {
+  border-color: #6875f5;
+  color: #fff;
+  background: #5865f2;
+}
+
+.pagination-nav:disabled,
+.pagination-page:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.pagination-ellipsis {
+  min-width: 24px;
+  color: #6f7786;
+  text-align: center;
+  user-select: none;
+}
+
+@media (max-width: 760px) {
+  .bug-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination-controls {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+}
+
+
+.bug-results-line {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.workspace-header .bug-results-line > p {
+  margin: 0;
+}
+
+.pagination-controls.is-compact {
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.pagination-controls.is-compact .pagination-nav,
+.pagination-controls.is-compact .pagination-page {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 0.62rem;
+}
+
+.pagination-controls.is-compact .pagination-ellipsis {
+  min-width: 18px;
+}
+
+.attachment-paste-zone {
+  outline: 1px solid transparent;
+  outline-offset: 3px;
+  transition: border-color 120ms ease, outline-color 120ms ease, background-color 120ms ease;
+}
+
+.attachment-paste-zone:focus,
+.attachment-paste-zone:focus-within {
+  border-color: rgba(129, 140, 248, 0.72);
+  outline-color: rgba(129, 140, 248, 0.28);
+}
+
+@media (max-width: 760px) {
+  .bug-results-line {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pagination-controls.is-compact {
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+}

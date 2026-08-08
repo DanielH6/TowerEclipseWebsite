@@ -2,6 +2,35 @@ import type { AttachmentPolicy } from "./types";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg"]);
 
+const CLIPBOARD_IMAGE_EXTENSION: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+};
+
+export function extractClipboardImageFiles(clipboardData: DataTransfer): File[] {
+  const clipboardFiles = Array.from(clipboardData.items ?? [])
+    .filter((item) => item.kind === "file" && item.type.toLowerCase().startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+
+  const sourceFiles = clipboardFiles.length > 0
+    ? clipboardFiles
+    : Array.from(clipboardData.files ?? []).filter((file) => file.type.toLowerCase().startsWith("image/"));
+
+  const pastedAt = Date.now();
+  return sourceFiles.map((file, index) => {
+    const mimeType = file.type.toLowerCase();
+    const extension = CLIPBOARD_IMAGE_EXTENSION[mimeType];
+    if (!extension) return file;
+
+    return new File(
+      [file],
+      `pasted-image-${pastedAt}-${index + 1}.${extension}`,
+      { type: mimeType, lastModified: pastedAt + index },
+    );
+  });
+}
+
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
