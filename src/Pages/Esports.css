@@ -1039,6 +1039,7 @@
 .bracket-scroll:focus-visible { box-shadow: 0 0 0 2px rgba(82, 199, 255, 0.25); }
 
 .tournament-bracket {
+  position: relative;
   min-width: 760px;
   min-height: 390px;
   padding: 10px 2px 18px;
@@ -1046,7 +1047,24 @@
   gap: 44px;
 }
 
+.bracket-connectors {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.bracket-connectors path {
+  fill: none;
+  stroke: rgba(82, 199, 255, 0.34);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
 .bracket-round {
+  position: relative;
+  z-index: 1;
   min-width: 210px;
   flex: 1 0 210px;
   display: flex;
@@ -1076,17 +1094,6 @@
   background: #070a0f;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
 }
-
-.bracket-match::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 100%;
-  width: 45px;
-  border-top: 1px solid rgba(82, 199, 255, 0.2);
-}
-
-.bracket-round:last-child .bracket-match::after { display: none; }
 
 .bracket-match > header {
   min-height: 27px;

@@ -8,6 +8,7 @@ import {
   generateGroupSchedule,
   generateKnockout,
   randomizeGroups,
+  removeParticipant,
   toAdminTournament,
   toPublicTournament,
   updateParticipant,
@@ -182,7 +183,60 @@ test("non-power-of-two qualifiers receive byes without prematurely completing la
   assert.equal(Boolean(final.participantAId) || Boolean(final.participantBId), true);
 });
 
-test("waitlist administration cannot erase group results already on the record", () => {
+test("projected brackets pair group winners with other-group runners-up and reveal clinched placements", () => {
+  const setup = makeTournament({
+    participantCap: 8,
+    groupCount: 4,
+    qualifiersPerGroup: 2,
+    autoAdvance: false,
+    seedingMode: "balanced",
+  });
+  let tournament = addParticipants(
+    setup.tournament,
+    Array.from({ length: 8 }, (_, index) => ({ displayName: `Seed ${index + 1}`, isr: 5000 - index * 100 })),
+    { idFactory: setup.idFactory },
+  );
+  tournament = randomizeGroups(tournament, { random: () => 0.4 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  for (const match of tournament.matches.filter((match) => match.stage === "group")) {
+    tournament = completeMatch(tournament, match.id, 2, 0, setup.idFactory);
+  }
+  tournament = generateKnockout(tournament, { idFactory: setup.idFactory });
+  const ranks = new Map(buildStandings(tournament).flatMap((group) => group.rows.map((row) => [row.participantId, row.rank])));
+  const groups = new Map(tournament.participants.map((participant) => [participant.id, participant.groupId]));
+  const openingMatches = tournament.matches.filter((match) => match.stage === "knockout" && match.round === 1);
+  for (const match of openingMatches) {
+    assert.notEqual(groups.get(match.participantAId), groups.get(match.participantBId));
+    assert.deepEqual([ranks.get(match.participantAId), ranks.get(match.participantBId)].sort(), [1, 2]);
+  }
+
+  const previewSetup = makeTournament({ participantCap: 6, groupCount: 2, qualifiersPerGroup: 2, autoAdvance: false });
+  let previewTournament = addParticipants(
+    previewSetup.tournament,
+    Array.from({ length: 6 }, (_, index) => ({ displayName: `Preview ${index + 1}` })),
+    { idFactory: previewSetup.idFactory },
+  );
+  previewTournament = randomizeGroups(previewTournament, { random: () => 0.4 });
+  previewTournament = generateGroupSchedule(previewTournament, { idFactory: previewSetup.idFactory });
+  const leader = previewTournament.participants.find((participant) => participant.groupId === "group-a");
+  for (const match of previewTournament.matches.filter(
+    (match) => match.stage === "group" && (match.participantAId === leader.id || match.participantBId === leader.id),
+  )) {
+    previewTournament = completeMatch(
+      previewTournament,
+      match.id,
+      match.participantAId === leader.id ? 2 : 0,
+      match.participantBId === leader.id ? 2 : 0,
+      previewSetup.idFactory,
+    );
+  }
+  const publicTournament = toPublicTournament(previewTournament);
+  assert.equal(previewTournament.matches.some((match) => match.stage === "knockout"), false);
+  assert.equal(publicTournament.knockoutPreview.some((match) => match.participantA === leader.displayName || match.participantB === leader.displayName), true);
+  assert.equal(publicTournament.knockoutPreview.some((match) => /Winner of Group B/.test(match.participantA) || /Winner of Group B/.test(match.participantB)), true);
+});
+
+test("unplayed entrants can be reassigned or removed without disturbing completed group results", () => {
   const setup = makeTournament({
     participantCap: 4,
     groupCount: 1,
@@ -195,6 +249,7 @@ test("waitlist administration cannot erase group results already on the record",
   ], { idFactory: setup.idFactory });
   tournament = randomizeGroups(tournament, { random: () => 0.2 });
   tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  const completedParticipantId = tournament.matches[0].participantAId;
   tournament = completeMatch(tournament, tournament.matches[0].id, 1, 0, setup.idFactory);
   const resultMatchId = tournament.matches[0].id;
   tournament = addParticipants(tournament, [
@@ -203,12 +258,16 @@ test("waitlist administration cannot erase group results already on the record",
 
   assert.equal(tournament.matches.find((match) => match.id === resultMatchId)?.status, "completed");
   const reserve = tournament.participants.find((participant) => participant.displayName === "Reserve");
-  assert.throws(
-    () => updateParticipant(tournament, reserve.id, { status: "confirmed", groupId: "group-a" }),
-    /locked after group results/,
-  );
+  tournament = updateParticipant(tournament, reserve.id, { status: "confirmed", groupId: "group-a" }, { idFactory: setup.idFactory });
+  assert.equal(tournament.matches.find((match) => match.id === resultMatchId)?.status, "completed");
+  assert.equal(tournament.matches.filter((match) => match.stage === "group" && match.status === "scheduled").length, 2);
   assert.equal(toAdminTournament(tournament).participants.length, 3);
-  assert.equal(toPublicTournament(tournament).participants.length, 2);
+  assert.equal(toPublicTournament(tournament).participants.length, 3);
+
+  tournament = removeParticipant(tournament, reserve.id, { idFactory: setup.idFactory });
+  assert.equal(tournament.matches.find((match) => match.id === resultMatchId)?.status, "completed");
+  assert.equal(tournament.matches.filter((match) => match.stage === "group").length, 1);
+  assert.throws(() => removeParticipant(tournament, completedParticipantId), /completed matches/);
 });
 
 test("ISR defaults to 100, stays within range, and orders strongest entrants first", () => {

@@ -199,6 +199,7 @@ function ParticipantEditor({
   participant,
   groupCount,
   checkInRequired,
+  structureLocked,
   disabled,
   onSave,
   onRemove,
@@ -206,6 +207,7 @@ function ParticipantEditor({
   participant: TournamentParticipant;
   groupCount: number;
   checkInRequired: boolean;
+  structureLocked: boolean;
   disabled: boolean;
   onSave: (changes: Partial<TournamentParticipant>) => Promise<void>;
   onRemove: () => Promise<void>;
@@ -231,10 +233,10 @@ function ParticipantEditor({
       <label><span>Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
       <label><span>Roblox username</span><input value={robloxUsername} onChange={(event) => setRobloxUsername(event.target.value)} /></label>
       <label><span>ISR</span><input type="number" min="100" max="5000" required value={isr} onChange={(event) => setIsr(event.target.value)} /></label>
-      <label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as TournamentParticipantStatus)}>
+      <label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as TournamentParticipantStatus)} disabled={disabled || structureLocked}>
         <option value="confirmed">Confirmed</option><option value="waitlist">Waitlist</option><option value="withdrawn">Withdrawn</option>
       </select></label>
-      <label><span>Group</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)} disabled={status !== "confirmed"}>
+      <label><span>Group</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)} disabled={disabled || structureLocked || status !== "confirmed"}>
         <option value="">Unassigned</option>
         {Array.from({ length: groupCount }, (_, index) => {
           const label = groupCode(index);
@@ -257,7 +259,7 @@ function ParticipantEditor({
             }).catch(() => undefined);
           }}
         >SAVE</button>
-        <button className="danger" type="button" disabled={disabled} onClick={() => { void onRemove().catch(() => undefined); }}>REMOVE</button>
+        <button className="danger" type="button" title={structureLocked ? "This entrant has a completed group result and cannot be removed or moved." : undefined} disabled={disabled || structureLocked} onClick={() => { void onRemove().catch(() => undefined); }}>REMOVE</button>
       </div>
     </div>
   );
@@ -432,6 +434,11 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
     (match) => match.stage === "group" && (selectedGroup === "all" || match.groupId === selectedGroup),
   ) ?? [];
   const knockoutMatches = tournament?.matches.filter((match) => match.stage === "knockout") ?? [];
+  const participantsWithRecordedMatches = new Set(
+    tournament?.matches
+      .filter((match) => match.stage === "group" && match.status === "completed")
+      .flatMap((match) => [match.participantAId, match.participantBId]) ?? [],
+  );
 
   return (
     <section className="esports-page tournament-manager-page tournament-editor-page">
@@ -629,7 +636,7 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
             >ADD ENTRANTS</button>
           </div>
           <div className="group-action-bar">
-            <div><strong>GROUP TOOLS</strong><span>Assignments stay editable until results are saved.</span></div>
+            <div><strong>GROUP TOOLS</strong><span>Entrants without a recorded result can be moved or removed; completed results stay protected.</span></div>
             <button type="button" disabled={working !== null || confirmedParticipants.length < 2} onClick={() => {
               if (!auth || !window.confirm("Assign every confirmed entrant using the selected group distribution? This will replace any unsaved schedule.")) return;
               void runAction("randomize", () => randomizeTournamentGroups(tournament.id, auth.csrfToken), "Groups assigned.").catch(() => undefined);
@@ -647,6 +654,7 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
                 participant={participant}
                 groupCount={tournament.settings.groupCount}
                 checkInRequired={tournament.settings.checkInRequired}
+                structureLocked={participantsWithRecordedMatches.has(participant.id)}
                 disabled={working !== null}
                 key={participant.id}
                 onSave={async (changes) => {

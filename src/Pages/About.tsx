@@ -12,25 +12,30 @@ import "./About.css";
 
 const CREDIT_PAGE_SIZE = 4;
 
-function StoryImage({ section }: { section: AboutStorySection }) {
+function StoryImage({ image, eyebrow, index }: {
+  image: AboutStorySection["images"][number];
+  eyebrow: string;
+  index: number;
+}) {
   const [failed, setFailed] = useState(false);
+  const hasImage = Boolean(image.src);
 
   return (
     <figure className="about-story-image">
-      {!failed ? (
+      {hasImage && !failed ? (
         <img
-          src={section.imageSrc}
-          alt={section.imageAlt}
+          src={image.src}
+          alt={image.alt}
           loading="lazy"
           onError={() => setFailed(true)}
         />
       ) : (
         <div className="about-image-placeholder" role="img" aria-label="About artwork has not been added yet">
           <span>IMAGE SLOT</span>
-          <strong>{section.imageSrc}</strong>
+          <strong>{hasImage ? image.src : `ADD IMAGE ${index + 1}`}</strong>
         </div>
       )}
-      <figcaption>{section.eyebrow}</figcaption>
+      <figcaption>{eyebrow} · {index + 1} OF 3</figcaption>
     </figure>
   );
 }
@@ -179,7 +184,11 @@ export default function AboutUs() {
                   {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
                 </div>
               </div>
-              <StoryImage section={section} />
+              <div className="about-story-images" aria-label={`${section.title} image gallery`}>
+                {section.images.map((image, imageIndex) => (
+                  <StoryImage image={image} eyebrow={section.eyebrow} index={imageIndex} key={imageIndex} />
+                ))}
+              </div>
             </article>
           ))}
         </div>

@@ -448,9 +448,6 @@ export function addParticipants(current, inputs, {
 }
 
 function ensureParticipantCanChangeStructure(tournament, participantId) {
-  if (groupResultsExist(tournament)) {
-    fail(409, "Entrant status and group assignments are locked after group results have been recorded.");
-  }
   const completed = tournament.matches.some(
     (match) => match.status === "completed"
       && (match.participantAId === participantId || match.participantBId === participantId),
@@ -459,15 +456,75 @@ function ensureParticipantCanChangeStructure(tournament, participantId) {
   if (knockoutHasStarted(tournament)) fail(409, "Participant structure is locked after knockouts begin.");
 }
 
+function groupScheduleExists(tournament) {
+  return Boolean(tournament.groupStageGeneratedAt)
+    || tournament.matches.some((match) => match.stage === "group");
+}
+
+function addPendingGroupMatchesForParticipant(tournament, participantId, { idFactory }) {
+  const participant = participantById(tournament, participantId);
+  if (!groupScheduleExists(tournament) || participant.status !== "confirmed" || !participant.groupId) return;
+  const opponents = tournament.participants.filter(
+    (candidate) => candidate.id !== participantId
+      && candidate.status === "confirmed"
+      && candidate.groupId === participant.groupId,
+  );
+  const nextRound = tournament.matches
+    .filter((match) => match.stage === "group" && match.groupId === participant.groupId)
+    .reduce((highest, match) => Math.max(highest, match.round), 0) + 1;
+  opponents.forEach((opponent, index) => {
+    const exists = tournament.matches.some(
+      (match) => match.stage === "group"
+        && ((match.participantAId === participantId && match.participantBId === opponent.id)
+          || (match.participantAId === opponent.id && match.participantBId === participantId)),
+    );
+    if (exists) return;
+    tournament.matches.push({
+      id: idFactory(),
+      stage: "group",
+      groupId: participant.groupId,
+      round: nextRound,
+      bracketPosition: index + 1,
+      label: `${groupLabel(participant.groupId)} · Rescheduled`,
+      participantAId: participantId,
+      participantBId: opponent.id,
+      scoreA: null,
+      scoreB: null,
+      winnerId: null,
+      status: "scheduled",
+      bestOf: tournament.settings.groupBestOf,
+      scheduledAt: null,
+      completedAt: null,
+      notes: "",
+      isBye: false,
+      isThirdPlace: false,
+      sourceMatchAId: null,
+      sourceMatchBId: null,
+    });
+  });
+}
+
+function reconcileUnplayedParticipantSchedule(tournament, participantId, { idFactory }) {
+  tournament.matches = tournament.matches.filter(
+    (match) => match.stage !== "group"
+      || (match.participantAId !== participantId && match.participantBId !== participantId),
+  );
+  addPendingGroupMatchesForParticipant(tournament, participantId, { idFactory });
+  clearKnockout(tournament);
+}
+
 export function updateParticipant(current, participantId, patch, {
   actor = null,
+  idFactory = () => crypto.randomUUID(),
   now = new Date().toISOString(),
 } = {}) {
   const tournament = clone(current);
   const participant = participantById(tournament, participantId);
   const requestedStatus = patch.status === undefined ? participant.status : patch.status;
-  const structural = patch.groupId !== undefined
-    || (patch.status !== undefined && (participant.status === "confirmed" || requestedStatus === "confirmed"));
+  const statusChanged = patch.status !== undefined && requestedStatus !== participant.status;
+  const groupChanged = patch.groupId !== undefined && patch.groupId !== participant.groupId;
+  const structural = groupChanged
+    || (statusChanged && (participant.status === "confirmed" || requestedStatus === "confirmed"));
   if (structural) ensureParticipantCanChangeStructure(tournament, participantId);
   if (patch.displayName !== undefined) {
     const displayName = cleanText(patch.displayName, "displayName", { min: 1, max: 80 });
@@ -500,9 +557,7 @@ export function updateParticipant(current, participantId, patch, {
   const confirmedCount = tournament.participants.filter((item) => item.status === "confirmed").length;
   if (confirmedCount > tournament.settings.participantCap) fail(409, "Tournament capacity has been reached.");
   if (structural) {
-    tournament.matches = tournament.matches.filter((match) => match.stage !== "group");
-    tournament.groupStageGeneratedAt = null;
-    clearKnockout(tournament);
+    reconcileUnplayedParticipantSchedule(tournament, participantId, { idFactory });
   }
   return touch(tournament, actor, now);
 }
@@ -523,7 +578,6 @@ export function removeParticipant(current, participantId, {
     tournament.matches = tournament.matches.filter(
       (match) => match.participantAId !== participantId && match.participantBId !== participantId,
     );
-    tournament.groupStageGeneratedAt = null;
     clearKnockout(tournament);
   }
   return touch(tournament, actor, now);
@@ -768,6 +822,139 @@ function nextPowerOfTwo(value) {
   return result;
 }
 
+function groupOrder(groupId) {
+  return String(groupId ?? "")
+    .replace(/^group-/, "")
+    .toUpperCase()
+    .split("")
+    .reduce((value, character) => value * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function qualifierSlots(standings, qualifiersPerGroup) {
+  const slots = [];
+  for (let rank = 1; rank <= qualifiersPerGroup; rank += 1) {
+    for (const group of standings) {
+      if (group.rows[rank - 1]) {
+        slots.push({ groupId: group.id, groupLabel: group.label, rank });
+      }
+    }
+  }
+  return slots;
+}
+
+function firstRoundPairs(qualifiers) {
+  const bracketSize = nextPowerOfTwo(qualifiers.length);
+  const firstRoundCount = bracketSize / 2;
+  const matchesToPlay = Math.max(0, qualifiers.length - firstRoundCount);
+  const remaining = [...qualifiers];
+  const pairs = [];
+
+  for (let index = 0; index < matchesToPlay; index += 1) {
+    remaining.sort((left, right) => left.rank - right.rank || groupOrder(left.groupId) - groupOrder(right.groupId));
+    const left = remaining.shift();
+    const mirroredGroup = remaining.reduce((best, candidate) => {
+      if (!best) return candidate;
+      const target = Math.max(0, groupOrder(left.groupId) - 1);
+      const candidateDistance = Math.abs(groupOrder(candidate.groupId) - target);
+      const bestDistance = Math.abs(groupOrder(best.groupId) - target);
+      if (candidate.groupId !== left.groupId && best.groupId === left.groupId) return candidate;
+      if (candidate.groupId === left.groupId && best.groupId !== left.groupId) return best;
+      if (candidate.rank !== best.rank) return candidate.rank > best.rank ? candidate : best;
+      return candidateDistance > bestDistance ? candidate : best;
+    }, null);
+    const rightIndex = remaining.indexOf(mirroredGroup);
+    const right = remaining.splice(rightIndex, 1)[0];
+    pairs.push([left, right]);
+  }
+
+  remaining.sort((left, right) => left.rank - right.rank || groupOrder(left.groupId) - groupOrder(right.groupId));
+  for (const qualifier of remaining) pairs.push([qualifier, null]);
+  return { bracketSize, pairs };
+}
+
+function placementLocks(tournament, standings) {
+  const locks = new Map();
+  const maximumMatchPoints = Math.max(
+    tournament.settings.pointsWin,
+    tournament.settings.pointsLoss,
+    tournament.settings.allowDraws ? tournament.settings.pointsDraw : -Infinity,
+  );
+  for (const group of standings) {
+    if (group.totalMatches !== group.expectedMatches) continue;
+    const remainingMatches = new Map(group.rows.map((row) => [row.participantId, 0]));
+    for (const match of tournament.matches) {
+      if (match.stage !== "group" || match.groupId !== group.id || match.status === "completed") continue;
+      if (remainingMatches.has(match.participantAId)) {
+        remainingMatches.set(match.participantAId, remainingMatches.get(match.participantAId) + 1);
+      }
+      if (remainingMatches.has(match.participantBId)) {
+        remainingMatches.set(match.participantBId, remainingMatches.get(match.participantBId) + 1);
+      }
+    }
+    const possibleMaximum = new Map(group.rows.map((row) => [
+      row.participantId,
+      row.points + (remainingMatches.get(row.participantId) ?? 0) * maximumMatchPoints,
+    ]));
+    for (const row of group.rows) {
+      const guaranteedAbove = group.rows.filter(
+        (other) => other.participantId !== row.participantId && other.points > possibleMaximum.get(row.participantId),
+      ).length;
+      const guaranteedBelow = group.rows.filter(
+        (other) => other.participantId !== row.participantId && possibleMaximum.get(other.participantId) < row.points,
+      ).length;
+      if (guaranteedAbove === row.rank - 1 && guaranteedBelow === group.rows.length - row.rank) {
+        locks.set(`${group.id}:${row.rank}`, row.participantId);
+      }
+    }
+  }
+  return locks;
+}
+
+function qualifierLabel(slot) {
+  if (slot.rank === 1) return `Winner of ${slot.groupLabel}`;
+  if (slot.rank === 2) return `Runner-up of ${slot.groupLabel}`;
+  return `#${slot.rank} of ${slot.groupLabel}`;
+}
+
+function buildKnockoutPreview(tournament, standings) {
+  const qualifiers = qualifierSlots(standings.filter((group) => group.rows.length > 0), tournament.settings.qualifiersPerGroup);
+  if (qualifiers.length < 2) return [];
+  const locks = placementLocks(tournament, standings);
+  const names = new Map(tournament.participants.map((participant) => [participant.id, participant.displayName]));
+  const { bracketSize, pairs } = firstRoundPairs(qualifiers);
+  const totalRounds = Math.log2(bracketSize);
+  const rounds = [];
+  const firstRound = pairs.map(([left, right], index) => ({
+    id: `projected-r1-m${index + 1}`,
+    round: 1,
+    bracketPosition: index + 1,
+    label: knockoutRoundLabel(1, totalRounds, bracketSize),
+    participantA: left ? names.get(locks.get(`${left.groupId}:${left.rank}`)) ?? qualifierLabel(left) : "TBD",
+    participantB: right ? names.get(locks.get(`${right.groupId}:${right.rank}`)) ?? qualifierLabel(right) : "TBD",
+    isBye: Boolean(left) !== Boolean(right),
+    isThirdPlace: false,
+  }));
+  rounds.push(firstRound);
+  for (let round = 2; round <= totalRounds; round += 1) {
+    const matches = [];
+    for (let position = 1; position <= bracketSize / 2 ** round; position += 1) {
+      const previous = rounds[round - 2];
+      matches.push({
+        id: `projected-r${round}-m${position}`,
+        round,
+        bracketPosition: position,
+        label: knockoutRoundLabel(round, totalRounds, bracketSize),
+        participantA: `Winner of ${previous[(position - 1) * 2].label} ${((position - 1) * 2) + 1}`,
+        participantB: `Winner of ${previous[(position - 1) * 2 + 1].label} ${((position - 1) * 2) + 2}`,
+        isBye: false,
+        isThirdPlace: false,
+      });
+    }
+    rounds.push(matches);
+  }
+  return rounds.flat();
+}
+
 function knockoutRoundLabel(round, totalRounds, bracketSize) {
   const remaining = bracketSize / 2 ** (round - 1);
   if (round === totalRounds) return "Final";
@@ -811,15 +998,13 @@ export function generateKnockout(current, {
   if (knockoutHasStarted(tournament)) fail(409, "The knockout bracket has already started.");
   clearKnockout(tournament);
   const standings = buildStandings(tournament).filter((group) => group.rows.length > 0);
-  const qualified = [];
-  for (let rank = 0; rank < tournament.settings.qualifiersPerGroup; rank += 1) {
-    for (const group of standings) {
-      const row = group.rows[rank];
-      if (row) qualified.push(row.participantId);
-    }
-  }
+  const qualifiedSlots = qualifierSlots(standings, tournament.settings.qualifiersPerGroup).map((slot) => ({
+    ...slot,
+    participantId: standings.find((group) => group.id === slot.groupId)?.rows[slot.rank - 1]?.participantId,
+  }));
+  const qualified = qualifiedSlots.map((slot) => slot.participantId).filter(Boolean);
   if (qualified.length < 2) fail(409, "At least two participants must qualify for knockouts.");
-  const bracketSize = nextPowerOfTwo(qualified.length);
+  const { bracketSize, pairs } = firstRoundPairs(qualifiedSlots);
   const totalRounds = Math.log2(bracketSize);
   const roundMatches = [];
   for (let round = 1; round <= totalRounds; round += 1) {
@@ -852,10 +1037,10 @@ export function generateKnockout(current, {
     }
     roundMatches.push(matches);
   }
-  const padded = [...qualified, ...Array(bracketSize - qualified.length).fill(null)];
   roundMatches[0].forEach((match, index) => {
-    match.participantAId = padded[index];
-    match.participantBId = padded[bracketSize - 1 - index];
+    const [left, right] = pairs[index] ?? [null, null];
+    match.participantAId = left?.participantId ?? null;
+    match.participantBId = right?.participantId ?? null;
     if (Boolean(match.participantAId) !== Boolean(match.participantBId)) {
       match.isBye = true;
       match.status = "completed";
@@ -1086,12 +1271,16 @@ export function toAdminTournament(tournament) {
     uploader: storedBanner.uploader ?? null,
   } : null;
   const standings = buildStandings(normalized);
+  const knockoutPreview = normalized.matches.some((match) => match.stage === "knockout")
+    ? []
+    : buildKnockoutPreview(normalized, standings);
   const completedMatches = normalized.matches.filter((match) => match.status === "completed" && !match.isBye).length;
   return {
     ...publicFields,
     banner,
     bannerImageUrl: null,
     standings,
+    knockoutPreview,
     participantCount: normalized.participants.filter((participant) => participant.status === "confirmed").length,
     completedMatches,
     totalMatches: normalized.matches.filter((match) => !match.isBye).length,
@@ -1122,6 +1311,20 @@ export function toTournamentSummary(tournament) {
       scoreB: match.scoreB,
       status: match.status,
     }));
+  if (knockoutPreview.length === 0) {
+    knockoutPreview.push(...publicTournament.knockoutPreview
+      .filter((match) => !match.isBye)
+      .slice(0, 4)
+      .map((match) => ({
+        id: match.id,
+        label: match.label,
+        participantA: match.participantA,
+        participantB: match.participantB,
+        scoreA: null,
+        scoreB: null,
+        status: "scheduled",
+      })));
+  }
   const groupPreview = publicTournament.standings
     .filter((group) => group.rows.length > 0)
     .slice(0, 2)
