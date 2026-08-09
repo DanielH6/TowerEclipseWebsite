@@ -117,9 +117,19 @@
   margin-bottom: 0;
 }
 
+.about-story-images {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  background: #05070a;
+}
+
 .about-story-image {
   position: relative;
-  min-height: 340px;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
   margin: 0;
   overflow: hidden;
   background: #05070a;
@@ -168,7 +178,7 @@
 .about-image-placeholder {
   width: 100%;
   height: 100%;
-  min-height: 340px;
+  min-height: 0;
   display: grid;
   place-content: center;
   gap: 8px;
@@ -538,9 +548,8 @@
     grid-template-columns: 1fr;
   }
 
-  .about-story-image {
-    min-height: 0;
-    aspect-ratio: 16 / 9;
+  .about-story-images {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .about-story-image::after {
@@ -555,6 +564,13 @@
   .credits-thank-you {
     max-width: 520px;
     text-align: left;
+  }
+}
+
+@media (max-width: 460px) {
+  .about-story-images {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 }
 

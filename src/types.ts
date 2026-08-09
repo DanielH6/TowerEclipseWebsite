@@ -242,6 +242,17 @@ export interface TournamentGroupStanding {
   matchesComplete: boolean;
 }
 
+export interface TournamentKnockoutPreviewMatch {
+  id: string;
+  round: number;
+  bracketPosition: number;
+  label: string;
+  participantA: string;
+  participantB: string;
+  isBye: boolean;
+  isThirdPlace: boolean;
+}
+
 export interface TournamentLogEntry {
   id: string;
   type: "tournament_created" | "schedule_generated" | "match_result" | "advancement" | "points_adjustment" | "announcement";
@@ -295,6 +306,7 @@ export interface Tournament {
   createdAt: string;
   updatedAt: string;
   standings: TournamentGroupStanding[];
+  knockoutPreview: TournamentKnockoutPreviewMatch[];
   participantCount: number;
   completedMatches: number;
   totalMatches: number;
