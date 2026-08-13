@@ -173,7 +173,7 @@ function normalizeSections(rawSections) {
       throw httpError(400, `${definition.kind}.items must be an array.`);
     }
     totalItems += rawItems.length;
-    if (totalItems > 120) {
+    if (totalItems > 500) {
       throw httpError(400, "An update can contain at most 120 entries.");
     }
 
