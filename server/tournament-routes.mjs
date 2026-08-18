@@ -481,7 +481,10 @@ export function createTournamentAdminRouter() {
     try {
       const tournament = await mutateTournament(
         request.params.tournamentId,
-        (current) => generateKnockout(current, { actor: request.authSession }),
+        (current) => generateKnockout(current, {
+          actor: request.authSession,
+          participantIds: request.body?.participantIds,
+        }),
       );
       response.json({ tournament: presentAdminTournament(tournament) });
     } catch (error) {

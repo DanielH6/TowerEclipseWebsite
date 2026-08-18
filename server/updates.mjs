@@ -435,7 +435,7 @@ async function listPublishedUpdates(_request, response, next) {
     const snapshot = await db.collection("updates").where("status", "==", "published").limit(100).get();
     const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdateSummary(document))))
       .filter(Boolean)
-      .sort((left, right) => new Date(right.publishedAt ?? right.updatedAt).getTime() - new Date(left.publishedAt ?? left.updatedAt).getTime());
+      .sort((left, right) => archiveTime(right) - archiveTime(left));
     publicUpdateListCache = updates;
     publicUpdateListCacheExpiresAt = Date.now() + publicUpdateCacheTtlMs;
     response.json({ updates });

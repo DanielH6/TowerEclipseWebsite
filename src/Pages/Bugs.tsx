@@ -12,12 +12,12 @@ import "./Bugs.css";
 
 const emptyFilters: BugFilters = {
   search: "",
-  status: "",
-  version: "",
-  priority: "",
-  category: "",
-  type: "",
-  device: "",
+  status: [],
+  version: [],
+  priority: [],
+  category: [],
+  type: [],
+  device: [],
 };
 
 const initialPagination: BugPagination = {
@@ -122,20 +122,45 @@ function FilterSelect({
   name: keyof BugFilters;
   label: string;
   dictionary: DictionaryName;
-  value: string;
+  value: string[];
   dictionaries: Dictionaries | null;
-  onChange: (name: keyof BugFilters, value: string) => void;
+  onChange: (name: keyof BugFilters, value: string[]) => void;
 }) {
+  const entries = dictionaries?.[dictionary] ?? [];
+  const allSelected = entries.length > 0 && value.length === entries.length;
+  const summary = value.length === 0 || allSelected
+    ? "All"
+    : `${value.length} selected`;
+
   return (
-    <label className="filter-field">
+    <div className="filter-field">
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(name, event.target.value)}>
-        <option value="">All</option>
-        {dictionaries?.[dictionary].map((entry) => (
-          <option value={entry.code} key={entry.id}>{entry.label}</option>
-        ))}
-      </select>
-    </label>
+      <details className="multi-filter">
+        <summary>{summary}</summary>
+        <div className="multi-filter-options">
+          <label>
+            <input
+              type="checkbox"
+              checked={allSelected || value.length === 0}
+              onChange={(event) => onChange(name, event.target.checked ? entries.map((entry) => entry.code) : [])}
+            />
+            <span>All</span>
+          </label>
+          {entries.map((entry) => (
+            <label key={entry.id}>
+              <input
+                type="checkbox"
+                checked={value.includes(entry.code)}
+                onChange={(event) => onChange(name, event.target.checked
+                  ? [...value, entry.code]
+                  : value.filter((code) => code !== entry.code))}
+              />
+              <span>{entry.label}</span>
+            </label>
+          ))}
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -167,7 +192,7 @@ export default function BugsPage() {
     Promise.all([refresh(emptyFilters, 1), loadDictionaries().then(setDictionaries)]).catch(() => undefined);
   }, []);
 
-  function setFilter(name: keyof BugFilters, value: string) {
+  function setFilter(name: keyof BugFilters, value: string | string[]) {
     setFilters((current) => ({ ...current, [name]: value }));
   }
 
@@ -216,12 +241,12 @@ export default function BugsPage() {
             placeholder="ID, description, reporter…"
           />
         </label>
-        <FilterSelect name="status" label="Status" dictionary="statuses" value={filters.status ?? ""} dictionaries={dictionaries} onChange={setFilter} />
-        <FilterSelect name="priority" label="Priority" dictionary="priorities" value={filters.priority ?? ""} dictionaries={dictionaries} onChange={setFilter} />
-        <FilterSelect name="version" label="Version" dictionary="versions" value={filters.version ?? ""} dictionaries={dictionaries} onChange={setFilter} />
-        <FilterSelect name="category" label="Category" dictionary="categories" value={filters.category ?? ""} dictionaries={dictionaries} onChange={setFilter} />
-        <FilterSelect name="type" label="Type" dictionary="types" value={filters.type ?? ""} dictionaries={dictionaries} onChange={setFilter} />
-        <FilterSelect name="device" label="Device" dictionary="devices" value={filters.device ?? ""} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="status" label="Status" dictionary="statuses" value={filters.status ?? []} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="priority" label="Priority" dictionary="priorities" value={filters.priority ?? []} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="version" label="Version" dictionary="versions" value={filters.version ?? []} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="category" label="Category" dictionary="categories" value={filters.category ?? []} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="type" label="Type" dictionary="types" value={filters.type ?? []} dictionaries={dictionaries} onChange={setFilter} />
+        <FilterSelect name="device" label="Device" dictionary="devices" value={filters.device ?? []} dictionaries={dictionaries} onChange={setFilter} />
         <div className="filter-actions">
           <button type="submit">APPLY</button>
           <button

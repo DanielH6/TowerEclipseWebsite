@@ -416,18 +416,26 @@ function requestedBugPage(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
+function requestedFilterValues(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return new Set(values
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean));
+}
+
 async function listReports(request, response, next) {
   try {
     let reports = await hydrateReportDictionaries(await loadBugListBase());
 
     const search = typeof request.query.search === "string" ? request.query.search.trim().toLowerCase() : "";
     const filters = {
-      status: typeof request.query.status === "string" ? request.query.status : "",
-      version: typeof request.query.version === "string" ? request.query.version : "",
-      priority: typeof request.query.priority === "string" ? request.query.priority : "",
-      category: typeof request.query.category === "string" ? request.query.category : "",
-      type: typeof request.query.type === "string" ? request.query.type : "",
-      device: typeof request.query.device === "string" ? request.query.device : "",
+      status: requestedFilterValues(request.query.status),
+      version: requestedFilterValues(request.query.version),
+      priority: requestedFilterValues(request.query.priority),
+      category: requestedFilterValues(request.query.category),
+      type: requestedFilterValues(request.query.type),
+      device: requestedFilterValues(request.query.device),
     };
 
     reports = reports.filter((report) => {
@@ -441,7 +449,7 @@ async function listReports(request, response, next) {
         if (!haystack.includes(search)) return false;
       }
 
-      return Object.entries(filters).every(([field, code]) => !code || report[field]?.code === code);
+      return Object.entries(filters).every(([field, codes]) => codes.size === 0 || codes.has(report[field]?.code));
     });
 
     const total = reports.length;

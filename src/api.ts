@@ -96,12 +96,12 @@ export async function loadDictionaries(): Promise<Dictionaries> {
 
 export interface BugFilters {
   search?: string;
-  status?: string;
-  version?: string;
-  priority?: string;
-  category?: string;
-  type?: string;
-  device?: string;
+  status?: string[];
+  version?: string[];
+  priority?: string[];
+  category?: string[];
+  type?: string[];
+  device?: string[];
 }
 
 export interface BugPagination {
@@ -119,7 +119,11 @@ export interface BugListResult {
 export async function loadBugs(filters: BugFilters = {}, page = 1): Promise<BugListResult> {
   const parameters = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value) parameters.set(key, value);
+    if (Array.isArray(value)) {
+      value.forEach((item) => parameters.append(key, item));
+    } else if (value) {
+      parameters.set(key, value);
+    }
   });
   parameters.set("page", String(page));
   const response = await fetch(`/api/bugs?${parameters.toString()}`, {
@@ -674,8 +678,12 @@ export function generateTournamentGroupSchedule(tournamentId: string, csrfToken:
   return tournamentAction(tournamentId, "groups/schedule", csrfToken);
 }
 
-export function generateTournamentKnockout(tournamentId: string, csrfToken: string) {
-  return tournamentAction(tournamentId, "knockout/generate", csrfToken);
+export function generateTournamentKnockout(
+  tournamentId: string,
+  csrfToken: string,
+  participantIds?: string[],
+) {
+  return tournamentAction(tournamentId, "knockout/generate", csrfToken, participantIds ? { participantIds } : {});
 }
 
 export async function updateTournamentMatch(

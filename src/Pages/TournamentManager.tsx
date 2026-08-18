@@ -343,6 +343,7 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
   const [adjustParticipantId, setAdjustParticipantId] = useState("");
   const [adjustDelta, setAdjustDelta] = useState("0");
   const [adjustReason, setAdjustReason] = useState("");
+  const [manualKnockoutParticipantIds, setManualKnockoutParticipantIds] = useState<string[]>([]);
   const [announcementHeadline, setAnnouncementHeadline] = useState("");
   const [announcementDetail, setAnnouncementDetail] = useState("");
   const [bannerPolicy, setBannerPolicy] = useState<AttachmentPolicy | null>(null);
@@ -374,6 +375,17 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not load tournament."))
       .finally(() => setLoading(false));
   }, [isNew, tournamentId]);
+
+  useEffect(() => {
+    if (!tournament) return;
+    const advancedIds = tournament.participants
+      .filter((participant) => participant.advanced)
+      .map((participant) => participant.id);
+    const automaticIds = tournament.standings.flatMap((group) => group.rows
+      .slice(0, tournament.settings.qualifiersPerGroup)
+      .map((row) => row.participantId));
+    setManualKnockoutParticipantIds(advancedIds.length >= 2 ? advancedIds : automaticIds);
+  }, [tournament?.id, tournament?.updatedAt]);
 
   function updateField<K extends keyof TournamentInput>(field: K, value: TournamentInput[K]) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -439,6 +451,12 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
       .filter((match) => match.stage === "group" && match.status === "completed")
       .flatMap((match) => [match.participantAId, match.participantBId]) ?? [],
   );
+  const knockoutCandidates = tournament?.standings.flatMap((group) => group.rows.map((row) => ({
+    ...row,
+    groupLabel: group.label,
+  }))) ?? [];
+  const manualKnockoutBracketSize = 2 ** Math.ceil(Math.log2(Math.max(2, manualKnockoutParticipantIds.length)));
+  const knockoutHasStarted = knockoutMatches.some((match) => !match.isBye && match.status !== "scheduled");
 
   return (
     <section className="esports-page tournament-manager-page tournament-editor-page">
@@ -715,10 +733,36 @@ function TournamentEditor({ tournamentId }: { tournamentId: string }) {
       {!isNew && tournament && tab === "knockout" && (
         <div className="manager-stage-layout">
           <div className="manager-panel">
-            <header className="manager-panel-heading"><div><span>01</span><h3>KNOCKOUT BRACKET</h3></div><div className="manager-heading-actions"><span>{tournament.groupStageComplete ? "GROUPS COMPLETE" : "QUALIFIERS PENDING"}</span><button type="button" disabled={working !== null || !tournament.groupStageComplete} onClick={() => {
-              if (!auth || !window.confirm("Generate or rebuild the knockout bracket from the current group standings?")) return;
-              void runAction("knockout", () => generateTournamentKnockout(tournament.id, auth.csrfToken), "Knockout bracket generated.").catch(() => undefined);
+            <header className="manager-panel-heading"><div><span>01</span><h3>KNOCKOUT BRACKET</h3></div><div className="manager-heading-actions"><span>{tournament.groupStageComplete ? "GROUPS COMPLETE" : "QUALIFIERS PENDING"}</span><button type="button" disabled={working !== null || !tournament.groupStageComplete || manualKnockoutParticipantIds.length < 2 || knockoutHasStarted} onClick={() => {
+              if (!auth || !window.confirm(`Generate or rebuild a ${manualKnockoutBracketSize}-slot bracket from the ${manualKnockoutParticipantIds.length} selected entrants?`)) return;
+              void runAction("knockout", () => generateTournamentKnockout(tournament.id, auth.csrfToken, manualKnockoutParticipantIds), "Knockout bracket generated from the selected entrants.").catch(() => undefined);
             }}>GENERATE / REBUILD</button></div></header>
+            <section className="manual-knockout-panel" aria-labelledby="manual-knockout-title">
+              <div className="manual-knockout-heading">
+                <div><h4 id="manual-knockout-title">MANUAL KNOCKOUT FIELD</h4><p>Choose who advances without removing them or changing completed group results. Unselected confirmed entrants are recorded as eliminated when the bracket is generated.</p></div>
+                <strong>{manualKnockoutParticipantIds.length} SELECTED · {manualKnockoutBracketSize}-SLOT BRACKET</strong>
+              </div>
+              <div className="manual-knockout-actions">
+                <button type="button" disabled={working !== null || knockoutHasStarted} onClick={() => setManualKnockoutParticipantIds(
+                  knockoutCandidates.filter((row) => row.rank <= tournament.settings.qualifiersPerGroup).map((row) => row.participantId),
+                )}>USE AUTOMATIC QUALIFIERS</button>
+                <button type="button" disabled={working !== null || knockoutHasStarted} onClick={() => setManualKnockoutParticipantIds([])}>CLEAR SELECTION</button>
+              </div>
+              {knockoutCandidates.length === 0 ? <p className="manual-knockout-empty">Complete the group stage to select the knockout field.</p> : (
+                <div className="manual-knockout-list">
+                  {knockoutCandidates.map((row) => {
+                    const selected = manualKnockoutParticipantIds.includes(row.participantId);
+                    return <label className={`manual-knockout-entry${selected ? " is-selected" : ""}`} key={row.participantId}>
+                      <input type="checkbox" checked={selected} disabled={working !== null || knockoutHasStarted} onChange={(event) => setManualKnockoutParticipantIds((current) => event.target.checked
+                        ? [...current, row.participantId]
+                        : current.filter((participantId) => participantId !== row.participantId))} />
+                      <span><b>{row.displayName}</b><small>{row.groupLabel} · #{row.rank} · {row.points} pts</small></span>
+                    </label>;
+                  })}
+                </div>
+              )}
+              {knockoutHasStarted && <p className="manual-knockout-empty">The field is locked because a knockout match has started.</p>}
+            </section>
             <TournamentBracket tournament={tournament} />
           </div>
           <div className="manager-panel">

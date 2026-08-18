@@ -133,6 +133,50 @@ button:disabled {
   outline: none;
 }
 
+.multi-filter { position: relative; }
+
+.multi-filter summary {
+  min-height: 42px;
+  padding: 12px 30px 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+  background: #090b0f;
+  cursor: pointer;
+  list-style: none;
+}
+
+.multi-filter summary::-webkit-details-marker { display: none; }
+.multi-filter summary::after { position: absolute; top: 13px; right: 11px; color: #8e9aa9; content: "⌄"; }
+.multi-filter[open] summary { border-color: #6875f5; box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.18); }
+.multi-filter[open] summary::after { transform: rotate(180deg); }
+
+.multi-filter-options {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  left: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid rgba(104, 117, 245, 0.7);
+  border-top: 0;
+  background: #090b0f;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+}
+
+.multi-filter-options label {
+  min-width: 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8deea;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.multi-filter-options label:hover { background: rgba(104, 117, 245, 0.13); }
+.multi-filter-options input { accent-color: #6875f5; }
+
 .filter-field input:focus,
 .filter-field select:focus,
 .editor-field input:focus,
