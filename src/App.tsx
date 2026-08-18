@@ -26,9 +26,9 @@ function Navigation() {
   const { auth } = useAuth();
   const links = [
     { to: "/", label: "HOME", end: true },
+    { to: "/about", label: "ABOUT US" },
     { to: "/news", label: "NEWS" },
     { to: "/esports", label: "ESPORTS" },
-    { to: "/about", label: "ABOUT US" },
     { to: "/bugs", label: "BUGS" },
   ];
 
@@ -48,7 +48,7 @@ function Navigation() {
         <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : undefined)}>ADMIN</NavLink>
       )}
       <NavLink to="/login" className={({ isActive }) => (isActive ? "active" : undefined)}>
-        {auth ? "ACCOUNT" : "LOGIN"}
+        ACCOUNT
       </NavLink>
     </nav>
   );

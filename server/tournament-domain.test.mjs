@@ -183,6 +183,33 @@ test("non-power-of-two qualifiers receive byes without prematurely completing la
   assert.equal(Boolean(final.participantAId) || Boolean(final.participantBId), true);
 });
 
+test("staff can manually select a 16-player knockout field without removing recorded group entrants", () => {
+  const setup = makeTournament({
+    participantCap: 32,
+    groupCount: 8,
+    qualifiersPerGroup: 4,
+    autoAdvance: false,
+  });
+  let tournament = addParticipants(
+    setup.tournament,
+    Array.from({ length: 32 }, (_, index) => ({ displayName: `Manual ${index + 1}` })),
+    { idFactory: setup.idFactory },
+  );
+  tournament = randomizeGroups(tournament, { random: () => 0.4 });
+  tournament = generateGroupSchedule(tournament, { idFactory: setup.idFactory });
+  for (const match of tournament.matches.filter((match) => match.stage === "group")) {
+    tournament = completeMatch(tournament, match.id, 2, 0, setup.idFactory);
+  }
+  const selectedIds = buildStandings(tournament).flatMap((group) => group.rows.slice(0, 2).map((row) => row.participantId));
+  tournament = generateKnockout(tournament, { idFactory: setup.idFactory, participantIds: selectedIds });
+
+  assert.equal(tournament.participants.length, 32);
+  assert.equal(tournament.participants.filter((participant) => participant.advanced).length, 16);
+  assert.equal(tournament.participants.filter((participant) => participant.eliminated).length, 16);
+  assert.equal(tournament.matches.filter((match) => match.stage === "knockout" && match.round === 1).length, 8);
+  assert.match(tournament.log[0].headline, /manually selected/);
+});
+
 test("projected brackets pair group winners with other-group runners-up and reveal clinched placements", () => {
   const setup = makeTournament({
     participantCap: 8,

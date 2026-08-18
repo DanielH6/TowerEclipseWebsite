@@ -842,6 +842,38 @@ function qualifierSlots(standings, qualifiersPerGroup) {
   return slots;
 }
 
+function manualKnockoutSlots(tournament, standings, participantIds) {
+  if (participantIds === undefined) {
+    return qualifierSlots(standings, tournament.settings.qualifiersPerGroup).map((slot) => ({
+      ...slot,
+      participantId: standings.find((group) => group.id === slot.groupId)?.rows[slot.rank - 1]?.participantId,
+    })).filter((slot) => slot.participantId);
+  }
+  if (!Array.isArray(participantIds)) fail(400, "participantIds must be an array.");
+  const uniqueIds = [...new Set(participantIds)];
+  if (uniqueIds.length !== participantIds.length || uniqueIds.some((id) => typeof id !== "string" || !id)) {
+    fail(400, "Each manually selected knockout participant must be unique.");
+  }
+  const standingRows = standings.flatMap((group) => group.rows.map((row) => ({
+    ...row,
+    groupId: group.id,
+    groupLabel: group.label,
+  })));
+  const rowsByParticipantId = new Map(standingRows.map((row) => [row.participantId, row]));
+  const slots = uniqueIds.map((participantId) => {
+    const row = rowsByParticipantId.get(participantId);
+    if (!row) fail(409, "Manual knockout selections must be confirmed entrants with a completed group-stage record.");
+    return {
+      groupId: row.groupId,
+      groupLabel: row.groupLabel,
+      rank: row.rank,
+      participantId,
+    };
+  });
+  if (slots.length < 2) fail(409, "Select at least two entrants for the knockout bracket.");
+  return slots;
+}
+
 function firstRoundPairs(qualifiers) {
   const bracketSize = nextPowerOfTwo(qualifiers.length);
   const firstRoundCount = bracketSize / 2;
@@ -992,16 +1024,14 @@ export function generateKnockout(current, {
   actor = null,
   idFactory = () => crypto.randomUUID(),
   now = new Date().toISOString(),
+  participantIds,
 } = {}) {
   const tournament = clone(current);
   if (!groupStageComplete(tournament)) fail(409, "Complete every generated group-stage match first.");
   if (knockoutHasStarted(tournament)) fail(409, "The knockout bracket has already started.");
   clearKnockout(tournament);
   const standings = buildStandings(tournament).filter((group) => group.rows.length > 0);
-  const qualifiedSlots = qualifierSlots(standings, tournament.settings.qualifiersPerGroup).map((slot) => ({
-    ...slot,
-    participantId: standings.find((group) => group.id === slot.groupId)?.rows[slot.rank - 1]?.participantId,
-  }));
+  const qualifiedSlots = manualKnockoutSlots(tournament, standings, participantIds);
   const qualified = qualifiedSlots.map((slot) => slot.participantId).filter(Boolean);
   if (qualified.length < 2) fail(409, "At least two participants must qualify for knockouts.");
   const { bracketSize, pairs } = firstRoundPairs(qualifiedSlots);
@@ -1077,11 +1107,12 @@ export function generateKnockout(current, {
   }
   tournament.participants.forEach((participant) => {
     participant.advanced = qualified.includes(participant.id);
+    participant.eliminated = participant.status === "confirmed" && Boolean(participant.groupId) && !participant.advanced;
   });
   tournament.knockoutGeneratedAt = now;
   addLog(tournament, {
     type: "advancement",
-    headline: `${qualified.length} participants advanced to knockouts`,
+    headline: `${qualified.length} participants ${participantIds === undefined ? "advanced to" : "were manually selected for"} knockouts`,
     detail: qualified.map((id) => participantName(tournament, id)).join(", "),
     stage: "knockout",
     participantIds: qualified,

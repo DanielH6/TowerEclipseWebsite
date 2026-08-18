@@ -23,6 +23,14 @@ function populatedSectionCount(update: GameUpdate) {
   return update.sections.filter((section) => section.items.length > 0 || section.introHtml).length;
 }
 
+function displayPublishTime(update: GameUpdate) {
+  const value = update.publishedOn
+    ? `${update.publishedOn}T00:00:00.000Z`
+    : (update.publishedAt ?? update.updatedAt);
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
 export default function News() {
   const [updates, setUpdates] = useState<GameUpdate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,12 +56,17 @@ export default function News() {
 
   const visibleUpdates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return updates;
-    return updates.filter((update) => [update.title, update.version, update.author.displayName]
-      .some((value) => value.toLowerCase().includes(normalizedQuery)));
+    return updates
+      .filter((update) => !normalizedQuery || [update.title, update.version, update.author.displayName]
+        .some((value) => value.toLowerCase().includes(normalizedQuery)))
+      .sort((left, right) => displayPublishTime(right) - displayPublishTime(left));
   }, [query, updates]);
-  const currentVersion = updates.find((update) => update.contentType === "game_update" && update.version)?.version ?? "—";
-  const latestFullUpdateId = updates.find((update) => update.contentType === "game_update" && !update.isMinor)?.id;
+  const displayOrderedUpdates = useMemo(
+    () => [...updates].sort((left, right) => displayPublishTime(right) - displayPublishTime(left)),
+    [updates],
+  );
+  const currentVersion = displayOrderedUpdates.find((update) => update.contentType === "game_update" && update.version)?.version ?? "—";
+  const latestFullUpdateId = displayOrderedUpdates.find((update) => update.contentType === "game_update" && !update.isMinor)?.id;
 
   return (
     <section className="content-band news-page">
