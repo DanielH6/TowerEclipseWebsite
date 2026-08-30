@@ -7,7 +7,8 @@
   background:
     radial-gradient(circle at 8% 2%, rgba(91, 101, 242, 0.13), transparent 31%),
     radial-gradient(circle at 94% 38%, rgba(82, 199, 255, 0.065), transparent 32%),
-    linear-gradient(180deg, rgba(5, 8, 13, 0.96), rgba(7, 9, 14, 0.98));
+    linear-gradient(180deg, rgba(5, 11, 16, 0.88), rgba(7, 12, 18, 0.92)),
+    url("/harbor-background.png") center / cover fixed;
 }
 
 .news-page::before,

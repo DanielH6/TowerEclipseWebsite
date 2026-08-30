@@ -3,7 +3,9 @@
   min-height: 520px;
   padding: 44px clamp(18px, 4vw, 64px) 58px;
   color: #eef2ff;
-  background: rgba(6, 8, 12, 0.94);
+  background:
+    linear-gradient(rgba(6, 11, 16, 0.86), rgba(6, 11, 16, 0.9)),
+    url("/harbor-background.png") center / cover fixed;
   box-shadow: inset 0 24px 60px rgba(0, 0, 0, 0.42), inset 0 -24px 60px rgba(0, 0, 0, 0.42);
 }
 

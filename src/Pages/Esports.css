@@ -11,7 +11,8 @@
   background:
     radial-gradient(circle at 12% 2%, rgba(39, 185, 255, 0.11), transparent 30%),
     radial-gradient(circle at 90% 42%, rgba(138, 92, 255, 0.09), transparent 34%),
-    linear-gradient(180deg, rgba(5, 8, 12, 0.97), rgba(7, 9, 13, 0.95));
+    linear-gradient(180deg, rgba(5, 11, 16, 0.88), rgba(7, 12, 18, 0.9)),
+    url("/harbor-background.png") center / cover fixed;
 }
 
 .esports-page::before {

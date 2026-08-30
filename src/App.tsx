@@ -144,49 +144,79 @@ function Footer() {
 
   return (
     <footer className="site-footer">
-      <div className="social-row" aria-label="Social channels">
-        {socialLinks.map((socialLink) => (
-          <a
-            className="social-link"
-            href={socialLink.href}
-            key={socialLink.name}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={socialLink.name}
-            title={socialLink.name}
-          >
-            <img src={socialLink.icon} alt="" />
-          </a>
-        ))}
-        
+      <div className="footer-inner">
+        <div className="footer-brand">
+          <img className="footer-mark" src="/favicon.png" alt="" />
+          <div>
+            <strong>TOWER ECLIPSE</strong>
+            <span>COMING SOON</span>
+          </div>
+        </div>
+        <div className="social-row" aria-label="Social channels">
+          {socialLinks.map((socialLink) => (
+            <a
+              className="social-link"
+              href={socialLink.href}
+              key={socialLink.name}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={socialLink.name}
+              title={socialLink.name}
+            >
+              <img src={socialLink.icon} alt="" />
+            </a>
+          ))}
+        </div>
+        <p>© 2026 Eclipse Development Studio. All Rights Reserved.</p>
       </div>
-      <p>© 2026 Eclipse Development Studio. All Rights Reserved.</p>
     </footer>
   );
 }
 
 function PageShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  const isAboutPage = pathname === "/about";
+  const isHomePage = pathname === "/";
+  const pageTitle = pathname === "/about"
+    ? "About Tower Eclipse"
+    : pathname === "/news"
+      ? "Tower Eclipse News"
+      : pathname === "/esports"
+        ? "Tower Eclipse Esports"
+        : pathname === "/bugs"
+          ? "Tower Eclipse Bug Tracker"
+          : "Tower Eclipse";
 
   return (
-    <main className="background-page">
+    <div className="background-page">
       <div className="site-frame">
-        <header className="hero-header">
+        <header className="site-header">
+          <NavLink to="/" end className="site-wordmark" aria-label="Tower Eclipse home">
+            <img className="wordmark-mark" src="/favicon.png" alt="" />
+            <span className="wordmark-copy">
+              <strong>TOWER ECLIPSE</strong>
+              <small>COMING SOON</small>
+            </span>
+          </NavLink>
           <Navigation />
-          {isAboutPage ? (
-            <h1>ABOUT US</h1>
-          ) : (
-            <h1>
-              TOWER <span className="hero-title-accent">ECLIPSE</span>
-            </h1>
-          )}
-          <Stats />
+          <a
+            className="header-play-link"
+            href="https://www.roblox.com/games/80787635946901/Tower-Eclipse"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span aria-hidden="true">↗</span> PLAY NOW
+          </a>
         </header>
+        <div className="site-status-line">
+          <span className="status-indicator" aria-hidden="true" />
+          <span>PROJECT STATUS // IN DEVELOPMENT</span>
+          <Stats />
+        </div>
+        {!isHomePage && <h1 className="sr-only">{pageTitle}</h1>}
         {children}
         <Footer />
       </div>
-    </main>
+    </div>
   );
 }
 

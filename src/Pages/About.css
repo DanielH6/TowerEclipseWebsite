@@ -2,8 +2,9 @@
   position: relative;
   padding: 48px 24px 76px;
   background:
-    linear-gradient(180deg, rgba(7, 9, 13, 0.92), rgba(9, 11, 15, 0.8)),
-    radial-gradient(circle at 50% 0%, rgba(39, 185, 255, 0.08), transparent 40%);
+    linear-gradient(180deg, rgba(7, 12, 17, 0.87), rgba(7, 12, 17, 0.82)),
+    radial-gradient(circle at 50% 0%, rgba(39, 185, 255, 0.1), transparent 40%),
+    url("/harbor-background.png") center / cover fixed;
 }
 
 .about-introduction {
