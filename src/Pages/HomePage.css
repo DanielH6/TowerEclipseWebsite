@@ -49,7 +49,7 @@
 
 .home-overline {
   margin: 0;
-  color: #8ae8ed;
+  color: #76bdff;
   font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 0.68rem;
   font-weight: 700;
@@ -75,7 +75,7 @@
 
 .home-hero h1 span,
 .home-enlist h2 span {
-  color: #8ceff1;
+  color: #76bdff;
 }
 
 .home-hero h1 {
@@ -117,28 +117,28 @@
 
 .home-page .primary-action {
   color: #031017;
-  background: #91EDF0;
+  background: #76bdff;
   box-shadow: 0 13px 33px rgba(67, 225, 234, 0.14);
 }
 
 .home-page .primary-action:hover,
 .home-page .primary-action:focus-visible {
   color: #031017;
-  background: #d0ffff;
+  background: #a3d2ff;
   box-shadow: 0 16px 37px rgba(85, 231, 237, 0.27);
   transform: translateY(-2px);
 }
 
 .hero-secondary-action {
   color: #dceaf1;
-  border-color: rgba(194, 235, 238, 0.25);
+  border-color: #76bdff;
   background: rgba(4, 14, 23, 0.55);
 }
 
 .hero-secondary-action:hover,
 .hero-secondary-action:focus-visible {
-  color: #a7fbfd;
-  border-color: #8ceff1;
+  color: #76bdff;
+  border-color: #76bdff;
   background: rgba(91, 229, 234, 0.08);
   transform: translateY(-2px);
 }
@@ -149,14 +149,14 @@
   bottom: 75px;
   width: min(320px, 28vw);
   padding: 20px;
-  border: 1px solid rgba(159, 240, 244, 0.2);
+  border: 1px solid #92caff;
   background: rgba(3, 12, 22, 0.72);
-  box-shadow: inset 3px 0 #8ceff1, 0 18px 48px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 3px 0 #76bdff, 0 18px 48px rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(12px);
 }
 
 .readout-label {
-  color: #86e9ed;
+  color: #76bdff;
   font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 0.58rem;
   font-weight: 700;
@@ -218,7 +218,7 @@
   width: 1px;
   height: 25px;
   display: block;
-  background: linear-gradient(#8ceff1, transparent);
+  background: linear-gradient(#76bdff, transparent);
   animation: scroll-pulse 1.8s ease-in-out infinite;
 }
 
@@ -266,7 +266,7 @@
 
 .home-info-copy .home-overline {
   margin-bottom: 18px;
-  color: #8be8ed;
+  color: #76bdff;
 }
 
 .home-info-copy h2 {
