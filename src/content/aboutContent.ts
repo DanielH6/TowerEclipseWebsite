@@ -147,7 +147,7 @@ export const CREDIT_GROUPS: CreditGroup[] = [
       },
       {
         name: "noxrimz",
-        handle: "@Norxrilm",
+        handle: "@Xx_Erorr404xX2",
         contribution: "VFX",
       },
       {
