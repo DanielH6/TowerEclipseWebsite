@@ -105,7 +105,7 @@
   bottom: 0;
   left: 0;
   height: 2px;
-  background: #8CE7FF;
+  background: #76bdff;
   opacity: 0;
   transform: scaleX(0.4);
   transition: opacity 180ms ease, transform 180ms ease;
@@ -131,9 +131,9 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #8CE7FF;
+  border: 1px solid #76bdff;
   color: #061319;
-  background: #8CE7FF;
+  background: #76bdff;
   font-size: 0.59rem;
   font-weight: 800;
   letter-spacing: 0.15em;
@@ -144,7 +144,7 @@
 .header-play-link:hover,
 .header-play-link:focus-visible {
   color: #061319;
-  background: #d0ffff;
+  background: #76bdff;
   box-shadow: 0 8px 24px rgba(74, 231, 237, 0.18);
   transform: translateY(-1px);
 }
@@ -249,9 +249,9 @@
 .simple-panel {
   width: min(100%, 660px);
   padding: 36px 42px;
-  border: 1px solid rgba(145, 229, 234, 0.15);
+  border: 1px solid #76bdff;
   background: rgba(4, 15, 24, 0.88);
-  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.36), inset 3px 0 #8ceff1;
+  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.36), inset 3px 0 #76bdff;
   text-align: center;
 }
 
