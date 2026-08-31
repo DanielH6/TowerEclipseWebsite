@@ -113,12 +113,13 @@ if (production && !redirectUri.startsWith("https://")) {
 
 const roleIds = {
   owner: snowflake("DISCORD_ROLE_OWNER_ID", "1338054578897420288"),
+  admin: snowflake("DISCORD_ROLE_ADMIN_ID", "1543793914643882084"),
   leadqa: snowflake("DISCORD_ROLE_LEADQA_ID"),
   qa: snowflake("DISCORD_ROLE_QA_ID"),
   dev: snowflake("DISCORD_ROLE_DEV_ID"),
 };
 
-if (new Set(Object.values(roleIds)).size !== 4) {
+if (new Set(Object.values(roleIds)).size !== 5) {
   throw new Error("Discord role IDs must be different.");
 }
 

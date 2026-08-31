@@ -25,17 +25,24 @@ test("Discord guild members without a staff role map to Member", () => {
 });
 
 test("staff roles keep their existing priority over Member", () => {
-  const { dev, leadqa, owner, qa } = config.discord.roleIds;
+  const { admin, dev, leadqa, owner, qa } = config.discord.roleIds;
 
   assert.equal(mapDiscordRole([qa]), "qa");
   assert.equal(mapDiscordRole([qa, leadqa]), "leadqa");
   assert.equal(mapDiscordRole([qa, leadqa, dev]), "dev");
   assert.equal(mapDiscordRole([qa, leadqa, owner]), "dev");
+  assert.equal(mapDiscordRole([qa, leadqa, admin]), "dev");
 });
 
 test("Discord Owner role maps to Developer access", () => {
   assert.equal(mapDiscordRole([config.discord.roleIds.owner]), "dev");
   assert.equal(roleLabel(mapDiscordRole([config.discord.roleIds.owner])), "Developer");
+});
+
+test("Discord Admin role maps to Developer access", () => {
+  assert.equal(config.discord.roleIds.admin, "1543793914643882084");
+  assert.equal(mapDiscordRole([config.discord.roleIds.admin]), "dev");
+  assert.equal(roleLabel(mapDiscordRole([config.discord.roleIds.admin])), "Developer");
 });
 
 test("Member is rejected by bug staff authorization", () => {
