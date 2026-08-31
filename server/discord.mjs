@@ -123,6 +123,7 @@ export function mapDiscordRole(roleIds) {
 
   if (
     roleSet.has(config.discord.roleIds.owner) ||
+    roleSet.has(config.discord.roleIds.admin) ||
     roleSet.has(config.discord.roleIds.dev)
   ) {
     return "dev";
