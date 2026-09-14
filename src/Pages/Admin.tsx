@@ -103,7 +103,7 @@ export default function AdminPage() {
           <h2>DICTIONARIES</h2>
           <p>Manage the values shown in bug-report dropdowns.</p>
         </div>
-        <Link className="primary-action" to="/admin/updates">UPDATE EDITOR</Link>
+        <div className="button-row"><Link className="primary-action" to="/admin/careers">CAREERS & APPLICATIONS</Link><Link className="primary-action" to="/admin/updates">UPDATE EDITOR</Link></div>
       </div>
 
       <div className="admin-layout">

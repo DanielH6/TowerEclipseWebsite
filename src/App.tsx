@@ -21,6 +21,10 @@ import "./App.css";
 const EsportsPage = lazy(() => import("./Pages/Esports"));
 const TournamentDetailsPage = lazy(() => import("./Pages/TournamentDetails"));
 const TournamentManagerPage = lazy(() => import("./Pages/TournamentManager"));
+const LegalPage = lazy(() => import("./Pages/Legal"));
+const CareersPage = lazy(() => import("./Pages/Careers"));
+const AdminCareersPage = lazy(() => import("./Pages/AdminCareers"));
+const ApplicationsPage = lazy(() => import("./Pages/Applications"));
 
 function Navigation() {
   const { auth } = useAuth();
@@ -29,6 +33,7 @@ function Navigation() {
     { to: "/about", label: "ABOUT US" },
     { to: "/news", label: "NEWS" },
     { to: "/esports", label: "ESPORTS" },
+    { to: "/careers", label: "CAREERS" },
     { to: "/bugs", label: "BUGS" },
   ];
 
@@ -113,12 +118,12 @@ function Stats() {
       aria-label="Live Roblox game statistics"
       aria-busy={!stats && !failed}
     >
-      <div title={`Total plays: ${exact(stats?.totalPlays)}`}>
-        <span>TOTAL PLAYS</span>
+      <div title={`Total tests: ${exact(stats?.totalPlays)}`}>
+        <span>TOTAL TESTS</span>
         <strong>{format(stats?.totalPlays)}</strong>
       </div>
-      <div title={`Monthly active players: ${exact(stats?.monthlyPlayers)}`}>
-        <span>MONTHLY PLAYERS</span>
+      <div title={`Monthly testers: ${exact(stats?.monthlyPlayers)}`}>
+        <span>MONTHLY TESTERS</span>
         <strong>{format(stats?.monthlyPlayers)}</strong>
       </div>
       <div title={`${ccuLabel}: ${exact(stats?.ccu)}`}>
@@ -167,7 +172,7 @@ function Footer() {
             </a>
           ))}
         </div>
-        <p>© 2026 Eclipse Development Studio. All Rights Reserved.</p>
+        <div className="footer-information"><nav className="footer-legal" aria-label="Legal"><NavLink to="/privacy">Privacy Policy</NavLink><NavLink to="/terms">Terms of Service</NavLink></nav><p>© 2026 Eclipse Development Studio. All Rights Reserved.</p></div>
       </div>
     </footer>
   );
@@ -176,15 +181,23 @@ function Footer() {
 function PageShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const isHomePage = pathname === "/";
-  const pageTitle = pathname === "/about"
+  const pageTitle = pathname.startsWith("/careers")
+    ? "Tower Eclipse Careers"
+    : pathname.startsWith("/admin/careers")
+      ? "Tower Eclipse Application Management"
+      : pathname.startsWith("/applications")
+        ? "Tower Eclipse Application"
+        : pathname === "/about"
     ? "About Tower Eclipse"
     : pathname === "/news"
       ? "Tower Eclipse News"
       : pathname === "/esports"
         ? "Tower Eclipse Esports"
-        : pathname === "/bugs"
-          ? "Tower Eclipse Bug Tracker"
-          : "Tower Eclipse";
+        : pathname === "/login"
+          ? "Tower Eclipse Account"
+          : pathname === "/bugs"
+            ? "Tower Eclipse Bug Tracker"
+            : "Tower Eclipse";
 
   return (
     <div className="background-page">
@@ -212,7 +225,7 @@ function PageShell({ children }: { children: ReactNode }) {
           <span>PROJECT STATUS // IN DEVELOPMENT</span>
           <Stats />
         </div>
-        {!isHomePage && <h1 className="sr-only">{pageTitle}</h1>}
+        {!isHomePage && pathname !== "/privacy" && pathname !== "/terms" && <h1 className="sr-only">{pageTitle}</h1>}
         {children}
         <Footer />
       </div>
@@ -236,7 +249,16 @@ function AppRoutes() {
     element = <ProtectedRoute role="dev" fallbackTo="/esports"><TournamentManagerPage /></ProtectedRoute>;
   }
   else if (pathname === "/about") element = <AboutUs />;
+  else if (pathname === "/privacy") element = <LegalPage document="privacy" />;
+  else if (pathname === "/terms") element = <LegalPage document="terms" />;
   else if (pathname === "/login") element = <Login />;
+  else if (pathname === "/careers") element = <CareersPage />;
+  else if (/^\/careers\/[^/]+$/.test(pathname)) element = <CareersPage key={pathname} formId={pathname.split("/")[2]} />;
+  else if (pathname === "/admin/careers") element = <ProtectedRoute role="dev"><AdminCareersPage /></ProtectedRoute>;
+  else if (pathname === "/admin/careers/review") element = <ProtectedRoute role="dev"><AdminCareersPage review /></ProtectedRoute>;
+  else if (/^\/admin\/careers\/forms\/[^/]+$/.test(pathname)) element = <ProtectedRoute role="dev"><AdminCareersPage key={pathname} formId={pathname.split("/")[4]} /></ProtectedRoute>;
+  else if (/^\/admin\/careers\/review\/[^/]+$/.test(pathname)) element = <ProtectedRoute role="dev"><ApplicationsPage key={pathname} admin applicationId={pathname.split("/")[4]!} /></ProtectedRoute>;
+  else if (/^\/applications\/[^/]+$/.test(pathname)) element = <ProtectedRoute><ApplicationsPage key={pathname} applicationId={pathname.split("/")[2]!} /></ProtectedRoute>;
   else if (pathname === "/bugs") element = <BugsPage />;
   else if (pathname === "/bugs/new") {
     element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;

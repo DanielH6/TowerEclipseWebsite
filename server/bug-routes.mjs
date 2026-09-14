@@ -1,4 +1,5 @@
 import express from "express";
+import { accountActivityFields } from "./account-service.mjs";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
 import { deleteLocalJsonCache, readLocalJsonCache, writeLocalJsonCache } from "./local-cache.mjs";
 import {
@@ -336,9 +337,10 @@ async function serializeReportDocument(document) {
   return report;
 }
 
-async function addActivity(transactionOrBatch, reportReference, action, actor, details = {}) {
+async function addActivity(transactionOrBatch, reportReference, action, actor, details = {}, report = null) {
   const reference = reportReference.collection("activity").doc();
   transactionOrBatch.set(reference, {
+    ...accountActivityFields(reportReference.id, action, actor, report, details),
     action,
     actor,
     details,
@@ -594,13 +596,14 @@ async function patchReport(request, response, next) {
       actor,
       {
         fields: Object.keys(changes),
-        ...(reopensTerminalReport
+        ...(changes.status
           ? {
               previousStatus: current.status,
               newStatus: changes.status,
             }
           : {}),
       },
+      current,
     );
     await batch.commit();
 
@@ -649,7 +652,7 @@ async function approveReport(request, response, next) {
       },
       updatedAt: FieldValue.serverTimestamp(),
     });
-    await addActivity(batch, reference, "report_approved", actor, { comment });
+    await addActivity(batch, reference, "report_approved", actor, { comment }, current);
     await batch.commit();
     const updated = await reference.get();
     upsertBugListCache(serializeDocument(updated));
@@ -696,7 +699,7 @@ async function rejectReport(request, response, next) {
       },
       updatedAt: FieldValue.serverTimestamp(),
     });
-    await addActivity(batch, reference, "report_rejected", actor, { comment });
+    await addActivity(batch, reference, "report_rejected", actor, { comment }, current);
     await batch.commit();
     const updated = await reference.get();
     upsertBugListCache(serializeDocument(updated));
@@ -729,7 +732,7 @@ async function addComment(request, response, next) {
       commentsCount: FieldValue.increment(1),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    await addActivity(batch, reportReference, "comment_added", actorSnapshot(request.authSession));
+    await addActivity(batch, reportReference, "comment_added", actorSnapshot(request.authSession), {}, report.data());
     await batch.commit();
     patchBugListCache(reportReference.id, (cached) => ({
       commentsCount: Number(cached.commentsCount ?? 0) + 1,

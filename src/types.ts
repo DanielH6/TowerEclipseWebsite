@@ -448,3 +448,40 @@ export interface UpdateInput {
     }>;
   }>;
 }
+
+export interface LinkedRobloxAccount {
+  userId: string;
+  username: string;
+  linkedAt: string;
+  verifiedAt: string;
+}
+
+export interface AccountProfile {
+  roblox?: LinkedRobloxAccount | null;
+  discordId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  firstLoginAt: string;
+  activitySeenAt: string | null;
+}
+export type AccountPeriod = "24h" | "7d" | "30d" | "lifetime";
+export interface AccountStats { counts: Record<AccountPeriod, number>; asOf: string }
+export interface AccountCalendar {
+  days: { date: string; count: number }[];
+  limited: boolean;
+  limit: number;
+  timezone: string;
+  asOf: string;
+}
+export interface AccountEvent {
+  id: string;
+  reportId: string;
+  displayId: string;
+  action: string;
+  summary: string;
+  actor: { displayName: string; discordId: string };
+  createdAt: string;
+}
+export type AccountReport = Pick<BugReport, "id" | "displayId" | "description" | "status" | "createdAt" | "updatedAt" | "submissionState" | "commentsCount" | "version" | "priority"> & { approval: Pick<ApprovalInfo, "state"> };
+export interface AccountReports { reports: AccountReport[]; nextCursor: string | null }

@@ -1,5 +1,7 @@
 import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { Timestamp } from "./firestore-timestamp.mjs";
+export { Timestamp } from "./firestore-timestamp.mjs";
 
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
 const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
@@ -98,8 +100,9 @@ async function apiRequest(url, { method = "GET", body, allowNotFound = false } =
     const text = await response.text();
     let parsed;
     try { parsed = JSON.parse(text); } catch { parsed = null; }
-    const message = parsed?.error?.message || text || `Firestore request failed with ${response.status}.`;
-    const code = parsed?.error?.status || null;
+    const apiError = Array.isArray(parsed) ? parsed.find(item => item.error)?.error : parsed?.error;
+    const message = apiError?.message || text || `Firestore request failed with ${response.status}.`;
+    const code = apiError?.status || null;
     throw new FirestoreRestError(message, response.status, code);
   }
   if (response.status === 204) return null;
@@ -117,16 +120,6 @@ function fullDocumentName(path) {
 
 function documentUrl(path) {
   return `${documentsBase}/${encodePath(path)}`;
-}
-
-export class Timestamp {
-  constructor(date) {
-    this.date = date instanceof Date ? date : new Date(date);
-  }
-
-  toDate() {
-    return new Date(this.date.getTime());
-  }
 }
 
 const FIELD_VALUE = Symbol("field-value");
@@ -150,7 +143,7 @@ function isFieldValue(value) {
 
 function encodeValue(value) {
   if (value === null) return { nullValue: null };
-  if (value instanceof Timestamp) return { timestampValue: value.toDate().toISOString() };
+  if (value instanceof Timestamp) return { timestampValue: value.toISOString() };
   if (value instanceof Date) return { timestampValue: value.toISOString() };
   if (typeof value === "string") return { stringValue: value };
   if (typeof value === "boolean") return { booleanValue: value };
@@ -313,33 +306,51 @@ class DocumentReference {
 }
 
 class Query {
-  constructor(path, filters = [], ordering = [], maximum = null) {
+  constructor(path, filters = [], ordering = [], maximum = null, options = {}) {
     this.path = path;
     this.filters = filters;
     this.ordering = ordering;
     this.maximum = maximum;
+    this.options = options;
   }
 
   where(fieldPath, operator, value) {
-    if (operator !== "==") throw new Error(`Unsupported Firestore query operator: ${operator}`);
-    return new Query(this.path, [...this.filters, { fieldPath, value }], this.ordering, this.maximum);
+    if (!["==", ">=", "<=", ">", "<"].includes(operator)) throw new Error(`Unsupported Firestore query operator: ${operator}`);
+    return new Query(this.path, [...this.filters, { fieldPath, operator, value }], this.ordering, this.maximum, this.options);
   }
 
   orderBy(fieldPath, direction = "asc") {
-    return new Query(this.path, this.filters, [...this.ordering, { fieldPath, direction }], this.maximum);
+    return new Query(this.path, this.filters, [...this.ordering, { fieldPath, direction }], this.maximum, this.options);
   }
 
   limit(maximum) {
-    return new Query(this.path, this.filters, this.ordering, maximum);
+    return new Query(this.path, this.filters, this.ordering, maximum, this.options);
+  }
+
+  select(...fields) {
+    return new Query(this.path, this.filters, this.ordering, this.maximum, { ...this.options, fields });
+  }
+
+  startAfter(...values) {
+    return new Query(this.path, this.filters, this.ordering, this.maximum, { ...this.options, cursor: values });
+  }
+
+  async count() {
+    return this.execute(true);
   }
 
   async get() {
+    return this.execute(false);
+  }
+
+  async execute(aggregate) {
     const segments = this.path.split("/");
     const collectionId = segments.at(-1);
     const parentPath = segments.slice(0, -1).join("/");
     const url = parentPath
       ? `${documentsBase}/${encodePath(parentPath)}:runQuery`
       : `${documentsBase}:runQuery`;
+    const operators = { "==": "EQUAL", ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL", ">": "GREATER_THAN", "<": "LESS_THAN" };
 
     let where;
     if (this.filters.length === 1) {
@@ -347,7 +358,7 @@ class Query {
       where = {
         fieldFilter: {
           field: { fieldPath: filter.fieldPath },
-          op: "EQUAL",
+          op: operators[filter.operator ?? "=="],
           value: encodeValue(filter.value),
         },
       };
@@ -358,7 +369,7 @@ class Query {
           filters: this.filters.map((filter) => ({
             fieldFilter: {
               field: { fieldPath: filter.fieldPath },
-              op: "EQUAL",
+              op: operators[filter.operator ?? "=="],
               value: encodeValue(filter.value),
             },
           })),
@@ -368,7 +379,12 @@ class Query {
 
     const body = {
       structuredQuery: {
-        from: [{ collectionId }],
+        from: [{ collectionId, ...(this.options.allDescendants ? { allDescendants: true } : {}) }],
+        ...(this.options.fields ? { select: { fields: this.options.fields.map(fieldPath => ({ fieldPath })) } } : {}),
+        ...(this.options.cursor ? { startAt: { before: false, values: this.options.cursor.map((value, index) =>
+          this.ordering[index]?.fieldPath === "__name__"
+            ? { referenceValue: fullDocumentName(value) }
+            : encodeValue(value)) } } : {}),
         ...(where ? { where } : {}),
         ...(this.ordering.length > 0
           ? {
@@ -382,7 +398,15 @@ class Query {
       },
     };
 
-    const result = await apiRequest(url, { method: "POST", body });
+    const result = await apiRequest(aggregate ? url.replace(":runQuery", ":runAggregationQuery") : url, {
+      method: "POST",
+      body: aggregate ? { structuredAggregationQuery: { structuredQuery: body.structuredQuery, aggregations: [{ alias: "total", count: {} }] } } : body,
+    });
+    if (aggregate) {
+      const value = result?.find(item => item.result)?.result?.aggregateFields?.total;
+      if (!value) throw new Error("Firestore returned no count result.");
+      return Number(decodeValue(value));
+    }
     const documents = (result ?? [])
       .filter((item) => item.document)
       .map((item) => {
@@ -501,6 +525,10 @@ export const db = {
 
   collection(path) {
     return new CollectionReference(path);
+  },
+
+  collectionGroup(name) {
+    return new Query(name, [], [], null, { allDescendants: true });
   },
 
   batch() {

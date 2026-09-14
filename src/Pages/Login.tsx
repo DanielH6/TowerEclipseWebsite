@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "../router";
+import { Link, useLocation, useNavigate } from "../router";
 import { useAuth } from "../AuthContext";
-import RoleBadge from "../Components/RoleBadge";
+import Account from "./Account";
 
 const authenticationErrors: Record<string, string> = {
   not_in_server: "Your Discord account is not a member of the configured Tower Eclipse server.",
@@ -28,8 +28,7 @@ function messageFromUrl(): string | null {
 }
 
 export default function Login() {
-  const { loading, auth, error, refresh, recheck, logout } = useAuth();
-  const [working, setWorking] = useState(false);
+  const { loading, auth, error, refresh } = useAuth();
   const [message, setMessage] = useState<string | null>(() => messageFromUrl());
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,7 +37,7 @@ export default function Login() {
     const parameters = new URLSearchParams(location.search);
     if (parameters.get("auth") === "success") {
       refresh()
-        .then(() => navigate("/bugs", { replace: true }))
+        .then(() => navigate("/login", { replace: true }))
         .catch((reason: unknown) => setMessage(reason instanceof Error ? reason.message : "Could not finish login."));
     }
   }, [location.search]);
@@ -51,61 +50,14 @@ export default function Login() {
     );
   }
 
-  if (auth) {
-    const { user } = auth;
-    return (
-      <section className="content-band" id="login">
-        <article className="login-panel account-panel" aria-labelledby="account-title">
-          <p className="section-kicker">DISCORD ACCESS CONFIRMED</p>
-          <div className="account-header">
-            {user.avatarUrl ? (
-              <img className="avatar" src={user.avatarUrl} alt="" referrerPolicy="no-referrer" />
-            ) : (
-              <div className="avatar avatar-fallback" aria-hidden="true">{user.displayName.slice(0, 1).toUpperCase()}</div>
-            )}
-            <div>
-              <h2 id="account-title">{user.displayName}</h2>
-              <p>@{user.username}{user.guildNickname ? ` · ${user.guildNickname}` : ""}</p>
-            </div>
-          </div>
-          <div className="role-panel">
-            <span>WEBSITE ROLE</span>
-            <RoleBadge role={user.role} label={user.roleLabel} account />
-          </div>
-          <div className="button-row">
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={working}
-              onClick={async () => {
-                setWorking(true);
-                try { await recheck(); } finally { setWorking(false); }
-              }}
-            >
-              {working ? "CHECKING…" : "RE-CHECK DISCORD ROLE"}
-            </button>
-            <button
-              className="danger-button"
-              type="button"
-              disabled={working}
-              onClick={async () => {
-                setWorking(true);
-                try { await logout(); } finally { setWorking(false); }
-              }}
-            >
-              SIGN OUT
-            </button>
-          </div>
-        </article>
-      </section>
-    );
-  }
+  if (auth) return <Account key={auth.user.id + ":" + auth.user.role} />;
 
   return (
     <section className="content-band" id="login">
       <article className="login-panel" aria-labelledby="auth-heading">
         <h2 id="auth-heading">LOGIN</h2>
         <p className="login-description">Sign in with your Tower Eclipse Discord account to continue.</p>
+        <p className="legal-inline-notice">By continuing, you agree to our <Link to="/terms">Terms of Service</Link>. Read our <Link to="/privacy">Privacy Policy</Link> to learn how we use your account information.</p>
         {(message || error) && <div className="message error" role="alert">{message || error}</div>}
         <a className="discord-button" href="/api/auth/discord">
           <DiscordIcon />

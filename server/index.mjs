@@ -24,6 +24,9 @@ import {
   getSession,
   saveSession,
 } from "./session-store.mjs";
+import { accounts, createAccountRouter } from "./account-routes.mjs";
+import { createCareersRouter } from "./careers-routes.mjs";
+import { createCareersService } from "./careers-service.mjs";
 import { createBugRouter } from "./bug-routes.mjs";
 import {
   createAdminDictionaryRouter,
@@ -163,7 +166,7 @@ function publicUser(session) {
   return {
     id: user.id,
     username: user.username,
-    displayName: user.global_name || member.nick || user.username,
+    displayName: member.nick || user.global_name || user.username,
     guildNickname: member.nick ?? null,
     avatarUrl: avatarUrl(user),
     role: session.role,
@@ -294,6 +297,9 @@ app.get(
         roleCheckedAt: Date.now(),
       });
 
+      // Profile persistence is recoverable from the account page if Firestore is unavailable.
+      await accounts.ensureProfile(publicUser(session)).catch(error => console.error("Account profile save failed:", error.message));
+
       setSignedCookie(
         response,
         SESSION_COOKIE,
@@ -403,6 +409,8 @@ app.post(
 
 app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
+app.use("/api/account", requireFirestoreReady, createAccountRouter());
+app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: createCareersService(db) }));
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());
 app.use("/api/admin/updates", requireFirestoreReady, createAdminUpdateRouter());
 app.use("/api/updates", requireFirestoreReady, createPublicUpdateRouter());

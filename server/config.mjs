@@ -111,6 +111,17 @@ if (production && !redirectUri.startsWith("https://")) {
   throw new Error("DISCORD_REDIRECT_URI must use HTTPS in production.");
 }
 
+const robloxClientId = optional("ROBLOX_OAUTH_CLIENT_ID");
+const robloxClientSecret = optionalPrivateSecret("ROBLOX_OAUTH_CLIENT_SECRET");
+if (Boolean(robloxClientId) !== Boolean(robloxClientSecret)) {
+  throw new Error("Set ROBLOX_OAUTH_CLIENT_ID and ROBLOX_OAUTH_CLIENT_SECRET together.");
+}
+const robloxRedirectUri = optional("ROBLOX_OAUTH_REDIRECT_URI") || `${appOrigin}/api/account/roblox/callback`;
+const robloxRedirect = new URL(robloxRedirectUri);
+if (robloxRedirect.origin !== appOrigin || robloxRedirect.pathname !== "/api/account/roblox/callback" || robloxRedirect.search || robloxRedirect.hash) {
+  throw new Error("ROBLOX_OAUTH_REDIRECT_URI must be APP_ORIGIN + /api/account/roblox/callback.");
+}
+
 const roleIds = {
   owner: snowflake("DISCORD_ROLE_OWNER_ID", "1338054578897420288"),
   admin: snowflake("DISCORD_ROLE_ADMIN_ID", "1543793914643882084"),
@@ -196,6 +207,7 @@ export const config = Object.freeze({
     roleIds: Object.freeze(roleIds),
   }),
   cookieSecret,
+  robloxOAuth: Object.freeze({ clientId: robloxClientId, clientSecret: robloxClientSecret, redirectUri: robloxRedirectUri }),
   firebase: Object.freeze({
     projectId: required("FIREBASE_PROJECT_ID"),
   }),
