@@ -864,3 +864,28 @@ export async function uploadUpdateImage(
     throw error;
   }
 }
+
+export async function loadAccountResource<T>(resource: string, signal?: AbortSignal): Promise<T> {
+  return readJson<T>(await fetch(`/api/account${resource}`, {
+    credentials: "include", headers: { Accept: "application/json" }, signal,
+  }));
+}
+
+export async function markAccountActivityRead(through: string, csrfToken: string): Promise<{ activitySeenAt: string }> {
+  return readJson(await fetch("/api/account/activity/read", {
+    method: "POST", credentials: "include", headers: writeHeaders(csrfToken), body: JSON.stringify({ through }),
+  }));
+}
+
+export async function startRobloxLink(csrfToken: string): Promise<{ authorizationUrl: string }> {
+  return readJson(await fetch("/api/account/roblox/start", {
+    method: "POST", credentials: "include", headers: writeHeaders(csrfToken), body: "{}",
+  }));
+}
+
+export async function unlinkRobloxAccount(userId: string, csrfToken: string): Promise<void> {
+  const response = await fetch("/api/account/roblox", {
+    method: "DELETE", credentials: "include", headers: writeHeaders(csrfToken), body: JSON.stringify({ userId }),
+  });
+  if (!response.ok) await readJson(response);
+}
