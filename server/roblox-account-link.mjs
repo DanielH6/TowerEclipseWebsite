@@ -37,9 +37,9 @@ export function createRobloxLinkService({ db, oauth, saveSession, isSessionActiv
     session.robloxLink = { state, verifier, discordId: session.discordUser.id, revision: profile.data().robloxRevision ?? 0, expiresAt: now() + 10 * 60_000 };
     saveSession(session);
     const url = new URL(`${OAUTH_BASE}/authorize`);
-    // Roblox requires consent for third-party linking; select_account alone is rejected.
+    // Roblox requires both screens. OIDC prompt values share one space-delimited parameter.
     url.search = new URLSearchParams({ client_id: oauth.clientId, redirect_uri: oauth.redirectUri,
-      response_type: "code", scope: "openid profile", prompt: "consent", state,
+      response_type: "code", scope: "openid profile", prompt: "consent select_account", state,
       code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" }).toString();
     return { authorizationUrl: url.toString() };
   }
