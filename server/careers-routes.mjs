@@ -23,7 +23,11 @@ export function createCareersRouter({ service, auth = requireAuth, csrf = requir
   router.get("/admin/applications/:id", async (req, res) => res.json(await service.application(req.params.id, req.authUser, true)));
   router.put("/admin/applications/:id", ...writes, async (req, res) => res.json(await service.review(req.params.id, req.authUser, req.body)));
   router.use((error, _req, res, next) => {
-    if (error.code === "FAILED_PRECONDITION") { res.status(503).json({ error: "Applications are temporarily unavailable while the database is being prepared. Please try again later." }); return; }
+    if (error.code === "FAILED_PRECONDITION") {
+      console.error("Careers query unavailable:", error.message);
+      res.status(503).json({ error: "Applications are temporarily unavailable while the database is being prepared. Please try again later." });
+      return;
+    }
     next(error);
   });
   return router;

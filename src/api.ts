@@ -877,15 +877,33 @@ export async function markAccountActivityRead(through: string, csrfToken: string
   }));
 }
 
+async function robloxConnectionRequest<T>(path: string, options: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(`/api/account/roblox${path}`, {
+      ...options, credentials: "include", signal: controller.signal,
+    });
+    if (response.status === 204) return undefined as T;
+    return await readJson<T>(response);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("The website took too long to respond. Please try again. If this keeps happening, contact contact@towereclipse.com.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export async function startRobloxLink(csrfToken: string): Promise<{ authorizationUrl: string }> {
-  return readJson(await fetch("/api/account/roblox/start", {
-    method: "POST", credentials: "include", headers: writeHeaders(csrfToken), body: "{}",
-  }));
+  return robloxConnectionRequest("/start", {
+    method: "POST", headers: writeHeaders(csrfToken), body: "{}",
+  });
 }
 
 export async function unlinkRobloxAccount(userId: string, csrfToken: string): Promise<void> {
-  const response = await fetch("/api/account/roblox", {
-    method: "DELETE", credentials: "include", headers: writeHeaders(csrfToken), body: JSON.stringify({ userId }),
+  await robloxConnectionRequest<void>("", {
+    method: "DELETE", headers: writeHeaders(csrfToken), body: JSON.stringify({ userId }),
   });
-  if (!response.ok) await readJson(response);
 }

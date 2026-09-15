@@ -27,6 +27,18 @@ For production, omit the redirect override to use the production `APP_ORIGIN`, o
 
 Leaving both credentials blank keeps the rest of the website working. The Link Roblox button opens an explanatory prompt, with Continue unavailable until configuration is present. Setting only one credential fails startup with a configuration error.
 
+## Troubleshooting the public website
+
+**Scope not allowed for this application: openid** means the OAuth app must allow the requested identity scopes. In the matching app's permissions, choose Account Linking Tools, enable both `openid` and `profile`, save, and start a fresh link from the website.
+
+**Consent prompt is required for this request** can occur with the old `prompt=select_account` URL. The backend now explicitly requests `prompt=consent`. Deploy this code to the host's `main` branch and restart to pull/rebuild, then generate a new link; an already-open authorization URL still contains the old prompt. These errors are separate from the private-app user limit.
+
+If the popup says **Roblox linking is being prepared**, the running backend has not enabled OAuth. The host must set `ROBLOX_OAUTH_CLIENT_ID` and `ROBLOX_OAUTH_CLIENT_SECRET` in the production environment, with `APP_ORIGIN=https://towereclipse.com`. Omit `ROBLOX_OAUTH_REDIRECT_URI` or set it to `https://towereclipse.com/api/account/roblox/callback`, also registered in the Roblox app. Restart the backend after changing its environment. A developer's local `.env` does not configure the hosted server.
+
+If **PLEASE WAIT…** persists before leaving the website, inspect `POST /api/account/roblox/start` in the browser's Network panel and the backend logs. Starting a link reads the website profile and saves session state; it does not contact Roblox or wait for app review. The client times out after 20 seconds and enables retry. Do not share cookies, OAuth URLs containing state, client secrets, or authorization headers in diagnostic messages.
+
+A blocked Google Fonts stylesheet is a separate styling issue. It does not block this same-origin API request. Private-mode quotas are enforced by Roblox after redirection, and cannot explain a request that never leaves the website.
+
 ## End-to-end check after registration
 
 1. Sign in with Discord, open **Account → Connections → Link Roblox**, and continue to Roblox.

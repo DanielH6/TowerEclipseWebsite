@@ -47,17 +47,19 @@ test("unconfigured linking is unavailable without database writes", async () => 
   assert.equal(f.commits(), 0);
 });
 
-test("authorization uses Roblox, minimal scopes, unpredictable state, and PKCE without exposing the secret", async () => {
+test("authorization requires consent and uses minimal scopes, unpredictable state, and PKCE without exposing the secret", async () => {
   const f = fixture();
   const url = new URL((await f.service.start(f.session)).authorizationUrl);
   assert.equal(url.origin + url.pathname, "https://apis.roblox.com/oauth/v1/authorize");
   assert.equal(url.searchParams.get("scope"), "openid profile");
+  assert.equal(url.searchParams.get("prompt"), "consent", "Roblox rejects account selection alone when consent is required");
   assert.equal(url.searchParams.get("redirect_uri"), oauth.redirectUri);
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.equal(url.searchParams.get("code_challenge"), createHash("sha256").update(f.session.robloxLink.verifier).digest("base64url"));
   assert.equal(url.href.includes(oauth.clientSecret), false);
   const first = f.session.robloxLink.state;
-  await f.start();
+  const retry = new URL((await f.service.start(f.session)).authorizationUrl);
+  assert.equal(retry.searchParams.get("prompt"), "consent", "relinking also requests consent");
   assert.notEqual(first, f.session.robloxLink.state);
   assert.ok(first.length >= 43);
   assert.equal(f.commits(), 0);
