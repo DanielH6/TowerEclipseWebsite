@@ -60,15 +60,16 @@ for (const definition of definitions.fieldOverrides) {
   const url = `${base}/${definition.collectionGroup}/fields/${encodeURIComponent(definition.fieldPath)}`;
   const current = await request(url);
   const matches = fieldIndexMatches(current, definition);
+  const building = (current.indexConfig?.indexes ?? []).some(index => index.state && index.state !== 'READY');
   const label = `${definition.collectionGroup}.${definition.fieldPath} indexing`;
   if (!matches && apply) {
     await request(`${url}?updateMask=indexConfig`, 'PATCH', { indexConfig: fieldIndexConfig(definition) });
     console.log(`REQUESTED: ${label}`);
     ready = false;
   } else {
-    console.log(`${matches ? 'READY' : 'MISSING'}: ${label}`);
+    console.log(`${matches ? building ? 'BUILDING' : 'READY' : 'MISSING'}: ${label}`);
     if (!matches) ready = false;
-    if ((current.indexConfig?.indexes ?? []).some(index => index.state && index.state !== 'READY')) ready = false;
+    if (building) ready = false;
   }
 }
 console.log(ready ? 'All website query indexes are ready.' : 'Run this script again without --apply to check build progress.');

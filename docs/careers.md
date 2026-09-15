@@ -46,6 +46,12 @@ The repository’s `firestore.rules` denies all direct client reads and writes, 
 
 After deployment, verify `/careers`, one real Discord/Roblox link, a draft/preview/publish cycle, a submission, a reviewer update, and the applicant's tracker. Ensure `/api/careers/*` goes to Node with API caching disabled and SPA paths reach `index.html`, following the current hosting setup. Existing API/header configuration is sufficient; no new CSP destinations were introduced.
 
+### Listing fails with HTTP 503
+
+Publishing a form does not prove that list queries are ready: document writes can work while a required composite index is missing. Run `npm run db:indexes` and wait for the relevant indexes to be `READY`. Index changes take effect without restarting the website.
+
+The hosting error-page middleware can replace a JSON API error with the HTML maintenance page. Keep that middleware off the `/api/*` router so API status codes and JSON error bodies reach the client unchanged. Keep the maintenance page for normal page navigation. The backend logs `Careers query unavailable` with Firestore's diagnostic when a query lacks an index.
+
 ## Privacy, retention, and support
 
 Privacy and terms pages now describe applications, identity snapshots, reviewer access, and withdrawal. No automatic archive deletion is enabled: the operator must decide retention periods rather than silently lose recruitment records. Review storage periodically and fulfill verified access/deletion requests through `contact@towereclipse.com`.

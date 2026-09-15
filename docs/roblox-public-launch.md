@@ -5,8 +5,8 @@ Roblox must approve the app before more than 10 unique users can authorize it. P
 ## Current handoff
 
 - Website implementation: Roblox OAuth linking, profile username/ID, update/unlink, policy routes, and policy links at sign-in and linking are implemented locally.
-- Policies: prepared with the operator-provided details: Eclipse Development Studio, Australia, and contact@towereclipse.com. The operator should review the actual commitments before adoption. Production hosting/storage locations and provider retention are still to be confirmed; the current notice describes potential overseas processing without guessing a server location.
-- Deployment: this work has not been pushed or deployed by this task. A public consent round trip needs the new server code and OAuth environment settings on the production host.
+- Policies: prepared with the operator-provided details: Eclipse Development Studio, Australia, and contact@towereclipse.com. The host has confirmed Google Cloud `us-central1` (Council Bluffs, Iowa, US) for the website and 30-day console-log retention. The local policy now reflects those facts. Backup locations/retention and separate Firestore/R2 storage configurations remain to be confirmed.
+- Deployment: the operator published the account/Careers implementation. The host confirmed `main` is deployed and `/kubectl/restart` pulls and rebuilds it. Local diagnostic/timeout and policy updates still need committing, merging into `main`, and deployment. A complete Roblox consent round trip remains unverified.
 - Roblox review: not submitted. A real demo recording and the app owner's submission remain necessary.
 
 ## Existing host handoff
@@ -15,9 +15,18 @@ The operator supplied hosting conversations from 30 July–7 August 2026. Those 
 
 The later messages supersede the early experiments: the authenticated control routes are `/kubectl/start`, `/kubectl/stop`, and `/kubectl/restart`; the old `/restart` route was retired. According to the host, restart has no effect while the application is stopped, so start is needed in that situation. No control route was called during this review.
 
-The expected release sequence is: commit changes, push/merge them into the branch the host actually deploys, update required production configuration, then restart to pull and rebuild. A push by itself is not established as a deployment trigger. The current local feature work is on `superstitic` and was uncommitted at this review; confirm the deployed branch rather than assuming it is `main`.
+The confirmed release sequence is: commit changes, push/merge them into `main`, update required production configuration, then restart to pull and rebuild. A push by itself is not established as a deployment trigger. Work on `superstitic` must reach `main` before restarting will deploy it.
 
-### Message to send the host
+### Host follow-up received 15 September 2026
+
+- `main` is the deployed branch; restart pulls and rebuilds it.
+- One Node instance is running. Earlier host messages establish `.runtime` as persistent storage; use that exact project-relative path, not `/runtime`.
+- The website runs in Google Cloud `us-central1`, Council Bluffs, Iowa, United States.
+- Console logs are retained for 30 days. The host was uncertain whether Traefik access logging was still enabled, so do not promise that IP addresses are never logged. Network processing of an IP address is distinct from retaining it in logs.
+- The host reported adding the Roblox OAuth settings. A fresh live check still showed “Roblox linking is being prepared” and disabled Continue. Confirm the backend has restarted and that both variables are present in the running Node environment. Do not request or print their values for diagnostics.
+- Backups (whether enabled, locations, and retention), separate Firestore/R2 configurations, and the precise access-log configuration are still open details. The host region does not establish the location of every datastore or backup.
+
+### Original questions (superseded by the follow-up above)
 
 > We have the account dashboard, Roblox OAuth linking, and `/privacy` and `/terms` pages ready locally. Before release, could you confirm:
 >
@@ -46,7 +55,7 @@ The policies are accessible without sign-in at `/privacy` and `/terms`, linked f
 Before publication, confirm:
 
 - The operator and contact details are accurate and requests will be handled.
-- Which company hosts the backend, the storage regions, and the retention periods for provider logs/backups. Add any provider analytics or tracking configured outside this repository to the privacy notice.
+- Backup locations/retention, separate database/file-storage configurations, and whether access logs are enabled. The website host and its console-log retention are confirmed above. Add any provider analytics or tracking configured outside this repository to the privacy notice.
 - The stated account eligibility, moderation, contribution permissions, and retention practices are acceptable and will be followed.
 - The policies describe public report visibility accurately: submitted reports, comments, attachments, and actor metadata are public, including reports awaiting approval or rejected. Private developer notes are restricted to developers/QA leads.
 
