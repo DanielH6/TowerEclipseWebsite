@@ -1,7 +1,10 @@
+import { reportExtras, createDuplicateService } from "./bug-workflow.mjs";
+import rateLimit from "express-rate-limit";
 import express from "express";
 import { accountActivityFields } from "./account-service.mjs";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
-import { deleteLocalJsonCache, readLocalJsonCache, writeLocalJsonCache } from "./local-cache.mjs";
+import { createBugQueryService, createSnapshotCodec } from "./bug-query.mjs";
+import { config } from "./config.mjs";
 import {
   actorSnapshot,
   optionalAuth,
@@ -37,107 +40,14 @@ const REPORT_DICTIONARIES = Object.freeze({
   device: "devices",
 });
 
-const BUG_REPORT_CACHE_FILE = "bug-reports";
-let bugListCache = readLocalJsonCache(BUG_REPORT_CACHE_FILE);
-let bugListCachePromise = null;
+export const bugQueries = createBugQueryService({ db, snapshots: createSnapshotCodec(config.cookieSecret) });
 
-function validBugListCache(value) {
-  return Array.isArray(value) && value.every((report) => report && typeof report.id === "string");
-}
-
-if (!validBugListCache(bugListCache)) {
-  bugListCache = null;
-}
-
-function persistBugListCache() {
-  if (bugListCache) writeLocalJsonCache(BUG_REPORT_CACHE_FILE, bugListCache);
-}
-
-function normalizeCachedReport(report) {
-  return {
-    ...report,
-    commentsCount: Number(report.commentsCount ?? 0),
-    developerNotesCount: Number(report.developerNotesCount ?? 0),
-    attachmentsCount: Number(report.attachmentsCount ?? 0),
-  };
-}
-
-function sortCachedReports(reports) {
-  return reports.sort((a, b) => {
-    const aTime = Date.parse(a.createdAt ?? "") || 0;
-    const bTime = Date.parse(b.createdAt ?? "") || 0;
-    return bTime - aTime;
-  });
-}
-
-function restoreBugListCacheIfNeeded() {
-  if (bugListCache) return true;
-  const restored = readLocalJsonCache(BUG_REPORT_CACHE_FILE);
-  if (!validBugListCache(restored)) return false;
-  bugListCache = restored.map(normalizeCachedReport);
-  return true;
-}
-
-function upsertBugListCache(report) {
-  if (!restoreBugListCacheIfNeeded()) return;
-  const normalized = normalizeCachedReport(report);
-  bugListCache = sortCachedReports([
-    normalized,
-    ...bugListCache.filter((candidate) => candidate.id !== normalized.id),
-  ]);
-  persistBugListCache();
-}
-
-function patchBugListCache(reportId, changes) {
-  if (!restoreBugListCacheIfNeeded()) return;
-  const index = bugListCache.findIndex((report) => report.id === reportId);
-  if (index < 0) return;
-  const current = bugListCache[index];
-  const resolvedChanges = typeof changes === "function" ? changes(current) : changes;
-  bugListCache[index] = normalizeCachedReport({ ...current, ...resolvedChanges });
-  sortCachedReports(bugListCache);
-  persistBugListCache();
-}
-
-function removeBugListCache(reportId) {
-  if (!restoreBugListCacheIfNeeded()) return;
-  const next = bugListCache.filter((report) => report.id !== reportId);
-  if (next.length === bugListCache.length) return;
-  bugListCache = next;
-  persistBugListCache();
-}
-
-function invalidateBugListCache({ dropDisk = true } = {}) {
-  bugListCache = null;
-  if (dropDisk) deleteLocalJsonCache(BUG_REPORT_CACHE_FILE);
-}
-
-async function loadBugListBase({ force = false } = {}) {
-  if (!force && restoreBugListCacheIfNeeded()) return bugListCache;
-  if (!force && bugListCachePromise) return bugListCachePromise;
-
-  bugListCachePromise = db.collection("bugReports")
-    .orderBy("createdAt", "desc")
-    .limit(1000)
-    .get()
-    .then((snapshot) => {
-      bugListCache = snapshot.docs.map((document) =>
-        normalizeCachedReport(serializeDocument(document)),
-      );
-      persistBugListCache();
-      console.log(`Bug-report cache loaded ${bugListCache.length} report(s) from Firestore and saved locally.`);
-      return bugListCache;
-    })
-    .finally(() => {
-      bugListCachePromise = null;
-    });
-
-  return bugListCachePromise;
-}
-
+// Kept for the maintenance command: query the database, never restore a stale disk cache.
 export async function refreshBugReportCacheFromFirestore() {
-  invalidateBugListCache();
-  return loadBugListBase({ force: true });
+  const reports = [];
+  const point = bugQueries.snapshot({});
+  for await (const report of bugQueries.scan(point.at)) reports.push(report);
+  return reports;
 }
 
 function httpError(status, message) {
@@ -376,6 +286,7 @@ async function createReport(request, response, next) {
         status,
         ...dictionaryFields,
         description,
+        ...reportExtras(body),
         reporter: actor,
         submissionState: uploadingAttachments ? "uploading" : "submitted",
         expectedAttachments,
@@ -404,74 +315,18 @@ async function createReport(request, response, next) {
     });
 
     const created = await reportReference.get();
-    upsertBugListCache(serializeDocument(created));
+
     response.status(201).json({ report: await serializeReportDocument(created) });
   } catch (error) {
     next(error);
   }
 }
 
-const BUG_REPORTS_PER_PAGE = 50;
-
-function requestedBugPage(value) {
-  const parsed = Number.parseInt(typeof value === "string" ? value : "1", 10);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
-}
-
-function requestedFilterValues(value) {
-  const values = Array.isArray(value) ? value : [value];
-  return new Set(values
-    .filter((item) => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean));
-}
-
 async function listReports(request, response, next) {
-  try {
-    let reports = await hydrateReportDictionaries(await loadBugListBase());
-
-    const search = typeof request.query.search === "string" ? request.query.search.trim().toLowerCase() : "";
-    const filters = {
-      status: requestedFilterValues(request.query.status),
-      version: requestedFilterValues(request.query.version),
-      priority: requestedFilterValues(request.query.priority),
-      category: requestedFilterValues(request.query.category),
-      type: requestedFilterValues(request.query.type),
-      device: requestedFilterValues(request.query.device),
-    };
-
-    reports = reports.filter((report) => {
-      if (search) {
-        const haystack = [
-          report.displayId,
-          report.description,
-          report.reporter?.displayName,
-          report.reporter?.username,
-        ].filter(Boolean).join(" ").toLowerCase();
-        if (!haystack.includes(search)) return false;
-      }
-
-      return Object.entries(filters).every(([field, codes]) => codes.size === 0 || codes.has(report[field]?.code));
-    });
-
-    const total = reports.length;
-    const totalPages = Math.max(1, Math.ceil(total / BUG_REPORTS_PER_PAGE));
-    const page = Math.min(requestedBugPage(request.query.page), totalPages);
-    const start = (page - 1) * BUG_REPORTS_PER_PAGE;
-    const pagedReports = reports.slice(start, start + BUG_REPORTS_PER_PAGE);
-
-    response.json({
-      reports: pagedReports,
-      pagination: {
-        page,
-        pageSize: BUG_REPORTS_PER_PAGE,
-        total,
-        totalPages,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
+  try { response.json(await bugQueries.list(request.query)); } catch (error) { next(error); }
+}
+async function exportReports(request, response, next) {
+  try { response.json(await bugQueries.exportData(request.query, serializeAttachmentDocument)); } catch (error) { next(error); }
 }
 
 async function getReport(request, response, next) {
@@ -499,7 +354,6 @@ async function getReport(request, response, next) {
       return;
     }
 
-    upsertBugListCache(serializeDocument(report));
 
     let developerNotes = [];
     if (viewerSession?.role === "dev" || viewerSession?.role === "leadqa") {
@@ -512,6 +366,7 @@ async function getReport(request, response, next) {
       .map(serializeAttachmentDocument);
 
     response.json({
+      relatedUpdates: (await db.collection("updates").where("linkedReportIds", "array-contains", report.id).get()).docs.filter(doc => doc.data().status === "published").map(doc => ({ id: doc.id, title: doc.data().title, version: doc.data().version, summary: doc.data().linkedReports?.find(item => item.id === report.id)?.summary ?? "" })),
       report: await serializeReportDocument(report),
       comments: comments.docs.map(serializeDocument),
       developerNotes,
@@ -553,7 +408,7 @@ async function patchReport(request, response, next) {
       return;
     }
 
-    const changes = {};
+    const changes = reportExtras(body, true);
     let reopensTerminalReport = false;
 
     if (body.description !== undefined) {
@@ -608,7 +463,7 @@ async function patchReport(request, response, next) {
     await batch.commit();
 
     const updated = await reference.get();
-    upsertBugListCache(serializeDocument(updated));
+
     response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
@@ -655,7 +510,7 @@ async function approveReport(request, response, next) {
     await addActivity(batch, reference, "report_approved", actor, { comment }, current);
     await batch.commit();
     const updated = await reference.get();
-    upsertBugListCache(serializeDocument(updated));
+
     response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
@@ -702,7 +557,7 @@ async function rejectReport(request, response, next) {
     await addActivity(batch, reference, "report_rejected", actor, { comment }, current);
     await batch.commit();
     const updated = await reference.get();
-    upsertBugListCache(serializeDocument(updated));
+
     response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
@@ -734,10 +589,7 @@ async function addComment(request, response, next) {
     });
     await addActivity(batch, reportReference, "comment_added", actorSnapshot(request.authSession), {}, report.data());
     await batch.commit();
-    patchBugListCache(reportReference.id, (cached) => ({
-      commentsCount: Number(cached.commentsCount ?? 0) + 1,
-      updatedAt: new Date().toISOString(),
-    }));
+
     response.status(201).json({ comment: serializeDocument(await reference.get()) });
   } catch (error) {
     next(error);
@@ -769,10 +621,7 @@ async function addDeveloperNote(request, response, next) {
     });
     await addActivity(batch, reportReference, "developer_note_added", actorSnapshot(request.authSession));
     await batch.commit();
-    patchBugListCache(reportReference.id, (cached) => ({
-      developerNotesCount: Number(cached.developerNotesCount ?? 0) + 1,
-      updatedAt: new Date().toISOString(),
-    }));
+
     response.status(201).json({ note: serializeDocument(await reference.get()) });
   } catch (error) {
     next(error);
@@ -833,7 +682,7 @@ async function finalizeReportSubmission(request, response, next) {
     await batch.commit();
 
     const updated = await reference.get();
-    upsertBugListCache(serializeDocument(updated));
+
     response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
     next(error);
@@ -859,7 +708,7 @@ async function cancelReportSubmission(request, response, next) {
     }
 
     await removeReportAndStoredAttachments(reference);
-    removeBugListCache(reference.id);
+
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -1032,12 +881,6 @@ async function completeAttachmentUpload(request, response, next) {
       return { created: true };
     });
 
-    if (completion.created) {
-      patchBugListCache(reportReference.id, (cached) => ({
-        attachmentsCount: Number(cached.attachmentsCount ?? 0) + 1,
-        updatedAt: new Date().toISOString(),
-      }));
-    }
     response.status(completion.created ? 201 : 200).json({
       attachment: serializeAttachmentDocument(await attachmentReference.get()),
     });
@@ -1085,12 +928,6 @@ async function deleteAttachment(request, response, next) {
       );
     }
     await batch.commit();
-    if (attachment.status === "ready") {
-      patchBugListCache(reportReference.id, (cached) => ({
-        attachmentsCount: Math.max(0, Number(cached.attachmentsCount ?? 0) - 1),
-        updatedAt: new Date().toISOString(),
-      }));
-    }
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -1105,8 +942,10 @@ async function deleteReport(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+    if (report.data().duplicateOf || report.data().duplicateCount > 0) throw httpError(409, "Unlink duplicate relationships before deleting this report.");
+    if ((await db.collection("updates").where("linkedReportIds", "array-contains", report.id).limit(1).get()).docs.length) throw httpError(409, "Unlink this report from its release notes before deleting it.");
     await removeReportAndStoredAttachments(reference);
-    removeBugListCache(reference.id);
+
     response.sendStatus(204);
   } catch (error) {
     next(error);
@@ -1118,6 +957,9 @@ export function createBugRouter() {
   const requireBugStaff = requireRole("qa", "leadqa", "dev");
 
   router.get("/", listReports);
+  router.put("/:reportId/duplicate", requireAuth, requireRole("leadqa", "dev"), requireCsrf, async (request, response) => response.json(await createDuplicateService(db, undefined, statusIsTerminal)(request.params.reportId, request.body?.targetId ?? null, actorSnapshot(request.authSession))));
+  router.get("/export", rateLimit({ windowMs: 60_000, limit: 3, standardHeaders: "draft-8", legacyHeaders: false }), exportReports);
+  router.get("/related", rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: "draft-8", legacyHeaders: false }), async (request, response) => response.json(await bugQueries.related(request.query)));
   router.get("/storage-config", requireAuth, requireBugStaff, getAttachmentStorageConfig);
   router.post("/", requireAuth, requireBugStaff, requireCsrf, createReport);
   router.post(

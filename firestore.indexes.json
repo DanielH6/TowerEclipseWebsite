@@ -204,6 +204,16 @@
       "indexes": []
     },
     {
+      "collectionGroup": "websiteAccounts",
+      "fieldPath": "verifiedRole",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
       "collectionGroup": "careerForms",
       "fieldPath": "*",
       "indexes": []
@@ -237,6 +247,16 @@
       "collectionGroup": "careerFormVersions",
       "fieldPath": "*",
       "indexes": []
+    },
+    {
+      "collectionGroup": "updates",
+      "fieldPath": "linkedReportIds",
+      "indexes": [
+        {
+          "queryScope": "COLLECTION",
+          "arrayConfig": "CONTAINS"
+        }
+      ]
     }
   ]
 }

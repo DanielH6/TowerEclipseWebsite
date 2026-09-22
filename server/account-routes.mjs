@@ -1,3 +1,6 @@
+import { createWorkspaceRouter } from "./workspace-routes.mjs";
+import { createWorkspaceService } from "./workspace-service.mjs";
+import { createTesterRouter } from "./tester-routes.mjs";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { db } from "./firebase.mjs";
@@ -38,7 +41,10 @@ export function createAccountRouter() {
     await robloxLinks.unlink(request.authSession, request.body?.userId);
     response.sendStatus(204);
   });
+  router.use("/testers", createTesterRouter(accounts, requireRole("dev")));
   const staff = requireRole("qa", "leadqa", "dev");
+  const workspace = createWorkspaceService(db);
+  router.use(createWorkspaceRouter(workspace, (_req, _res, next) => next()));
   router.get("/reports", staff, async (request, response) => response.json(await accounts.reports(request.authUser.id, request.query)));
   router.get("/stats", staff, async (request, response) => response.json(await accounts.stats(request.authUser.id)));
   router.get("/calendar", staff, async (request, response) => response.json(await accounts.calendar(request.authUser.id)));

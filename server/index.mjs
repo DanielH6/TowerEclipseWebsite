@@ -1,3 +1,5 @@
+import { createAdminWorkspaceService, createAdminWorkspaceRouter } from "./admin-workspace.mjs";
+import { bugQueries } from "./bug-routes.mjs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,6 +173,7 @@ function publicUser(session) {
     avatarUrl: avatarUrl(user),
     role: session.role,
     roleLabel: roleLabel(session.role),
+    roleCheckedAt: session.roleCheckedAt,
   };
 }
 
@@ -345,6 +348,7 @@ app.get("/api/auth/me", async (request, response) => {
   try {
     await refreshDiscordSession(session);
     saveSession(session);
+    await accounts.ensureProfile(publicUser(session)).catch(error => console.error("Account profile save failed:", error.message));
     response.json(authResponse(session));
   } catch (error) {
     console.error("Discord session refresh failed:", error);
@@ -373,6 +377,7 @@ app.post(
     try {
       await refreshDiscordSession(session, true);
       saveSession(session);
+      await accounts.ensureProfile(publicUser(session)).catch(error => console.error("Account profile save failed:", error.message));
       response.json(authResponse(session));
     } catch (error) {
       console.error("Discord role re-check failed:", error);
@@ -409,6 +414,7 @@ app.post(
 
 app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
+app.use("/api/admin/overview", requireFirestoreReady, createAdminWorkspaceRouter(createAdminWorkspaceService(db, bugQueries)));
 app.use("/api/account", requireFirestoreReady, createAccountRouter());
 app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: createCareersService(db) }));
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());

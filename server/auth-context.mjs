@@ -25,6 +25,7 @@ export function publicUser(session) {
     avatarUrl: avatarUrl(user),
     role: session.role,
     roleLabel: roleLabel(session.role),
+    roleCheckedAt: session.roleCheckedAt,
   };
 }
 

@@ -1,3 +1,5 @@
+import BugExtraFields from "../Components/BugExtraFields";
+import RelatedReports from "../Components/RelatedReports";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "../router";
 import {
@@ -27,6 +29,8 @@ import "./Bugs.css";
 
 const initialForm: BugInput = {
   description: "",
+  frequency: "",
+  serverConsoleUrl: "",
   versionId: "",
   priorityId: "",
   categoryId: "",
@@ -194,6 +198,9 @@ export default function NewBugPage() {
           />
           <small>{form.description.length}/10000</small>
         </label>
+        <BugExtraFields frequency={form.frequency ?? ""} serverConsoleUrl={form.serverConsoleUrl ?? ""} onFrequency={value => update("frequency", value)} onConsole={value => update("serverConsoleUrl", value)} disabled={saving} />
+        <RelatedReports search={form.description} categoryId={form.categoryId} />
+        <p>Need help? <Link to="/login?tab=onboarding" target="_blank">Read the tester reporting guide ↗</Link></p>
 
         <section
           className="attachment-picker attachment-paste-zone"

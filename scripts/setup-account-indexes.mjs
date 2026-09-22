@@ -73,3 +73,5 @@ for (const definition of definitions.fieldOverrides) {
   }
 }
 console.log(ready ? 'All website query indexes are ready.' : 'Run this script again without --apply to check build progress.');
+
+if (!ready && process.argv.includes("--require-ready")) process.exitCode = 1;

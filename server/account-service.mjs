@@ -1,6 +1,6 @@
 import { Timestamp } from "./firestore-timestamp.mjs";
 
-// Account queries always start from the authenticated Discord ID. Never accept a target user ID.
+// Personal routes use the authenticated ID; admin target IDs require the dev-only router guard.
 export const CALENDAR_LIMIT = 2000;
 export const DAY_MS = 86_400_000;
 const STAFF = new Set(["qa", "leadqa", "dev"]);
@@ -88,6 +88,10 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
       const snapshot = await transaction.get(reference);
       const current = snapshot.data();
       const identity = { discordId: user.id, username: user.username, displayName: user.displayName, avatarUrl: user.avatarUrl };
+      if (Number.isFinite(user.roleCheckedAt) && (!current?.roleVerifiedAt || user.roleCheckedAt >= Date.parse(current.roleVerifiedAt))) {
+        identity.verifiedRole = user.role;
+        identity.roleVerifiedAt = new Date(user.roleCheckedAt).toISOString();
+      }
       if (!snapshot.exists) {
         const profile = { ...identity, firstLoginAt: new Date(now()), activitySeenAt: null, schemaVersion: 1 };
         transaction.set(reference, profile);
@@ -176,5 +180,26 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
     });
   }
 
-  return { ensureProfile, reports, stats, calendar, activity, markSeen };
+  async function testers() {
+    const pages = await Promise.all(["qa", "leadqa"].map(role => db.collection("websiteAccounts")
+      .where("verifiedRole", "==", role).limit(501)
+      .select("discordId", "username", "displayName", "avatarUrl", "verifiedRole", "roleVerifiedAt", "firstLoginAt").get()));
+    return { testers: pages.flatMap(page => page.docs.slice(0, 500).map(document => {
+      const value = serializeAccountValue(document.data());
+      return { discordId: document.id, username: value.username, displayName: value.displayName,
+        avatarUrl: value.avatarUrl, role: value.verifiedRole, roleVerifiedAt: value.roleVerifiedAt, firstLoginAt: value.firstLoginAt };
+    })).sort((a, b) => a.displayName.localeCompare(b.displayName)), limited: pages.some(page => page.docs.length > 500) };
+  }
+
+  async function tester(userId, query = {}) {
+    if (!/^\d{5,25}$/.test(userId)) throw Object.assign(new Error("Invalid tester ID."), { status: 400 });
+    const profile = await db.doc(`websiteAccounts/${userId}`).get();
+    if (!profile.exists || !["qa", "leadqa"].includes(profile.data().verifiedRole)) {
+      throw Object.assign(new Error("Tester account not found. Refresh the directory."), { status: 404 });
+    }
+    const [history, totals, updates] = await Promise.all([reports(userId, query), stats(userId), activity(userId)]);
+    return { ...history, stats: totals, activity: updates.events, onboarding: profile.data().onboarding ?? null };
+  }
+
+  return { ensureProfile, reports, stats, calendar, activity, markSeen, testers, tester };
 }

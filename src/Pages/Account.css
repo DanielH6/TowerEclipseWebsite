@@ -161,3 +161,11 @@
 .account-link-notice, .account-link-unavailable { border: 1px solid #355e87; border-radius: 5px; background: #122d4988; padding: 14px; font-size: .78rem; color: #acd6ff; line-height: 1.7; }
 .account-link-notice { margin-bottom: 20px; }
 @media (max-width: 460px) { .account-connection > .account-connection-actions { flex-basis: calc(100% - 59px); align-items: flex-start; margin-left: 59px; } .account-link-dialog { padding: 22px; } }
+.onboarding p, .onboarding li { line-height: 1.7; }
+.onboarding li { margin-block: 10px; }
+.onboarding-step { padding: 18px 0; border-bottom: 1px solid #ffffff24; }
+.onboarding-step summary { cursor: pointer; font-weight: 700; }
+.onboarding-check { display: flex; gap: 12px; align-items: center; margin-top: 22px; }
+.onboarding-check input { width: 20px; height: 20px; }
+.onboarding-progress { display: grid; gap: 12px; margin-block: 24px; }
+.onboarding-progress progress { width: 100%; accent-color: #955bff; }

@@ -1,3 +1,4 @@
+import UpdateReportLinks from "../Components/UpdateReportLinks";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { loadAdminUpdate, saveGameUpdate, uploadUpdateImage } from "../api";
 import { useAuth } from "../AuthContext";
@@ -51,6 +52,7 @@ function formatFileSize(bytes: number) {
 
 function toInput(update: GameUpdate, status: UpdateStatus): UpdateInput {
   return {
+    linkedReports: update.linkedReports ?? [],
     contentType: update.contentType,
     isMinor: update.contentType === "game_update" && update.isMinor,
     title: update.title,
@@ -375,7 +377,7 @@ export default function UpdateEditorPage() {
       <section className="workspace-page">
         <div className="panel-card">
           <h2>UPDATE UNAVAILABLE</h2>
-          {error && <div className="workspace-error">{error}</div>}
+      {error && <div className="workspace-error">{error}</div>}
           <Link className="ghost-link" to="/admin/updates">BACK TO UPDATES</Link>
         </div>
       </section>
@@ -716,11 +718,13 @@ export default function UpdateEditorPage() {
         })}
       </div>
 
+          <UpdateReportLinks links={update.linkedReports ?? []} onChange={linkedReports => patchUpdate({ linkedReports })} disabled={working} />
+
       <div className="update-sticky-actions">
         <div>
           {uploadMessage && <span className="update-save-message">{uploadMessage}</span>}
           {notice && <span className="update-save-message success">{notice}</span>}
-          {error && <span className="update-save-message error" role="alert">{error}</span>}
+      {error && <span className="update-save-message error" role="alert">{error}</span>}
         </div>
         <div>
           {update.status === "published" && (

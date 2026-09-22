@@ -1,3 +1,4 @@
+import AdminOverviewPage from "./Pages/AdminOverview";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Navigate, NavLink, RouteParamsProvider, useLocation } from "./router";
 import { AuthProvider, useAuth } from "./AuthContext";
@@ -11,6 +12,7 @@ import Login from "./Pages/Login";
 import BugsPage from "./Pages/Bugs";
 import NewBugPage from "./Pages/NewBug";
 import BugDetailsPage from "./Pages/BugDetails";
+import AdminTestersPage from "./Pages/AdminTesters";
 import AdminPage from "./Pages/Admin";
 import AdminUpdatesPage from "./Pages/AdminUpdates";
 import UpdateEditorPage from "./Pages/UpdateEditor";
@@ -263,7 +265,9 @@ function AppRoutes() {
   else if (pathname === "/bugs/new") {
     element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;
   }
-  else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
+  else if (pathname === "/admin/testers") element = <ProtectedRoute role="dev"><AdminTestersPage /></ProtectedRoute>;
+  else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminOverviewPage /></ProtectedRoute>;
+  else if (pathname === "/admin/dictionaries") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;
   else if (pathname === "/admin/updates") element = <ProtectedRoute role="dev"><AdminUpdatesPage /></ProtectedRoute>;
   else {
     const newsMatch = pathname.match(/^\/news\/([^/]+)$/);

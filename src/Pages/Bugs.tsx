@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Link } from "../router";
-import { loadBugs, loadDictionaries } from "../api";
+import SavedQueues from "../Components/SavedQueues";
+import { filtersFromSearch, filtersToSearch } from "../bug-filters";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "../router";
+import { exportBugs, loadBugs, loadDictionaries } from "../api";
 import { useAuth } from "../AuthContext";
 import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
-import { synchronizeReportDictionaries } from "../dictionary-sync";
 import { isBugStaff } from "../roles";
 import type { BugFilters, BugPagination } from "../api";
 import type { BugReport, Dictionaries, DictionaryName, DictionarySnapshot } from "../types";
@@ -165,6 +166,11 @@ function FilterSelect({
 }
 
 export default function BugsPage() {
+  const { search: locationSearch } = useLocation();
+  const navigate = useNavigate();
+  const requestSequence = useRef(0);
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const { auth, loading: authLoading } = useAuth();
   const [reports, setReports] = useState<BugReport[]>([]);
   const [dictionaries, setDictionaries] = useState<Dictionaries | null>(null);
@@ -174,23 +180,51 @@ export default function BugsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh(nextFilters = filters, nextPage = pagination.page) {
+  const [exporting, setExporting] = useState(false);
+  const [exportText, setExportText] = useState<string | null>(null);
+  const [exportMessage, setExportMessage] = useState("");
+
+  async function prepareExport() {
+    setExporting(true);
+    setExportText(null);
+    setExportMessage("");
+    try { setExportText(await exportBugs(appliedFilters, snapshot)); }
+    catch (reason) { setExportMessage(reason instanceof Error ? reason.message : "Export failed."); }
+    finally { setExporting(false); }
+  }
+
+  async function refresh(nextFilters = filters, nextPage = pagination.page, nextSnapshot: string | null = snapshot) {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      const result = await loadBugs(nextFilters, nextPage);
+      const result = await loadBugs(nextFilters, nextPage, nextSnapshot);
+      if (sequence !== requestSequence.current) return;
+      setSnapshot(result.snapshot);
+      setRefreshedAt(result.refreshedAt);
       setReports(result.reports);
       setPagination(result.pagination);
+      setAppliedFilters(nextFilters);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load bug reports.");
+      if (sequence === requestSequence.current) setError(reason instanceof Error ? reason.message : "Could not load bug reports.");
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    Promise.all([refresh(emptyFilters, 1), loadDictionaries().then(setDictionaries)]).catch(() => undefined);
-  }, []);
+    const next = filtersFromSearch(locationSearch);
+    setFilters(next);
+    void refresh(next, 1, null);
+  }, [locationSearch]);
+
+  useEffect(() => { loadDictionaries().then(setDictionaries).catch(() => undefined); }, []);
+
+  function apply(next: BugFilters) {
+    const search = filtersToSearch(next);
+    if (search === locationSearch.replace(/^\?/, "")) void refresh(next, 1, null);
+    else navigate(`/bugs${search ? `?${search}` : ""}`);
+  }
 
   function setFilter(name: keyof BugFilters, value: string | string[]) {
     setFilters((current) => ({ ...current, [name]: value }));
@@ -218,19 +252,21 @@ export default function BugsPage() {
             )}
           </div>
         </div>
+        <div className="workspace-header-actions">
+        <button className="primary-action" disabled={loading || exporting || !!error} onClick={() => void prepareExport()}>{exporting ? "EXPORTING…" : "EXPORT DATA"}</button>
         {!authLoading && canCreateReports ? (
           <Link className="primary-action" to="/bugs/new">NEW BUG REPORT</Link>
         ) : !authLoading ? (
           <span className="read-only-label">READ-ONLY VIEW</span>
         ) : null}
+        </div>
       </div>
 
       <form
         className="bug-filters"
         onSubmit={(event) => {
           event.preventDefault();
-          setAppliedFilters(filters);
-          refresh(filters, 1);
+          apply(filters);
         }}
       >
         <label className="filter-field filter-search">
@@ -254,8 +290,7 @@ export default function BugsPage() {
             className="ghost-action"
             onClick={() => {
               setFilters(emptyFilters);
-              setAppliedFilters(emptyFilters);
-              refresh(emptyFilters, 1);
+              apply(emptyFilters);
             }}
           >
             RESET
@@ -263,6 +298,28 @@ export default function BugsPage() {
         </div>
       </form>
 
+      <div className="snapshot-controls"><p>{refreshedAt ? `Data refreshed ${new Date(refreshedAt).toLocaleString()}.` : "Loading snapshot…"} Pages and exports use the same snapshot for up to 45 minutes.</p><button type="button" className="ghost-link" disabled={loading || exporting} onClick={() => void refresh(appliedFilters, 1, null)}>REFRESH DATA</button></div>
+      {canCreateReports && <SavedQueues filters={appliedFilters} />}
+      <p>Export includes all matching reports across every page, public comments, and attachment links.</p>
+      {exportMessage && <p role="status">{exportMessage}</p>}
+      {exportText !== null && <div className="panel-card bug-export">
+        <h3>EXPORTED BUG REPORTS</h3>
+        <p>This is a snapshot of the filters applied when you clicked Export Data. Internal notes are excluded.</p>
+        <div className="button-row">
+          <button className="primary-action" onClick={async () => {
+            try { await navigator.clipboard.writeText(exportText); setExportMessage("Copied JSON."); }
+            catch { setExportMessage("Copy unavailable. Select the text below or download the file."); }
+          }}>COPY JSON</button>
+          <button className="primary-action" onClick={() => {
+            const url = URL.createObjectURL(new Blob([exportText], { type: "application/json" }));
+            const link = document.createElement("a"); link.href = url;
+            link.download = `tower-eclipse-bugs-${new Date().toISOString().slice(0, 10)}.json`;
+            link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}>DOWNLOAD JSON</button>
+          <button className="ghost-link" onClick={() => setExportText(null)}>CLOSE</button>
+        </div>
+        <textarea aria-label="Exported bug reports JSON" readOnly value={exportText} onFocus={event => event.target.select()} />
+      </div>}
       {error && <div className="workspace-error" role="alert">{error}</div>}
 
       <div className="bug-table-wrapper">
@@ -291,7 +348,7 @@ export default function BugsPage() {
               <tr><td colSpan={13} className="table-message">No bug reports match these filters.</td></tr>
             ) : (
               reports.map((savedReport) => {
-                const report = synchronizeReportDictionaries(savedReport, dictionaries);
+                const report = savedReport;
                 return (
                 <tr key={report.id}>
                   <td><Link className="report-id-link" to={`/bugs/${report.id}`}>{report.displayId}</Link></td>

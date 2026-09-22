@@ -112,11 +112,14 @@ export interface BugPagination {
 }
 
 export interface BugListResult {
+  snapshot: string;
+  refreshedAt: string;
+  expiresAt: string;
   reports: BugReport[];
   pagination: BugPagination;
 }
 
-export async function loadBugs(filters: BugFilters = {}, page = 1): Promise<BugListResult> {
+export async function loadBugs(filters: BugFilters = {}, page = 1, snapshot?: string | null): Promise<BugListResult> {
   const parameters = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (Array.isArray(value)) {
@@ -126,6 +129,7 @@ export async function loadBugs(filters: BugFilters = {}, page = 1): Promise<BugL
     }
   });
   parameters.set("page", String(page));
+  if (snapshot) parameters.set("snapshot", snapshot);
   const response = await fetch(`/api/bugs?${parameters.toString()}`, {
     credentials: "include",
     headers: { Accept: "application/json" },
@@ -133,7 +137,21 @@ export async function loadBugs(filters: BugFilters = {}, page = 1): Promise<BugL
   return readJson<BugListResult>(response);
 }
 
+export async function exportBugs(filters: BugFilters, snapshot?: string | null): Promise<string> {
+  const parameters = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (Array.isArray(value)) value.forEach(item => parameters.append(key, item));
+    else if (value) parameters.set(key, value);
+  });
+  if (snapshot) parameters.set("snapshot", snapshot);
+  return JSON.stringify(await readJson(await fetch(`/api/bugs/export?${parameters}`, {
+    credentials: "include", headers: { Accept: "application/json" },
+  })), null, 2);
+}
+
 export interface BugInput {
+  frequency?: string;
+  serverConsoleUrl?: string;
   description: string;
   versionId: string;
   priorityId: string;
@@ -906,4 +924,11 @@ export async function unlinkRobloxAccount(userId: string, csrfToken: string): Pr
   await robloxConnectionRequest<void>("", {
     method: "DELETE", headers: writeHeaders(csrfToken), body: JSON.stringify({ userId }),
   });
+}
+
+export async function apiJson<T>(path: string, method = "GET", body?: unknown, csrfToken?: string, signal?: AbortSignal): Promise<T> {
+  return readJson<T>(await fetch(path, { method, credentials: "include", signal,
+    headers: csrfToken ? writeHeaders(csrfToken) : { Accept: "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }));
 }

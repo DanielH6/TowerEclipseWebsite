@@ -68,8 +68,8 @@ export default function AdminUpdatesPage() {
           <p>Create structured patch notes and monthly developer blogs with manual archive dates and rich-text formatting.</p>
         </div>
         <div className="workspace-header-actions">
-          <Link className="ghost-link" to="/admin">DICTIONARIES</Link>
-          <button className="ghost-action" type="button" disabled={!auth || working} onClick={() => void createDraft("developer_blog")}>
+          <Link className="ghost-link" to="/admin/dictionaries">DICTIONARIES</Link>
+          <button className="primary-action" type="button" disabled={!auth || working} onClick={() => void createDraft("developer_blog")}>
             {working ? "CREATING…" : "NEW DEVELOPER BLOG"}
           </button>
           <button className="primary-action" type="button" disabled={!auth || working} onClick={() => void createDraft("game_update")}>

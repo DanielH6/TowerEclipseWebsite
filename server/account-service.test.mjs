@@ -137,3 +137,30 @@ test("staff account sections cover QA, QA lead, and Developer, preserving the ex
   const cursor = Buffer.from(JSON.stringify({ at: raw, path: "bugReports/precise" })).toString("base64url");
   assert.equal(decodeCursor(cursor).at.toISOString(), raw);
 });
+
+test("tester directory tracks verified ranks, excludes other ranks and secrets, and resists older sessions", async () => {
+  const { db, records } = fixture();
+  const service = createAccountService(db, { now: () => NOW });
+  const user = { id: "123456", username: "tester", displayName: "Tester", avatarUrl: null, role: "qa", roleCheckedAt: NOW };
+  await service.ensureProfile(user);
+  records.get("websiteAccounts/123456").roblox = { userId: "private" };
+  let roster = await service.testers();
+  assert.equal(roster.testers.length, 1);
+  assert.equal(roster.testers[0].role, "qa");
+  assert.equal(roster.testers[0].roblox, undefined);
+  assert.equal(roster.testers[0].roleVerifiedAt, new Date(NOW).toISOString());
+  await service.ensureProfile({ ...user, role: "member", roleCheckedAt: NOW + 1000 });
+  await service.ensureProfile(user);
+  assert.equal((await service.testers()).testers.length, 0);
+  await assert.rejects(service.tester(user.id), /not found/);
+  await assert.rejects(service.tester("../other"), /Invalid tester/);
+});
+
+test("tester viewer scopes report history, counts and update activity to selected account", async () => {
+  const { db } = fixture({ "bugReports/one": report("123456"), "bugReports/two": report("654321") });
+  const service = createAccountService(db, { now: () => NOW });
+  await service.ensureProfile({ id: "123456", username: "tester", displayName: "Tester", avatarUrl: null, role: "leadqa", roleCheckedAt: NOW });
+  const detail = await service.tester("123456");
+  assert.deepEqual(detail.reports.map(item => item.id), ["one"]);
+  assert.equal(detail.stats.counts.lifetime, 1);
+});

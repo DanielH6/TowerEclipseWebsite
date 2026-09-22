@@ -82,12 +82,12 @@ The existing R2 credentials and CORS policy are reused for update images.
 
 ## Firestore read protection
 
-Dictionaries and the main bug-report collection are cached **persistently on the backend machine**, not on a short timer. Normal page loads therefore do not repeat the expensive Firestore collection queries.
+Dictionaries are cached persistently on the backend machine. Bug lists now read the complete collection in bounded Firestore pages at a signed snapshot timestamp; they do not use the old disk report cache.
 
 - `dictionaries.json` contains all dynamic dictionary entries;
-- `bug-reports.json` contains the main bug-report documents used by `/api/bugs`;
-- cache files are updated immediately when this backend creates, edits, archives, comments on, attaches to, finalizes, or deletes the corresponding data;
-- report dictionary labels/colors are rehydrated from the local dictionary cache, so admin color/label changes still appear on existing reports;
+- legacy `bug-reports.json` files are ignored; `/api/bugs` has no 1,000-report ceiling;
+- dictionary mutations update the local dictionary cache; fresh bug snapshots read current database data;
+- list/export dictionary labels are read at the same snapshot time as reports; detail pages use the current dictionary catalog;
 - public update lists/details remain cached in memory for 60 seconds;
 - live tournament polling is once per minute and public tournament responses are cached for 90 seconds;
 - normal server startup performs one read-only Firestore connectivity check.
@@ -96,7 +96,6 @@ By default the files are written under:
 
 ```text
 .runtime/cache/dictionaries.json
-.runtime/cache/bug-reports.json
 ```
 
 To use a different writable location, set:
@@ -107,7 +106,7 @@ LOCAL_CACHE_DIR=/tmp/tower-eclipse-cache
 
 For a server with a persistent writable data volume, point `LOCAL_CACHE_DIR` at that volume instead of `/tmp` so the cache survives redeployments. If the application directory is read-only, do not leave the cache at `.runtime/cache`.
 
-The cache has no automatic Firestore refresh timer. This is intentional: admin/report mutations performed through this backend are write-through and update the local files immediately. If someone edits Firestore directly in the Firebase console, or another backend instance writes to the same database, manually resync once with:
+The cache has no automatic Firestore refresh timer. Dictionary mutations update the local dictionary file immediately. If someone edits Firestore directly in the Firebase console, or another backend instance writes to the same database, manually resync once with:
 
 ```bash
 npm run cache:refresh
@@ -144,19 +143,19 @@ The dashboard uses the existing website Firestore project. It does not read or w
 
 ### Stored data and access
 
-- `websiteAccounts/{discordId}` stores a small profile: Discord ID, display name, username, avatar URL, first recorded login, schema version, and the activity read watermark. When linked, it also stores a verified Roblox username, numeric ID, link/verification dates, and a connection revision. Role permissions always come from the current Discord session. Discord tokens remain in the existing encrypted session store; Roblox tokens are discarded after verification. Neither is copied into account documents.
+- `websiteAccounts/{discordId}` stores a small profile: Discord ID, display name, username, avatar URL, first recorded login, schema version, and the activity read watermark. When linked, it also stores a verified Roblox username, numeric ID, link/verification dates, and a connection revision. The profile also stores `verifiedRole` and `roleVerifiedAt` for the private tester directory; these snapshots never grant permissions. Role permissions always come from the current Discord session. Discord tokens remain in the existing encrypted session store; Roblox tokens are discarded after verification. Neither is copied into account documents.
 - `websiteRobloxLinks/{robloxUserId}` stores only the owning Discord ID. A transaction maintains one Roblox account per website profile and prevents another profile from claiming an already-linked account. Initial linking/refresh writes two documents; replacement adds one old-claim deletion. Unlinking updates the profile and deletes its claim. No periodic Roblox writes or token refresh jobs are introduced.
-- First login is recorded from this feature's rollout. Historical sign-ins cannot be reconstructed. Existing sessions lazily create their profile on opening Account. Profile writes happen on first creation or identity changes, plus an explicit “mark all as read”; page views do not update a last-seen counter.
+- First login is recorded from this feature's rollout. Historical sign-ins cannot be reconstructed. Existing sessions lazily create their profile on opening Account. Profile writes happen on first creation, identity changes, or a new Discord role verification, plus an explicit “mark all as read”; page views do not update a last-seen counter.
 - New public comments, approvals, rejections, edits, and status changes add recipient metadata to the **existing** report activity document in the same commit as the report mutation. This adds no second notification write. The account feed returns only safe summary fields and its latest 30 events; private developer notes are excluded. Feed history begins at rollout, including new changes to older reports. Existing report histories remain available on report details. Deleting a report also removes its activity from the feed.
-- `/api/account/*` derives ownership exclusively from the authenticated Discord session. The caller cannot choose another account ID. Staff sections retain server-side role checks; marking activity read requires same-origin and CSRF checks. Direct browser Firestore access remains denied by the existing rules.
+- Personal `/api/account/*` routes derive ownership exclusively from the authenticated Discord session. Only the developer-guarded `/api/account/testers/:userId` route accepts a target tester ID. Staff sections retain server-side role checks; marking activity read requires same-origin and CSRF checks. Direct browser Firestore access remains denied by the existing rules.
 
 ### Read and storage budget
 
-- Personal reports use cursor pagination (20 results plus one lookahead), optional status filtering, and selected fields. They do not depend on the public list's 1,000-report cache. Cursor timestamps preserve Firestore microseconds.
+- Personal reports use cursor pagination (20 results plus one lookahead), optional status filtering, and selected fields. They query complete history independently of the public snapshot pages. Cursor timestamps preserve Firestore microseconds.
 - Statistics use eight index aggregation queries: total minus unfinished uploads for each of the exact rolling 24-hour, 7-day, 30-day, and lifetime windows. Results are cached for 60 seconds, with concurrent requests coalesced. Legacy reports without `submissionState` still count. Counts are based on report creation time and exclude deleted reports; this is not a permanent count of deleted submissions.
 - The calendar reads only creation time and submission state from the past 365 UTC days. Its hard budget is 2,001 records (2,000 plus a completeness check), cached for 15 minutes. If limited, the UI explicitly explains that daily totals may be incomplete; aggregate statistics remain uncapped. Selected fields reduce transfer size, not the number of billed document reads.
 - Caches have a combined maximum of 200 entries per process. No account polling, background database sync, per-player writes, or duplicated report collections are introduced. Manual refresh respects statistics/calendar cache intervals. Report and activity lists refresh immediately. At substantially larger usage, move these bounded caches to shared storage across API instances.
-- Profile fields are exempt from automatic indexing because accounts are fetched directly by document ID. The existing report audit history remains the long-term source; the account feature adds only its recipient metadata.
+- Profile fields are exempt from automatic indexing except `verifiedRole`, which has an ascending collection index for the tester directory. The existing report audit history remains the long-term source; the account feature adds only its recipient metadata.
 
 ### Firestore indexes and rollout
 
@@ -197,3 +196,21 @@ Careers is available at `/careers` and in the header. Admins can create, preview
 The builder supports short/long answers, multiple choice, checkboxes, rankings, and 0/1–10 linear scales, with required fields, help text, question reordering/duplication, deadlines, and starter templates. Shared immutable form versions, bounded answers/history, explicit writes, index exemptions, and 20-item cursor pages keep growth predictable.
 
 Read [Careers setup and operating guide](docs/careers.md) before launch. It includes the new Firestore indexes, privacy/retention handling, role boundaries, and verification steps. `npm run db:indexes` checks all account and Careers definitions; `-- --apply` requires an identity authorized to manage indexes. The existing `account:indexes` alias now also processes all definitions in `firestore.indexes.json`.
+
+### Bug export and tester overview (September 2026)
+
+- **Bug Reports → Export Data** exports all applied-filter matches across pages as formatted JSON, with copy, select-text, and download options. It uses the same hydrated dictionary values and public filter function as the table. Unfinished uploads are excluded. Public comments and ready attachment metadata/links are included; internal developer notes are not. No data is sent to an AI provider. Attachment URLs may expire and file binaries are not bundled.
+- The list and export now cover all submitted reports. Pages, dictionaries, comments and attachment metadata use a signed Firestore read-time snapshot valid for 45 minutes. Refresh Data creates a new snapshot. Exports are limited to three requests per minute per IP and fail rather than returning a partial file. This public export is not a full private database backup.
+- **Admin → Tester Overview** lists connected profiles last verified as QA Tester or QA Lead, searchable by identity and rank. Each account has a viewer for all-time paginated report history, rolling submission totals, and the most recent 30 updates on its reports. Directory output is capped at 500 per rank with an explicit incomplete-results notice.
+- The roster is a last-verified snapshot, not a live Discord membership or online-status list. Existing profiles populate after login, auth refresh, or opening Account. A newer verified rank supersedes the stored rank; an older session cannot roll it back. No OAuth credentials, Roblox connections, or notification-read markers are returned in directory rows.
+- Deploy the checked-in `websiteAccounts.verifiedRole` field index before using the directory and `updates.linkedReportIds` array index (`npm run db:indexes -- --apply`, then `npm run db:indexes -- --require-ready` until ready). Existing report/activity indexes are reused. No report-data migration or Discord bot permission is required.
+
+### Connected QA workflow
+
+- `/admin` is the manager overview; dictionary editing moved to `/admin/dictionaries`. Counts link to triage, needs-information, retest, draft, application and tester views. Staff can save up to 20 personal filter queues and share filter URLs.
+- Report forms keep reproduction steps and expected/actual behavior in the existing description. Optional frequency and validated HTTPS Pastebin console links are shown on report details, without widening the table. Suggestions search all submitted reports, preserving older matches.
+- QA leads/developers can link duplicates. Self-links, chains and linking a canonical report with dependents are rejected transactionally. Original submissions and reporter credit are untouched. Unlink relationships before deleting referenced reports.
+- News drafts can link reports with independently editable public wording. Only published updates appear on report details. Linking does not alter a report status or publish an update.
+- Account → Tester resources contains the staff-only handbook, links, Testmode/console instructions, and a six-step checklist. Progress is stored per authenticated account and version; admins see self-reported progress in the tester viewer.
+- Snapshot scans use 500-document database pages. Arbitrary substring search requires scanning candidate records; a bounded optional cache retains at most five snapshots, each at most 2 MB, for three minutes. Larger snapshots are reread in pages rather than truncated. Suggestions reuse a snapshot for 30 seconds. This trades reads for exact existing substring behavior; introduce a dedicated search index if traffic grows materially.
+- See [operations and rollout](docs/operations.md) for release checks, isolated tests, backup/restore commands and the single-instance scaling review.
