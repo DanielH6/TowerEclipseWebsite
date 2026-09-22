@@ -6,7 +6,7 @@ export const legalDetails = {
   operator: "Eclipse Development Studio",
   location: "Australia",
   contactEmail: "contact@towereclipse.com",
-  effectiveDate: "14 September 2026",
+  effectiveDate: "23 September 2026",
 };
 
 export function PrivacyContact() {
@@ -51,6 +51,9 @@ export const privacyPolicy: LegalDocument = {
     { id: "visibility", title: "What other people can see", content: <>
       <p>Career openings are public. Application answers and review updates are private to the applicant and authorized website admins and developers reviewing applications. Internal reviewer notes are not shown to applicants. We use application information to evaluate suitability, manage recruitment, prevent duplicate submissions, and communicate decisions through your account.</p>
       <p>Submitted bug reports, their comments, ready attachments, and public change histories can be read by visitors, including people who are signed out. These records include the author’s Discord identity, such as display name, username, avatar, user ID, and role. Pending approval or rejected reports are not automatically private.</p>
+      <p>Visitors can export the reports matching the bug-list filters as a JSON file or copyable text, including public comments and ready attachment links. Exports do not include internal developer notes. Exporting does not automatically send information to an AI service; the person exporting chooses where to use their copy.</p>
+      <p>For testers, we save named report-filter queues and self-reported onboarding checklist progress, including the guide version and completion dates. Your queues are private to your account. Website admins and developers can view your onboarding progress to support training; it is not an automated qualification or performance rating. Optional report frequency and server-console Pastebin links are part of the public bug report. Duplicate links preserve the original submissions and authors, and published release notes may link back to those reports.</p>
+      <p>Website admins and developers can view a private tester directory showing connected QA Tester and QA Lead accounts, their Discord identity, first connection date, last verified rank and verification date, report submission counts, report history, and recent updates on their reports. We use this overview to coordinate testing and review contributions. Ranks reflect the last website verification and may change in Discord afterward.</p>
       <p>Unfinished report uploads are restricted to their author and developers. Internal developer notes are available to authorized developers and QA leads. Published tournament information and results are public.</p>
       <p>Your account dashboard, linked Roblox identity, and personal notification feed are returned to your signed-in account. Authorized operators may access stored records when necessary to operate, secure, or support the service. The website currently has no public user-profile directory.</p>
     </> },

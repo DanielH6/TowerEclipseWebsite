@@ -12,3 +12,9 @@ firebase-admin*.json
 sdkadmin.json
 # Encrypted local runtime sessions
 .runtime/
+
+# Private operational artifacts
+backups/
+*.backup.json
+playwright-report/
+test-results/

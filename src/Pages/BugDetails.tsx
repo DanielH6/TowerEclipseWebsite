@@ -1,3 +1,5 @@
+import BugExtraFields from "../Components/BugExtraFields";
+import ReportRelationships from "../Components/ReportRelationships";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "../router";
 import {
@@ -109,6 +111,8 @@ export default function BugDetailsPage() {
   const navigate = useNavigate();
   const [details, setDetails] = useState<BugDetailsResponse | null>(null);
   const [dictionaries, setDictionaries] = useState<Dictionaries | null>(null);
+  const [frequency, setFrequency] = useState("");
+  const [serverConsoleUrl, setServerConsoleUrl] = useState("");
   const [description, setDescription] = useState("");
   const [versionId, setVersionId] = useState("");
   const [priorityId, setPriorityId] = useState("");
@@ -163,6 +167,8 @@ export default function BugDetailsPage() {
     setDetails({ ...loadedDetails, report: synchronizedReport });
     setDictionaries(mergedDictionaries);
     setDescription(synchronizedReport.description);
+    setFrequency(synchronizedReport.frequency ?? "");
+    setServerConsoleUrl(synchronizedReport.serverConsoleUrl ?? "");
     setVersionId(synchronizedReport.version.id);
     setPriorityId(synchronizedReport.priority.id);
     setCategoryId(synchronizedReport.category.id);
@@ -327,6 +333,8 @@ export default function BugDetailsPage() {
             <textarea value={description} disabled={!canEdit} onChange={(event) => setDescription(event.target.value)} />
           </label>
 
+          <BugExtraFields frequency={frequency} serverConsoleUrl={serverConsoleUrl} onFrequency={setFrequency} onConsole={setServerConsoleUrl} disabled={!canEdit} />
+          <ReportRelationships report={report} updates={details.relatedUpdates} editable={isApprovalStaff && canEdit} />
           {canEdit && (
             <div className="editor-actions">
               <button
@@ -336,6 +344,8 @@ export default function BugDetailsPage() {
                 onClick={() => perform(
                   () => updateBug(reportId, {
                     description,
+                    frequency,
+                    serverConsoleUrl,
                     versionId,
                     priorityId,
                     categoryId,

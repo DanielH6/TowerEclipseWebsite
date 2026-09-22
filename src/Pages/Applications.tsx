@@ -10,7 +10,7 @@ export function MyApplications({ preview = false }: { preview?: boolean }) {
   return <section className="career-card career-tracker"><div className="career-section-heading"><div><span className="career-eyebrow">YOUR NEXT CHAPTER</span><h3>{preview ? "Recent applications" : "My applications"}</h3></div><Link className="career-link" to="/careers">Explore openings ↗</Link></div><ApplicationList preview={preview} /></section>;
 }
 export function ApplicationList({ admin = false, formId = "", preview = false }: { admin?: boolean; formId?: string; preview?: boolean }) {
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(() => { const value = admin ? new URLSearchParams(window.location.search).get("status") ?? "" : ""; return value in applicationStatuses ? value : ""; });
   const [pages, setPages] = useState<(string | null)[]>([null]);
   const query = new URLSearchParams({ ...(status ? { status } : {}), ...(formId ? { formId } : {}), ...(pages.at(-1) ? { cursor: pages.at(-1)! } : {}) });
   const resource = useCareerResource<CareerPageResult<CareerApplication>>(`${admin ? "/admin" : ""}/applications?${query}`);

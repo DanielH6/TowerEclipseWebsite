@@ -210,6 +210,8 @@ export default function UpdateDetailsPage() {
         </div>}
       </article>
 
+      {!!update.linkedReports?.length && <section className="panel-card workflow-panel"><h3>RELATED BUG REPORTS</h3><ul>{update.linkedReports.map(link => <li key={link.id}><p>{link.summary}</p><Link to={`/bugs/${link.id}`}>{link.displayId ?? "View original report"} →</Link></li>)}</ul></section>}
+
       {viewer?.downloadUrl && (
         <div className="update-image-viewer-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.currentTarget === event.target) setViewer(null);

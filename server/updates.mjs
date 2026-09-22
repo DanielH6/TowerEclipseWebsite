@@ -1,3 +1,4 @@
+import { normalizeReportLinks } from "./bug-workflow.mjs";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
@@ -399,7 +400,7 @@ function normalizeUpdateInput(body, current) {
       contentType,
       version,
       blogHtml,
-      itemCount: sections.reduce((total, section) => total + section.items.length, 0),
+      itemCount: sections.reduce((total, section) => total + section.items.length, 0) + normalizeReportLinks(body.linkedReports ?? current.linkedReports ?? []).length,
     });
   }
 
@@ -529,6 +530,13 @@ async function saveUpdate(request, response, next) {
     const current = snapshot.data();
     const normalized = normalizeUpdateInput(request.body ?? {}, current);
     await validateReferencedImages(reference, normalized);
+    const links = normalizeReportLinks(request.body?.linkedReports ?? current.linkedReports ?? []);
+    normalized.linkedReports = await Promise.all(links.map(async item => {
+      const report = await db.doc(`bugReports/${item.id}`).get();
+      if (!report.exists || report.data().submissionState === "uploading") throw httpError(400, "Linked reports must exist and be submitted.");
+      return { ...item, displayId: report.data().displayId };
+    }));
+    normalized.linkedReportIds = links.map(item => item.id);
 
     const publishingNow = normalized.status === "published" && current.status !== "published" && !current.publishedAt;
     await reference.update({

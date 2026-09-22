@@ -315,7 +315,7 @@ class Query {
   }
 
   where(fieldPath, operator, value) {
-    if (!["==", ">=", "<=", ">", "<"].includes(operator)) throw new Error(`Unsupported Firestore query operator: ${operator}`);
+    if (!["==", ">=", "<=", ">", "<", "array-contains"].includes(operator)) throw new Error(`Unsupported Firestore query operator: ${operator}`);
     return new Query(this.path, [...this.filters, { fieldPath, operator, value }], this.ordering, this.maximum, this.options);
   }
 
@@ -335,6 +335,10 @@ class Query {
     return new Query(this.path, this.filters, this.ordering, this.maximum, { ...this.options, cursor: values });
   }
 
+  atReadTime(readTime) {
+    return new Query(this.path, this.filters, this.ordering, this.maximum, { ...this.options, readTime });
+  }
+
   async count() {
     return this.execute(true);
   }
@@ -350,7 +354,7 @@ class Query {
     const url = parentPath
       ? `${documentsBase}/${encodePath(parentPath)}:runQuery`
       : `${documentsBase}:runQuery`;
-    const operators = { "==": "EQUAL", ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL", ">": "GREATER_THAN", "<": "LESS_THAN" };
+    const operators = { "array-contains": "ARRAY_CONTAINS", "==": "EQUAL", ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL", ">": "GREATER_THAN", "<": "LESS_THAN" };
 
     let where;
     if (this.filters.length === 1) {
@@ -400,7 +404,7 @@ class Query {
 
     const result = await apiRequest(aggregate ? url.replace(":runQuery", ":runAggregationQuery") : url, {
       method: "POST",
-      body: aggregate ? { structuredAggregationQuery: { structuredQuery: body.structuredQuery, aggregations: [{ alias: "total", count: {} }] } } : body,
+      body: { ...(aggregate ? { structuredAggregationQuery: { structuredQuery: body.structuredQuery, aggregations: [{ alias: "total", count: {} }] } } : body), ...(this.options.readTime ? { readTime: this.options.readTime } : {}) },
     });
     if (aggregate) {
       const value = result?.find(item => item.result)?.result?.aggregateFields?.total;
@@ -560,4 +564,36 @@ export const db = {
   },
 
   recursiveDelete,
+};
+
+// Server maintenance only. Raw Firestore values preserve timestamps, arrays and other types in backups.
+export const firestoreMaintenance = {
+  projectId,
+  async *documents(readTime) {
+    async function* walk(parent = '') {
+      let token;
+      do {
+        const result = await apiRequest(`${documentsBase}${parent ? `/${encodePath(parent)}` : ''}:listCollectionIds`, { method: 'POST', body: { pageSize: 100, readTime, ...(token ? { pageToken: token } : {}) } });
+        for (const collection of result.collectionIds ?? []) {
+          let pageToken;
+          do {
+            const url = new URL(`${documentsBase}/${parent ? `${encodePath(parent)}/` : ''}${encodeURIComponent(collection)}`);
+            url.searchParams.set('pageSize', '300'); url.searchParams.set('readTime', readTime); url.searchParams.set('showMissing', 'true');
+            if (pageToken) url.searchParams.set('pageToken', pageToken);
+            const page = await apiRequest(url.toString());
+            for (const document of page.documents ?? []) {
+              const path = document.name.split('/documents/')[1];
+              if (document.createTime || document.fields) yield { path, fields: document.fields ?? {} };
+              yield* walk(path);
+            }
+            pageToken = page.nextPageToken;
+          } while (pageToken);
+        }
+        token = result.nextPageToken;
+      } while (token);
+    }
+    yield* walk();
+  },
+  async readDocument(path) { return (await apiRequest(documentUrl(path))).fields ?? {}; },
+  async createDocument(path, fields) { return apiRequest(`${documentUrl(path)}?currentDocument.exists=false`, { method: 'PATCH', body: { fields } }); },
 };

@@ -1,3 +1,4 @@
+import TesterOnboarding from "../Components/TesterOnboarding";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "../router";
 import { useAuth } from "../AuthContext";
@@ -134,7 +135,7 @@ export default function Account() {
     finally { setWorking(null); }
   }
 
-  const tabs = [{ id: "overview", label: "Overview" }, ...(staff ? [{ id: "reports", label: "My reports" }, { id: "activity", label: "Activity" }] : []), { id: "applications", label: "Applications" }, { id: "connections", label: "Connections" }];
+  const tabs = [{ id: "overview", label: "Overview" }, ...(staff ? [{ id: "onboarding", label: "Tester resources" }, { id: "reports", label: "My reports" }, { id: "activity", label: "Activity" }] : []), { id: "applications", label: "Applications" }, { id: "connections", label: "Connections" }];
   const currentTab = tabs.some(item => item.id === tab) ? tab : "overview";
   function switchTab(value: string) {
     if (value === "overview") { setStatus(""); setPages([null]); }
@@ -191,6 +192,7 @@ export default function Account() {
             </> : <section className="account-card account-member-welcome"><p className="section-kicker">WELCOME TO THE COMMUNITY</p><h3>Your home in Tower Eclipse.</h3><p>Keep up with development, explore community reports, and follow the latest news. Testers and developers also get personal report tracking here.</p><div className="button-row"><Link className="primary-button" to="/news">LATEST NEWS</Link><Link className="secondary-button" to="/bugs">BROWSE REPORTS</Link></div></section>}
             <section className="account-card account-future-inline"><div><span className="account-tag">ON THE HORIZON</span><h3>One account. More of your world.</h3><p>Connect your Roblox identity now. In-game progress is coming in a future update.</p></div><button className="account-text-button" onClick={() => switchTab("connections")}>Explore connections →</button></section>
           </>}
+          {currentTab === "onboarding" && staff && <TesterOnboarding />}
           {currentTab === "reports" && reportsPanel(false)}
           {currentTab === "applications" && <Suspense fallback={<p role="status">Loading applications…</p>}><MyApplications /></Suspense>}
           {currentTab === "activity" && activityPanel(false)}

@@ -82,6 +82,9 @@ export interface ApprovalInfo {
 }
 
 export interface BugReport {
+  frequency?: "low" | "medium" | "high" | null;
+  serverConsoleUrl?: string | null;
+  duplicateOf?: { id: string; displayId: string } | null;
   id: string;
   displayId: string;
   status: DictionarySnapshot;
@@ -147,6 +150,7 @@ export interface ActivityEvent {
 }
 
 export interface BugDetailsResponse {
+  relatedUpdates?: { id: string; title: string; version: string; summary: string }[];
   report: BugReport;
   comments: BugComment[];
   developerNotes: DeveloperNote[];
@@ -400,6 +404,7 @@ export interface UpdateSection {
 }
 
 export interface GameUpdate {
+  linkedReports?: LinkedReport[];
   id: string;
   contentType: NewsContentType;
   isMinor: boolean;
@@ -420,7 +425,10 @@ export interface GameUpdate {
   imagePolicy: UpdateImagePolicy;
 }
 
+export interface LinkedReport { id: string; displayId?: string; summary: string }
+
 export interface UpdateInput {
+  linkedReports?: LinkedReport[];
   contentType: NewsContentType;
   isMinor: boolean;
   title: string;

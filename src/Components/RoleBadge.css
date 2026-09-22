@@ -6,7 +6,7 @@
   padding: 2px 6px;
   border: 1px solid transparent;
   color: #fff;
-  background: #047857;
+  background: #955bff;
   font-size: 0.58rem;
   font-weight: 900;
   letter-spacing: 0.04em;
@@ -22,7 +22,8 @@
 }
 
 .role-badge[data-role="leadqa"] {
-  background: #7c3aed;
+  background: #ff4bae;
+  color: #111;
 }
 
 .role-badge[data-role="dev"] {

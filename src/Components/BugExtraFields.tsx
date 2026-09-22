@@ -1,0 +1,6 @@
+export default function BugExtraFields({ frequency, serverConsoleUrl, onFrequency, onConsole, disabled = false }: { frequency: string; serverConsoleUrl: string; onFrequency: (value: string) => void; onConsole: (value: string) => void; disabled?: boolean }) {
+  return <div className="editor-grid bug-extra-fields">
+    <label className="editor-field"><span>Frequency (optional)</span><select disabled={disabled} value={frequency} onChange={event => onFrequency(event.target.value)}><option value="">Not sure / unspecified</option><option value="low">Low — rare</option><option value="medium">Medium — intermittent</option><option value="high">High — consistent</option></select><small>How often it happens, not how severe it is. Add attempts such as “3 of 5” in the description.</small></label>
+    <label className="editor-field"><span>Server console (optional)</span><input type="url" maxLength={200} disabled={disabled} value={serverConsoleUrl} onChange={event => onConsole(event.target.value)} placeholder="https://pastebin.com/…" /><small>Console → Report → Create Console Copy. Check for private information before sharing.</small>{/^https:\/\/pastebin\.com\/(?:raw\/)?[A-Za-z0-9]+\/?$/.test(serverConsoleUrl) && <a href={serverConsoleUrl} target="_blank" rel="noopener noreferrer">OPEN CONSOLE COPY ↗</a>}</label>
+  </div>;
+}

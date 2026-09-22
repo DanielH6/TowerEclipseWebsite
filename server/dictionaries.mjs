@@ -24,6 +24,7 @@ const DEFAULTS = Object.freeze({
     { id: "pending-approval", code: "pending_approval", label: "Pending approval", color: "#d9a441", sortOrder: 10, initial: true, terminal: false },
     { id: "approved", code: "approved", label: "Approved", color: "#3b82f6", sortOrder: 20, initial: false, terminal: false },
     { id: "in-progress", code: "in_progress", label: "In progress", color: "#8b5cf6", sortOrder: 30, initial: false, terminal: false },
+    { id: "needs-info", code: "needs_info", label: "Needs more information", color: "#f59e0b", sortOrder: 35, initial: false, terminal: false },
     { id: "ready-for-qa", code: "ready_for_qa", label: "Ready for QA", color: "#06b6d4", sortOrder: 40, initial: false, terminal: false },
     { id: "resolved", code: "resolved", label: "Resolved", color: "#22c55e", sortOrder: 50, initial: false, terminal: false },
     { id: "rejected", code: "rejected", label: "Rejected", color: "#ef4444", sortOrder: 60, initial: false, terminal: true },
