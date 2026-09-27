@@ -44,6 +44,8 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
     assert.equal(calls.at(-1).body.readTime, "2026-09-23T12:00:00.123Z");
     await db.collection("updates").where("linkedReportIds", "array-contains", "a").get();
     assert.equal(calls.at(-1).body.structuredQuery.where.fieldFilter.op, "ARRAY_CONTAINS");
+    await db.collection("careerApplications").where("category", "in", ["Quality assurance", "Quality Assurance"]).orderBy("createdAt", "desc").get();
+    assert.deepEqual(calls.at(-1).body.structuredQuery.where.fieldFilter, { field: { fieldPath: "category" }, op: "IN", value: { arrayValue: { values: [{ stringValue: "Quality assurance" }, { stringValue: "Quality Assurance" }] } } });
     await db.collectionGroup("activity").where("recipientId", "==", "alice").orderBy("createdAt", "desc").limit(30).get();
     assert.deepEqual(calls.at(-1).body.structuredQuery.from, [{ collectionId: "activity", allDescendants: true }]);
     assert.match(calls.at(-1).url, /\/documents:runQuery$/);

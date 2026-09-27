@@ -5,8 +5,8 @@ import { createCareersService } from "./careers-service.mjs";
 import { createMemoryDb } from "./testing/careers-memory-db.mjs";
 
 const user = { id: "discord1", username: "tester", displayName: "Tester" };
-const admin = { id: "admin1", username: "admin", displayName: "Reviewer" };
-const draft = { title: "Tester application", category: "QA", description: "Help test Tower Eclipse", commitment: "Volunteer", confirmation: "Thanks!", closesAt: null, questions: [
+const admin = { id: "admin1", username: "admin", displayName: "Reviewer", role: "dev" };
+const draft = { title: "Tester application", category: "Quality assurance", description: "Help test Tower Eclipse", commitment: "Volunteer", confirmation: "Thanks!", closesAt: null, questions: [
   { id: "short", type: "short", label: "Time zone", help: "", required: true },
   { id: "long", type: "paragraph", label: "Experience", help: "", required: true },
   { id: "choice", type: "choice", label: "Availability", help: "", required: true, options: ["Weekends", "Weekdays"] },
@@ -44,6 +44,7 @@ test("form configuration is normalized, bounded, and rejects malformed questions
   assert.throws(() => normalizeForm({ ...draft, questions: [{ ...draft.questions[0], type: "upload" }] }));
   const form = normalizeForm({ ...draft, surprise: "removed" }, true);
   assert.equal(form.surprise, undefined);
+  assert.equal(normalizeForm({ ...draft, category: "QUALITY ASSURANCE" }, true).category, "Quality assurance");
 });
 test("account linking is enforced both when opening and submitting", async () => {
   const f = await fixture();
@@ -114,6 +115,27 @@ test("other users cannot read or withdraw applications, and private notes never 
   const list = await f.service.listApplications(user);
   assert.equal(JSON.stringify(list).includes("Private assessment"), false);
   assert.equal(list.items[0].answers, undefined);
+});
+test("QA Lead can read every Quality Assurance application but no other category", async () => {
+  const f = await fixture(), submitted = await f.service.submit(f.form.id, user, f.input);
+  const source = f.documents.get(`careerApplications/${submitted.id}`);
+  f.documents.delete(`careerApplications/${submitted.id}`);
+  for (let n = 0; n < 24; n++) f.documents.set(`careerApplications/other${n}`, { ...source, category: "Development" });
+  for (let n = 0; n < 23; n++) f.documents.set(`careerApplications/qa${n}`, { ...source, category: n % 2 ? "Quality Assurance" : "Quality assurance", status: n % 2 ? "under_review" : "submitted" });
+  const lead = { id: "lead1", role: "leadqa" };
+  const first = await f.service.listApplications(lead, {}, true);
+  const second = await f.service.listApplications(lead, { cursor: first.nextCursor }, true);
+  assert.deepEqual([first.items.length, second.items.length], [20, 3]);
+  assert.ok([...first.items, ...second.items].every(item => item.category.toLowerCase() === "quality assurance"));
+  assert.equal((await f.service.listApplications(lead, { status: "under_review" }, true)).items.length, 11);
+  assert.equal((await f.service.listApplications(lead, { formId: f.form.id, status: "submitted" }, true)).items.length, 12);
+  assert.equal((await f.service.application("qa1", lead, true)).application.category, "Quality Assurance");
+  await assert.rejects(f.service.application("other1", lead, true), { status: 404 });
+  await assert.rejects(f.service.listApplications(lead, { cursor: first.nextCursor, status: "submitted" }, true), { status: 400 });
+  await assert.rejects(f.service.listApplications(admin, { cursor: first.nextCursor }, true), { status: 400 });
+  await assert.rejects(f.service.listApplications({ id: "member", role: "member" }, {}, true), { status: 403 });
+  await assert.rejects(f.service.application("qa1", { id: "member", role: "member" }, true), { status: 403 });
+  await assert.rejects(f.service.review("qa1", lead, { revision: 1, status: "accepted", feedback: "", internalNotes: "" }), { status: 403 });
 });
 test("withdrawal is final, retains history, and prevents another submission to that opening", async () => {
   const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input);

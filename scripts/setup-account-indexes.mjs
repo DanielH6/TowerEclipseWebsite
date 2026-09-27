@@ -5,11 +5,16 @@ import { fieldIndexConfig, fieldIndexMatches } from './firestore-index-config.mj
 
 // Additive index setup: existing indexes and database records are never deleted.
 const apply = process.argv.includes('--apply');
+const qaCareersOnly = process.argv.includes('--only-qa-careers');
 const project = process.env.FIREBASE_PROJECT_ID?.trim();
 const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
 if (!project || !credentialsPath) throw new Error('Configure FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS first.');
 const credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
 const definitions = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8'));
+const indexesToCheck = qaCareersOnly
+  ? definitions.indexes.filter(index => index.collectionGroup === 'careerApplications' && index.fields[0]?.fieldPath === 'category')
+  : definitions.indexes;
+const fieldsToCheck = qaCareersOnly ? [] : definitions.fieldOverrides;
 const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project)}/databases/(default)/collectionGroups`;
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const now = Math.floor(Date.now() / 1000);
@@ -25,9 +30,9 @@ async function request(url, method = 'GET', body) {
   if (!response.ok) throw new Error(`Index setup failed (${response.status}): ${result.error?.message ?? 'Unknown error'}`);
   return result;
 }
-console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}`);
+console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${qaCareersOnly ? ' / QA Careers only' : ''}`);
 const byCollection = new Map();
-for (const group of new Set(definitions.indexes.map(index => index.collectionGroup))) {
+for (const group of new Set(indexesToCheck.map(index => index.collectionGroup))) {
   let pageToken;
   const indexes = [];
   do {
@@ -38,7 +43,7 @@ for (const group of new Set(definitions.indexes.map(index => index.collectionGro
   byCollection.set(group, indexes);
 }
 let ready = true;
-for (const definition of definitions.indexes) {
+for (const definition of indexesToCheck) {
   const { collectionGroup, ...body } = definition;
   const existing = byCollection.get(collectionGroup).find(index => index.queryScope === body.queryScope
     && JSON.stringify(index.fields.filter(field => field.fieldPath !== '__name__').map(field => [field.fieldPath, field.order])) === JSON.stringify(body.fields.map(field => [field.fieldPath, field.order])));
@@ -56,7 +61,7 @@ for (const definition of definitions.indexes) {
   }
 }
 // Apply only the explicitly listed exemptions/overrides; unrelated configuration is untouched.
-for (const definition of definitions.fieldOverrides) {
+for (const definition of fieldsToCheck) {
   const url = `${base}/${definition.collectionGroup}/fields/${encodeURIComponent(definition.fieldPath)}`;
   const current = await request(url);
   const matches = fieldIndexMatches(current, definition);

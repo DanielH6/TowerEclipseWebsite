@@ -54,6 +54,9 @@ function Navigation() {
       {auth?.user.role === "dev" && (
         <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : undefined)}>ADMIN</NavLink>
       )}
+      {auth?.user.role === "leadqa" && (
+        <NavLink to="/admin/careers/review" className={({ isActive }) => (isActive ? "active" : undefined)}>QA APPLICATIONS</NavLink>
+      )}
       <NavLink to="/login" className={({ isActive }) => (isActive ? "active" : undefined)}>
         ACCOUNT
       </NavLink>
@@ -257,9 +260,9 @@ function AppRoutes() {
   else if (pathname === "/careers") element = <CareersPage />;
   else if (/^\/careers\/[^/]+$/.test(pathname)) element = <CareersPage key={pathname} formId={pathname.split("/")[2]} />;
   else if (pathname === "/admin/careers") element = <ProtectedRoute role="dev"><AdminCareersPage /></ProtectedRoute>;
-  else if (pathname === "/admin/careers/review") element = <ProtectedRoute role="dev"><AdminCareersPage review /></ProtectedRoute>;
+  else if (pathname === "/admin/careers/review") element = <ProtectedRoute roles={["leadqa", "dev"]}><AdminCareersPage review /></ProtectedRoute>;
   else if (/^\/admin\/careers\/forms\/[^/]+$/.test(pathname)) element = <ProtectedRoute role="dev"><AdminCareersPage key={pathname} formId={pathname.split("/")[4]} /></ProtectedRoute>;
-  else if (/^\/admin\/careers\/review\/[^/]+$/.test(pathname)) element = <ProtectedRoute role="dev"><ApplicationsPage key={pathname} admin applicationId={pathname.split("/")[4]!} /></ProtectedRoute>;
+  else if (/^\/admin\/careers\/review\/[^/]+$/.test(pathname)) element = <ProtectedRoute roles={["leadqa", "dev"]}><ApplicationsPage key={pathname} admin applicationId={pathname.split("/")[4]!} /></ProtectedRoute>;
   else if (/^\/applications\/[^/]+$/.test(pathname)) element = <ProtectedRoute><ApplicationsPage key={pathname} applicationId={pathname.split("/")[2]!} /></ProtectedRoute>;
   else if (pathname === "/bugs") element = <BugsPage />;
   else if (pathname === "/bugs/new") {

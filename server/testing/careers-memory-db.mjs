@@ -26,7 +26,7 @@ export function createMemoryDb(initial = {}) {
         };
         let entries = [...documents].filter(([path, data]) => path.startsWith(`${collection}/`) && path.split("/").length === collection.split("/").length + 1 && filters.every(([name, op, expected]) => {
           const actual = field(data, name);
-          return op === "==" ? actual === expected : op === ">" ? actual > expected : op === ">=" ? actual >= expected : op === "<" ? actual < expected : actual <= expected;
+          return op === "==" ? actual === expected : op === "in" ? expected.includes(actual) : op === ">" ? actual > expected : op === ">=" ? actual >= expected : op === "<" ? actual < expected : actual <= expected;
         }));
         entries.sort((a, b) => compare(a, order.map(([name]) => value(b, name))));
         if (cursor) entries = entries.filter(entry => compare(entry, cursor) > 0);

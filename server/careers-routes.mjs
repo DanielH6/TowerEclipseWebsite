@@ -14,13 +14,13 @@ export function createCareersRouter({ service, auth = requireAuth, csrf = requir
   router.get("/applications", async (req, res) => res.json(await service.listApplications(req.authUser, req.query)));
   router.get("/applications/:id", async (req, res) => res.json(await service.application(req.params.id, req.authUser)));
   router.post("/applications/:id/withdraw", ...writes, async (req, res) => res.json(await service.review(req.params.id, req.authUser, req.body, true)));
+  router.get("/admin/applications", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.listApplications(req.authUser, req.query, true)));
+  router.get("/admin/applications/:id", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.application(req.params.id, req.authUser, true)));
   router.use("/admin", requireRole("dev"));
   router.get("/admin/forms", async (req, res) => res.json(await service.listForms(req.query, true)));
   router.post("/admin/forms", ...writes, async (_req, res) => res.status(201).json(await service.createForm()));
   router.get("/admin/forms/:id", async (req, res) => res.json(await service.adminForm(req.params.id)));
   router.put("/admin/forms/:id", ...writes, async (req, res) => res.json(await service.saveForm(req.params.id, req.body)));
-  router.get("/admin/applications", async (req, res) => res.json(await service.listApplications(req.authUser, req.query, true)));
-  router.get("/admin/applications/:id", async (req, res) => res.json(await service.application(req.params.id, req.authUser, true)));
   router.put("/admin/applications/:id", ...writes, async (req, res) => res.json(await service.review(req.params.id, req.authUser, req.body)));
   router.use((error, _req, res, next) => {
     if (error.code === "FAILED_PRECONDITION") {
