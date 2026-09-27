@@ -4,7 +4,7 @@ import express from "express";
 import { createCareersRouter } from "./careers-routes.mjs";
 import { config } from "./config.mjs";
 
-test("HTTP boundary requires authentication, developer access, same origin, and CSRF", async t => {
+test("HTTP boundary grants QA Leads read-only application access and reserves management for developers", async t => {
   const calls = [];
   const service = new Proxy({}, { get: (_, method) => async (...args) => { calls.push({ method, args }); return { ok: true }; } });
   const app = express(); app.use(express.json());
@@ -21,9 +21,15 @@ test("HTTP boundary requires authentication, developer access, same origin, and 
   assert.equal((await request("/forms")).status, 200);
   for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications"]) assert.equal((await request(path)).status, 401);
   for (const role of ["member", "qa", "leadqa"]) {
-    for (const path of ["/admin/forms", "/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, role)).status, 403);
+    for (const path of ["/admin/forms", "/admin/forms/test"]) assert.equal((await request(path, role)).status, 403);
     assert.equal((await request("/admin/forms", role, "POST", { "X-CSRF-Token": "fixture-csrf" })).status, 403);
   }
+  for (const role of ["member", "qa"]) {
+    for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, role)).status, 403);
+  }
+  for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, "leadqa")).status, 200);
+  assert.equal((await request("/admin/applications/test", "leadqa", "PUT", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403);
+  assert.equal(calls.at(-1).method, "application", "QA Lead write must not reach the service");
   assert.equal((await request("/admin/forms", "dev")).status, 200);
   for (const [path, role, method] of [["/forms/test/applications", "member", "POST"], ["/applications/test/withdraw", "member", "POST"], ["/admin/forms", "dev", "POST"], ["/admin/forms/test", "dev", "PUT"], ["/admin/applications/test", "dev", "PUT"]]) {
     assert.equal((await request(path, role, method)).status, 403);

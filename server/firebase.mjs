@@ -315,7 +315,8 @@ class Query {
   }
 
   where(fieldPath, operator, value) {
-    if (!["==", ">=", "<=", ">", "<", "array-contains"].includes(operator)) throw new Error(`Unsupported Firestore query operator: ${operator}`);
+    if (!["==", ">=", "<=", ">", "<", "array-contains", "in"].includes(operator)) throw new Error(`Unsupported Firestore query operator: ${operator}`);
+    if (operator === "in" && (!Array.isArray(value) || value.length < 1 || value.length > 30)) throw new Error("Firestore in queries require 1–30 values.");
     return new Query(this.path, [...this.filters, { fieldPath, operator, value }], this.ordering, this.maximum, this.options);
   }
 
@@ -354,7 +355,7 @@ class Query {
     const url = parentPath
       ? `${documentsBase}/${encodePath(parentPath)}:runQuery`
       : `${documentsBase}:runQuery`;
-    const operators = { "array-contains": "ARRAY_CONTAINS", "==": "EQUAL", ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL", ">": "GREATER_THAN", "<": "LESS_THAN" };
+    const operators = { "array-contains": "ARRAY_CONTAINS", "in": "IN", "==": "EQUAL", ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL", ">": "GREATER_THAN", "<": "LESS_THAN" };
 
     let where;
     if (this.filters.length === 1) {

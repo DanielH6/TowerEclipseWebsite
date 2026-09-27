@@ -4,6 +4,8 @@ import { APPLICATION_STATUSES, fail, identifier, normalizeForm, reviewInput, val
 const PAGE_SIZE = 20;
 const SUMMARY = ["formId", "versionId", "title", "category", "applicantId", "applicant", "status", "createdAt", "updatedAt", "revision", "feedback"];
 const FORM_SUMMARY = ["title", "category", "description", "commitment", "closesAt", "state", "publishedVersion", "revision", "createdAt", "updatedAt"];
+const QA_CATEGORIES = ["Quality assurance", "Quality Assurance", "quality assurance", "QUALITY ASSURANCE"];
+const isQaApplication = category => typeof category === "string" && category.trim().toLowerCase() === "quality assurance";
 const pick = (data, keys) => Object.fromEntries(keys.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
 const snapshotData = snapshot => snapshot.exists ? { ...snapshot.data(), id: snapshot.id ?? snapshot.ref.path.split("/").at(-1) } : fail("This item could not be found.", 404);
 const appId = (formId, userId) => createHash("sha256").update(`${formId}:${userId}`).digest("hex").slice(0, 40);
@@ -49,7 +51,9 @@ export function createCareersService(db, { now = Date.now } = {}) {
     return { form: { ...version, id, versionId: form.publishedVersion }, identity, existingApplicationId: existing.exists ? existing.id : null };
   }
   async function application(id, user, admin = false) {
+    if (admin && !["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view this application.", 403);
     const data = snapshotData(await ref("careerApplications", id).get());
+    if (admin && user.role === "leadqa" && !isQaApplication(data.category)) fail("This application could not be found.", 404);
     if (!admin && data.applicantId !== user.id) fail("This application could not be found.", 404);
     const form = snapshotData(await ref("careerFormVersions", data.versionId).get());
     return { application: { ...pick(data, [...SUMMARY, "id", "answers", "history"]), ...(admin ? pick(data, ["internalNotes", "reviewer"]) : {}) }, form };
@@ -120,18 +124,21 @@ export function createCareersService(db, { now = Date.now } = {}) {
       });
     },
     async listApplications(user, options = {}, admin = false) {
+      if (admin && !["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view applications.", 403);
       let query = db.collection("careerApplications");
       if (!admin) query = query.where("applicantId", "==", user.id);
+      if (admin && user.role === "leadqa") query = query.where("category", "in", QA_CATEGORIES);
       if (options.formId) query = query.where("formId", "==", identifier(options.formId));
       if (options.status) {
         if (!APPLICATION_STATUSES.includes(options.status)) fail("Unknown application status.");
         query = query.where("status", "==", options.status);
       }
-      const scope = JSON.stringify([admin ? "admin" : user.id, options.formId ?? "", options.status ?? ""]);
+      const scope = JSON.stringify([admin ? user.role : user.id, options.formId ?? "", options.status ?? ""]);
       return page(query, "careerApplications", options, SUMMARY, "createdAt", "desc", scope);
     },
     application,
     async review(id, user, input, withdraw = false) {
+      if (!withdraw && user?.role !== "dev") fail("You do not have permission to change applications.", 403);
       const changes = withdraw ? { status: "withdrawn" } : reviewInput(input);
       return db.runTransaction(async tx => {
         const target = ref("careerApplications", id);

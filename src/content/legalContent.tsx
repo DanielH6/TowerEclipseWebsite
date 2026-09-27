@@ -6,7 +6,7 @@ export const legalDetails = {
   operator: "Eclipse Development Studio",
   location: "Australia",
   contactEmail: "contact@towereclipse.com",
-  effectiveDate: "23 September 2026",
+  effectiveDate: "28 September 2026",
 };
 
 export function PrivacyContact() {
@@ -49,7 +49,7 @@ export const privacyPolicy: LegalDocument = {
       <p>We do not sell personal information or use Roblox account information for advertising, cross-experience tracking, or training AI models. Connecting Roblox does not authorize purchases, messages, changes to your game account, or background access to your saved game data.</p>
     </> },
     { id: "visibility", title: "What other people can see", content: <>
-      <p>Career openings are public. Application answers and review updates are private to the applicant and authorized website admins and developers reviewing applications. Internal reviewer notes are not shown to applicants. We use application information to evaluate suitability, manage recruitment, prevent duplicate submissions, and communicate decisions through your account.</p>
+      <p>Career openings are public. Application answers and review updates are private to the applicant and authorized developers reviewing applications. QA Leads can also view Quality Assurance applications, including internal reviewer notes, but cannot change their status or review details. Internal reviewer notes are not shown to applicants. We use application information to evaluate suitability, manage recruitment, prevent duplicate submissions, and communicate decisions through your account.</p>
       <p>Submitted bug reports, their comments, ready attachments, and public change histories can be read by visitors, including people who are signed out. These records include the author’s Discord identity, such as display name, username, avatar, user ID, and role. Pending approval or rejected reports are not automatically private.</p>
       <p>Visitors can export the reports matching the bug-list filters as a JSON file or copyable text, including public comments and ready attachment links. Exports do not include internal developer notes. Exporting does not automatically send information to an AI service; the person exporting chooses where to use their copy.</p>
       <p>For testers, we save named report-filter queues and self-reported onboarding checklist progress, including the guide version and completion dates. Your queues are private to your account. Website admins and developers can view your onboarding progress to support training; it is not an automated qualification or performance rating. Optional report frequency and server-console Pastebin links are part of the public bug report. Duplicate links preserve the original submissions and authors, and published release notes may link back to those reports.</p>

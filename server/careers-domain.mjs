@@ -12,7 +12,8 @@ function text(value, label, max, required = false) {
 export function normalizeForm(input, publishing = false) {
   if (!input || typeof input !== "object") fail("Enter a form.");
   const title = text(input.title, "Title", 100, true);
-  const category = text(input.category, "Category", 60, true);
+  const enteredCategory = text(input.category, "Category", 60, true);
+  const category = enteredCategory.toLowerCase() === "quality assurance" ? "Quality assurance" : enteredCategory;
   const description = text(input.description, "Description", 4000, publishing);
   const commitment = text(input.commitment ?? "", "Commitment", 150);
   const confirmation = text(input.confirmation ?? "", "Confirmation message", 1000);
