@@ -29,6 +29,7 @@ import {
 import { accounts, createAccountRouter } from "./account-routes.mjs";
 import { createCareersRouter } from "./careers-routes.mjs";
 import { createCareersService } from "./careers-service.mjs";
+import { createAchievementListRouter, createAchievementListService } from "./achievement-list.mjs";
 import { createBugRouter } from "./bug-routes.mjs";
 import {
   createAdminDictionaryRouter,
@@ -110,6 +111,7 @@ app.use(
           "data:",
           "https://cdn.discordapp.com",
           "https://media.discordapp.net",
+          "https://i.ytimg.com",
           ...(config.r2 ? [config.r2.endpointOrigin] : []),
         ],
         mediaSrc: [
@@ -417,6 +419,7 @@ app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryR
 app.use("/api/admin/overview", requireFirestoreReady, createAdminWorkspaceRouter(createAdminWorkspaceService(db, bugQueries)));
 app.use("/api/account", requireFirestoreReady, createAccountRouter());
 app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: createCareersService(db) }));
+app.use("/api/list", requireFirestoreReady, createAchievementListRouter({ service: createAchievementListService(db) }));
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());
 app.use("/api/admin/updates", requireFirestoreReady, createAdminUpdateRouter());
 app.use("/api/updates", requireFirestoreReady, createPublicUpdateRouter());

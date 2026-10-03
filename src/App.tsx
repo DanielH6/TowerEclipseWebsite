@@ -27,6 +27,8 @@ const LegalPage = lazy(() => import("./Pages/Legal"));
 const CareersPage = lazy(() => import("./Pages/Careers"));
 const AdminCareersPage = lazy(() => import("./Pages/AdminCareers"));
 const ApplicationsPage = lazy(() => import("./Pages/Applications"));
+const AchievementListPage = lazy(() => import("./Pages/AchievementList"));
+const AdminListPage = lazy(() => import("./Pages/AdminList"));
 
 function Navigation() {
   const { auth } = useAuth();
@@ -35,6 +37,7 @@ function Navigation() {
     { to: "/about", label: "ABOUT US" },
     { to: "/news", label: "NEWS" },
     { to: "/esports", label: "ESPORTS" },
+    { to: "/list", label: "LIST" },
     { to: "/careers", label: "CAREERS" },
     { to: "/bugs", label: "BUGS" },
   ];
@@ -186,7 +189,7 @@ function Footer() {
 function PageShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const isHomePage = pathname === "/";
-  const pageTitle = pathname.startsWith("/careers")
+  const pageTitle = pathname === "/list" || pathname === "/admin/list" ? "Tower Eclipse Achievement List" : pathname.startsWith("/careers")
     ? "Tower Eclipse Careers"
     : pathname.startsWith("/admin/careers")
       ? "Tower Eclipse Application Management"
@@ -245,6 +248,8 @@ function AppRoutes() {
 
   if (pathname === "/") element = <HomePage />;
   else if (pathname === "/news") element = <News />;
+  else if (pathname === "/list") element = <AchievementListPage />;
+  else if (pathname === "/admin/list") element = <ProtectedRoute role="dev" fallbackTo="/list"><AdminListPage /></ProtectedRoute>;
   else if (pathname === "/esports") element = <EsportsPage />;
   else if (pathname === "/esports/manage") {
     element = <ProtectedRoute role="dev" fallbackTo="/esports"><TournamentManagerPage /></ProtectedRoute>;
