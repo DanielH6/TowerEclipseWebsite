@@ -28,12 +28,19 @@ export default function AchievementThumbnailEditor({ entryId, thumbnailId, csrfT
       mergeSelectedFiles([], [file], policy);
       setUploading(true); onBusyChange(true);
       // Catch corrupt/renamed files before sending them to the existing image storage.
-      const localUrl = URL.createObjectURL(file);
       try {
+        // The separately hosted frontend allows data: images, but may still block blob:.
+        const localUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Could not read image."));
+          reader.onerror = () => reject(reader.error);
+          reader.onabort = () => reject(new Error("Image reading cancelled."));
+          reader.readAsDataURL(file);
+        });
+        if (controller.signal.aborted) return;
         const preview = new Image(); preview.src = localUrl;
         await preview.decode();
       } catch { throw new Error("This file could not be opened as an image. Choose a valid PNG or JPG."); }
-      finally { URL.revokeObjectURL(localUrl); }
       if (controller.signal.aborted) return;
       const id = await uploadAchievementThumbnail(entryId, file, csrfToken, controller.signal);
       if (!controller.signal.aborted) { onChange(id); setNotice("Thumbnail uploaded. Publish the list to apply it."); }

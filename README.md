@@ -27,6 +27,12 @@ Frontend: `http://localhost:5173`
 
 API health: `http://localhost:3001/api/health`
 
+### Browser CSP regression check
+
+Run `npm run test:list-csp` (or `PLAYWRIGHT_CHANNEL=chrome npm run test:list-csp` with installed Google Chrome). It builds the site and uses a local server, disposable in-memory list, and fake image storage. It verifies thumbnail upload/preview/publication and both local fonts with `blob:` images and external fonts blocked, asserting zero CSP violations. No production data is touched.
+
+Page and API deployments may set different response headers. The CSP on the HTML document (`/list` or `/admin/list`) governs its images and fonts; checking `/api/health` alone does not verify that policy. Thumbnail validation uses permitted `data:` images, and fonts are bundled in `public/fonts/`. Automatic YouTube thumbnails still require `https://i.ytimg.com` in the **frontend document's** `img-src` policy.
+
 ## Environment
 
 Copy `.env.example` to `.env` and replace all placeholders. Generate `COOKIE_SECRET` with:
