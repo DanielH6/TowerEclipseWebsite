@@ -1,10 +1,12 @@
 export interface AchievementEntry {
   id: string;
   name: string;
+  completionMode?: "solo" | "grouped" | "";
   difficulty: number;
   verifier: string;
   verifiedOn?: string;
   verifiedVersion?: string;
+  thumbnailId?: string;
   requirements: string;
   videoUrl: string;
 }
@@ -20,10 +22,13 @@ export const DIFFICULTIES: DifficultyDefinition[];
 export const DIFFICULTY_TIERS: { name: string; minimum: number; range: string }[];
 export function difficultyRating(value: unknown): DifficultyRating | null;
 export function formatVerificationDate(value: string | undefined): string;
+export function achievementThumbnailUrl(id: string): string;
+export function achievementCompletionMode(entry: Pick<AchievementEntry, "name" | "completionMode">): "solo" | "grouped" | "";
 export const ACHIEVEMENT_FIELDS: (keyof Omit<AchievementEntry, "id">)[];
 export interface AchievementChange {
   id: string;
   name: string;
+  completionMode?: "solo" | "grouped" | "";
   kind: "added" | "removed" | "updated";
   fromPosition: number | null;
   toPosition: number | null;

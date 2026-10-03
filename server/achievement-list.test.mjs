@@ -2,11 +2,51 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createAchievementListRouter, createAchievementListService } from "./achievement-list.mjs";
-import { achievementChanges, difficultyRating, DIFFICULTIES, formatVerificationDate, validateListEntries, youtubeVideoId } from "../shared/achievement-list.mjs";
+import { achievementChanges, achievementCompletionMode, difficultyRating, DIFFICULTIES, formatVerificationDate, validateListEntries, youtubeVideoId } from "../shared/achievement-list.mjs";
 import { createMemoryDb } from "./testing/careers-memory-db.mjs";
 import { config } from "./config.mjs";
 
 const entry = (id = "summit") => ({ id, name: `Achievement ${id}`, difficulty: 9.5, verifier: "Verifier", requirements: "Solo, no consumables", videoUrl: "https://youtu.be/abcdefghijk?si=share" });
+
+test("completion mode distinguishes equal names and rejects invalid or duplicate modes", () => {
+  const solo = { ...entry("solo"), name: "Hardcore", completionMode: "solo" };
+  const grouped = { ...entry("grouped"), name: "Hardcore", completionMode: "grouped", difficulty: 5 };
+  assert.deepEqual(validateListEntries([solo, grouped]).map(item => item.completionMode), ["solo", "grouped"]);
+  assert.throws(() => validateListEntries([solo, { ...grouped, name: " HARDCORE ", completionMode: "solo" }]), /Duplicate achievement name/);
+  for (const completionMode of ["duo", "SOLO", null, 1, {}]) assert.throws(() => validateListEntries([{ ...solo, completionMode }]), { status: 400 });
+  assert.equal(achievementCompletionMode({ name: "Hardcore (GROUPED) " }), "grouped");
+  assert.equal(achievementCompletionMode({ name: "Hardcore (Solo)", completionMode: "grouped" }), "grouped");
+  assert.equal(achievementCompletionMode(entry()), "", "Do not guess unrecorded modes from requirements or verifier names");
+});
+
+test("legacy mode hydration is read-only and survives removing title suffixes without spurious mode edits", async () => {
+  const memory = createMemoryDb();
+  const [legacy] = validateListEntries([{ ...entry(), name: "Hardcore (Grouped)" }]);
+  delete legacy.completionMode;
+  memory.documents.set("achievementLists/main", { entries: [legacy], revision: 1 });
+  const service = createAchievementListService(memory.db);
+  const initial = await service.read();
+  assert.equal(initial.entries[0].completionMode, "grouped");
+  assert.equal(memory.writes(), 0);
+  await service.save(initial, { id: "admin" });
+  assert.equal(memory.writes(), 0, "Hydration alone does not publish a revision");
+  await service.save({ ...initial, entries: [{ ...initial.entries[0], name: "Hardcore" }] }, { id: "admin" });
+  assert.equal((await service.read()).entries[0].completionMode, "grouped");
+  assert.deepEqual((await service.history()).publications[0].changes[0].fields.map(item => item.field), ["name"]);
+});
+
+test("same-name modes persist independently and mode edits are public before/after changes", async () => {
+  const service = createAchievementListService(createMemoryDb().db);
+  const first = await service.save({ revision: 0, entries: [
+    { ...entry("solo"), name: "Hardcore", completionMode: "solo", difficulty: 6.9 },
+    { ...entry("grouped"), name: "Hardcore", completionMode: "grouped", difficulty: 5 },
+  ] }, { id: "admin" });
+  assert.deepEqual((await service.read()).entries.map(item => [item.id, item.completionMode, item.difficulty]), [["solo", "solo", 6.9], ["grouped", "grouped", 5]]);
+  await service.save({ revision: 1, entries: [{ ...first.entries[0], completionMode: "grouped" }] }, { id: "admin" });
+  const change = (await service.history()).publications[0].changes[0];
+  assert.equal(change.completionMode, "grouped");
+  assert.deepEqual(change.fields, [{ field: "completionMode", before: "solo", after: "grouped" }]);
+});
 
 test("verification metadata accepts real calendar dates, preserves version labels, and supports older entries", () => {
   const [valid] = validateListEntries([{ ...entry(), verifiedOn: "2024-02-29", verifiedVersion: " v0.4.1-hotfix " }]);
