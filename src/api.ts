@@ -932,3 +932,27 @@ export async function apiJson<T>(path: string, method = "GET", body?: unknown, c
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }));
 }
+
+export async function uploadAchievementThumbnail(entryId: string, file: File, csrfToken: string, signal?: AbortSignal): Promise<string> {
+  const ticket = await apiJson<TournamentBannerUploadTicket>("/api/list/thumbnails", "POST", { entryId, fileName: file.name, contentType: file.type, size: file.size }, csrfToken, signal);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(ticket.uploadUrl, { method: "PUT", headers: ticket.uploadHeaders, body: file, signal });
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error("The image could not reach storage. Please try again. If this continues, check the site's R2 CORS configuration.");
+      throw error;
+    }
+    if (!response.ok) throw new Error(`Thumbnail upload failed (${response.status}). Please try again.`);
+    const result = await apiJson<{ thumbnailId: string }>(`/api/list/thumbnails/${encodeURIComponent(ticket.uploadId)}/complete`, "POST", {}, csrfToken, signal);
+    return result.thumbnailId;
+  } catch (error) {
+    await discardAchievementThumbnail(ticket.uploadId, csrfToken);
+    throw error;
+  }
+}
+
+export async function discardAchievementThumbnail(id: string, csrfToken: string): Promise<void> {
+  // Best-effort cleanup. The server refuses deletion if another publication already uses the image.
+  await fetch(`/api/list/thumbnails/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include", headers: { "X-CSRF-Token": csrfToken }, keepalive: true }).catch(() => undefined);
+}

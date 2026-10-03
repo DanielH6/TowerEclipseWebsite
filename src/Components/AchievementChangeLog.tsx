@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { apiJson } from "../api";
 import { Link } from "../router";
 import type { AchievementChange, ListHistory, ListPublication } from "../../shared/achievement-list.mjs";
-import { formatVerificationDate } from "../../shared/achievement-list.mjs";
+import { achievementThumbnailUrl, formatVerificationDate } from "../../shared/achievement-list.mjs";
 import { DifficultyBadge } from "./AchievementDifficulty";
 
-const fieldLabels = { name: "Name", difficulty: "Difficulty", verifier: "Verifier", requirements: "Completion requirements", videoUrl: "Verification video", verifiedOn: "Verification date", verifiedVersion: "Verified game version" };
+const fieldLabels = { name: "Name", difficulty: "Difficulty", verifier: "Verifier", requirements: "Completion requirements", videoUrl: "Verification video", verifiedOn: "Verification date", verifiedVersion: "Verified game version", thumbnailId: "Thumbnail override", completionMode: "Completion mode" };
 function ChangeValue({ field, value }: { field: keyof typeof fieldLabels; value: string | number | null }) {
+  if (field === "thumbnailId") return value ? <a href={achievementThumbnailUrl(String(value))} target="_blank" rel="noopener noreferrer">View uploaded thumbnail ↗</a> : <span className="change-unset">Automatic thumbnail</span>;
   if (value === null || value === "") return <span className="change-unset">Not set</span>;
+  if (field === "completionMode") return <span>{value === "solo" ? "Solo" : "Grouped"}</span>;
   if (field === "difficulty" && typeof value === "number") return <DifficultyBadge value={value} />;
   if (field === "verifiedOn" && typeof value === "string") return <time dateTime={value}>{formatVerificationDate(value)}</time>;
   return <span>{value}</span>;
@@ -18,7 +20,7 @@ function ChangeDetails({ change, active }: { change: AchievementChange; active: 
   return <li className={`list-change list-change-${change.kind}`}>
     <span className="list-change-marker" aria-hidden="true">{change.kind === "added" ? "+" : change.kind === "removed" ? "−" : movement ? "↕" : "✎"}</span>
     <div className="list-change-content"><header><strong>{active ? <Link to={`/list#achievement-${change.id}`}>{change.name}</Link> : change.name}</strong><span className="list-change-kind">{change.kind === "updated" && !change.fields.length ? "Moved" : change.kind}</span></header>
-      <p className="list-change-position">{change.kind === "added" ? `Added at #${change.toPosition}` : change.kind === "removed" ? `Removed from #${change.fromPosition}` : movement ? `#${change.fromPosition} → #${change.toPosition}` : `Position #${change.toPosition} unchanged`}</p>
+      <p className="list-change-position">{change.completionMode && <span className="list-change-mode">{change.completionMode === "solo" ? "SOLO" : "GROUPED"} · </span>}{change.kind === "added" ? `Added at #${change.toPosition}` : change.kind === "removed" ? `Removed from #${change.fromPosition}` : movement ? `#${change.fromPosition} → #${change.toPosition}` : `Position #${change.toPosition} unchanged`}</p>
       {change.fields.some(field => field.field === "difficulty") && <div className="list-rating-change">{change.fields.filter(field => field.field === "difficulty").map(field => <div key={field.field}>{field.before !== null && <DifficultyBadge value={Number(field.before)} />}{field.before !== null && field.after !== null && <span aria-label="changed to">→</span>}{field.after !== null && <DifficultyBadge value={Number(field.after)} />}</div>)}</div>}
       {change.fields.length > 0 && <details className="list-change-details"><summary>{change.kind === "updated" ? `View ${change.fields.length} field ${change.fields.length === 1 ? "change" : "changes"}` : "View achievement details"}</summary>
         <dl>{change.fields.map(field => <div key={field.field}><dt>{fieldLabels[field.field]}</dt><dd>{change.kind !== "added" && <div><small>BEFORE</small><ChangeValue field={field.field} value={field.before} /></div>}{change.kind !== "removed" && <div><small>AFTER</small><ChangeValue field={field.field} value={field.after} /></div>}</dd></div>)}</dl>

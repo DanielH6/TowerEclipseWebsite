@@ -2,18 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../api";
 import { useAuth } from "../AuthContext";
 import { Link, useLocation, useNavigate } from "../router";
-import { difficultyRating, formatVerificationDate, youtubeVideoId, type AchievementEntry, type AchievementList } from "../../shared/achievement-list.mjs";
+import { achievementCompletionMode, achievementThumbnailUrl, difficultyRating, formatVerificationDate, youtubeVideoId, type AchievementEntry, type AchievementList } from "../../shared/achievement-list.mjs";
 import { DifficultyBadge, DifficultySpectrum, difficultyStyle } from "../Components/AchievementDifficulty";
 import AchievementChangeLog from "../Components/AchievementChangeLog";
+import AchievementMode from "../Components/AchievementMode";
 import "./AchievementList.css";
 
 export function AchievementCard({ entry, position }: { entry: AchievementEntry; position: number }) {
   const videoId = youtubeVideoId(entry.videoUrl);
   const rating = difficultyRating(entry.difficulty);
-  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const [failedImages, setFailedImages] = useState<string[]>([]);
+  const candidates = [entry.thumbnailId ? achievementThumbnailUrl(entry.thumbnailId) : null, videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null];
+  const imageUrl = candidates.find((url): url is string => !!url && !failedImages.includes(url));
   const thumbnail = <>
-    {videoId && failedImage !== videoId
-      ? <img src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`} alt="" loading="lazy" onError={() => setFailedImage(videoId)} />
+    {imageUrl
+      ? <img key={imageUrl} src={imageUrl} alt="" loading="lazy" onError={() => setFailedImages(current => [...current, imageUrl])} />
       : <div className="achievement-placeholder"><img src="/favicon.png" alt="" /><span>TOWER ECLIPSE</span></div>}
     <span className="achievement-video-label">{videoId ? "▶ WATCH VERIFICATION ↗" : "VIDEO NOT ADDED"}</span>
   </>;
@@ -27,6 +30,7 @@ export function AchievementCard({ entry, position }: { entry: AchievementEntry; 
       <dl className="achievement-verification-meta"><div><dt>VERIFIED ON</dt><dd>{entry.verifiedOn ? <time dateTime={entry.verifiedOn}>{formatVerificationDate(entry.verifiedOn)}</time> : "Not recorded"}</dd></div><div><dt>GAME VERSION</dt><dd>{entry.verifiedVersion || "Not recorded"}</dd></div></dl>
       {entry.requirements && <details><summary>Completion requirements</summary><p>{entry.requirements}</p></details>}
     </div>
+    <AchievementMode mode={achievementCompletionMode(entry)} />
     <div className="achievement-difficulty"><span>DIFFICULTY</span><DifficultyBadge value={entry.difficulty} /></div>
   </article>;
 }
@@ -55,7 +59,7 @@ export default function AchievementListPage() {
     if (hash.startsWith("#achievement-")) { setSearch(""); setWithVideo(false); setDifficultyFilter(null); }
   }, [hash]);
   const visible = useMemo(() => (data?.entries ?? []).map((entry, index) => ({ entry, position: index + 1 })).filter(({ entry }) =>
-    (!withVideo || !!entry.videoUrl) && (difficultyFilter === null || difficultyRating(entry.difficulty)?.minimum === difficultyFilter) && `${entry.name} ${entry.verifier} ${entry.requirements} ${difficultyRating(entry.difficulty)?.label ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())), [data, search, withVideo, difficultyFilter]);
+    (!withVideo || !!entry.videoUrl) && (difficultyFilter === null || difficultyRating(entry.difficulty)?.minimum === difficultyFilter) && `${entry.name} ${entry.verifier} ${entry.requirements} ${achievementCompletionMode(entry)} ${difficultyRating(entry.difficulty)?.label ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())), [data, search, withVideo, difficultyFilter]);
   useEffect(() => {
     if (data && hash.startsWith("#achievement-")) document.getElementById(hash.slice(1))?.scrollIntoView({ block: "center" });
   }, [data, hash, activeView, visible]);
