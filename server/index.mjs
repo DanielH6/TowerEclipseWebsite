@@ -109,6 +109,7 @@ app.use(
         imgSrc: [
           "'self'",
           "data:",
+          "blob:", // Local image validation and previews before upload.
           "https://cdn.discordapp.com",
           "https://media.discordapp.net",
           "https://i.ytimg.com",
