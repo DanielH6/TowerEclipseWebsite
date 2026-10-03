@@ -13,6 +13,7 @@
     "dev:watch": "concurrently -k -n API,WEB -c magenta,cyan \"npm:dev:server:watch\" \"npm:dev:web\"",
     "dev:server:watch": "node --watch-path=server --watch-preserve-output server/index.mjs",
     "test": "node --test server/*.test.mjs",
+    "test:list-csp": "npm run build && node tests/browser/achievement-csp.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "start": "node server/index.mjs",
