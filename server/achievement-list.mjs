@@ -5,7 +5,7 @@ import { requireSameOrigin } from "./security.mjs";
 import { achievementChanges, achievementCompletionMode, validateListEntries } from "../shared/achievement-list.mjs";
 import { createListThumbnailService } from "./achievement-list-thumbnails.mjs";
 
-const publicList = data => ({ entries: (data?.entries ?? []).map(entry => ({ ...entry, completionMode: achievementCompletionMode(entry) })), revision: data?.revision ?? 0, updatedAt: data?.updatedAt ?? null });
+const publicList = data => ({ entries: (data?.entries ?? []).map(entry => ({ ...entry, completionMode: achievementCompletionMode(entry), theoretical: entry.theoretical === true })), revision: data?.revision ?? 0, updatedAt: data?.updatedAt ?? null });
 
 export function createAchievementListService(db, { thumbnailStorage } = {}) {
   // One bounded document makes reordering atomic and needs no composite index.

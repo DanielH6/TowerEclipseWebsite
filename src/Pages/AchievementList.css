@@ -47,6 +47,9 @@ a.achievement-thumbnail:hover .achievement-video-label { color: #76bdff; }
 .achievement-copy h3 a:hover { color: #76bdff; }
 .achievement-verifier { margin: 12px 0; color: #98afc2; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
 .achievement-verifier strong { color: #a5d3ff; font-weight: 600; }
+.achievement-theoretical-badge { display: inline-block; margin-top: 12px; padding: 6px 8px; border: 1px dashed #b49aff80; border-radius: 3px; background: #b49aff12; color: #d4c5ff; font: 600 .52rem 'Roboto Mono', monospace; letter-spacing: .06em; line-height: 1.6; }
+.achievement-theoretical-note { padding: 16px 20px; margin: 0 0 24px; border: 1px solid #b49aff40; border-radius: 4px; background: #b49aff0a; color: #afbed2; font-size: .75rem; line-height: 1.8; }
+.achievement-theoretical-note strong { margin-right: 12px; color: #d4c5ff; font: 600 .6rem 'Roboto Mono', monospace; letter-spacing: .06em; }
 .achievement-verification-meta { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 14px 0; }
 .achievement-verification-meta > div { min-width: 0; }
 .achievement-verification-meta dt { color: #8ea7bd; font: 500 .5rem 'Roboto Mono', monospace; letter-spacing: .09em; margin-bottom: 5px; }
@@ -115,6 +118,9 @@ a.achievement-thumbnail:hover .achievement-video-label { color: #76bdff; }
 .list-mode-toggle input:disabled + span { opacity: .5; cursor: not-allowed; }
 .list-mode-toggle p { color: #93adc2; font-size: .65rem; line-height: 1.7; margin: 10px 0 0; }
 .list-order-mode { display: block; color: #8faac1; font: 500 .5rem 'Roboto Mono', monospace; letter-spacing: .08em; margin-top: 6px; }
+.list-order-theoretical { color: #d4c5ff; }
+.list-theoretical-control { grid-column: 1 / -1; padding: 16px; border: 1px solid #76bdff30; border-radius: 4px; background: #040e19; }
+.list-theoretical-control p { margin: 10px 0 0; color: #93adc2; font-size: .65rem; line-height: 1.7; }
 .list-live-preview { margin-top: 30px; }
 .list-thumbnail-editor { grid-column: 1 / -1; min-width: 0; padding: 18px; border: 1px solid #76bdff30; background: #040e195c; border-radius: 4px; }
 .list-thumbnail-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }

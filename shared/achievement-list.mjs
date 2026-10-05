@@ -1,4 +1,5 @@
 export const LIST_LIMIT = 50;
+export const THEORETICAL_LIMIT = 50;
 
 export const DIFFICULTIES = [
   { name: "Effortless", minimum: 0, color: "#b6f5b0", range: "0.0–0.9" },
@@ -28,7 +29,13 @@ export function difficultyRating(value) {
   return { ...difficulty, rating, tier, label: `${tier} ${difficulty.name}`, eclipse: rating >= 8 };
 }
 
-export const ACHIEVEMENT_FIELDS = ["name", "difficulty", "verifier", "requirements", "videoUrl", "verifiedOn", "verifiedVersion", "thumbnailId", "completionMode"];
+export const ACHIEVEMENT_FIELDS = ["name", "difficulty", "verifier", "requirements", "videoUrl", "verifiedOn", "verifiedVersion", "thumbnailId", "completionMode", "theoretical"];
+
+// Assign ranks before search filters, but after choosing the verified or combined list.
+export function achievementRankings(entries, includeTheoretical = false) {
+  return entries.filter(entry => includeTheoretical || entry.theoretical !== true)
+    .map((entry, index) => ({ entry, position: index + 1 }));
+}
 
 export function achievementCompletionMode(entry) {
   if (entry?.completionMode === "solo" || entry?.completionMode === "grouped") return entry.completionMode;
@@ -51,13 +58,18 @@ export function achievementChanges(before, after) {
   for (const id of new Set([...newEntries.keys(), ...oldEntries.keys()])) {
     const previous = oldEntries.get(id);
     const next = newEntries.get(id);
-    const value = (item, field) => item ? field === "completionMode" ? achievementCompletionMode(item.entry) || undefined : item.entry[field] : undefined;
+    const value = (item, field) => {
+      if (!item) return undefined;
+      if (field === "completionMode") return achievementCompletionMode(item.entry) || undefined;
+      if (field === "theoretical") return item.entry.theoretical === true;
+      return item.entry[field];
+    };
     const fields = ACHIEVEMENT_FIELDS.filter(field => previous && next
       ? (value(previous, field) ?? "") !== (value(next, field) ?? "")
       : value(previous, field) !== value(next, field))
       .map(field => ({ field, before: value(previous, field) ?? null, after: value(next, field) ?? null }));
     if (!fields.length && previous?.position === next?.position) continue;
-    changes.push({ id, name: (next ?? previous).entry.name, completionMode: achievementCompletionMode((next ?? previous).entry), kind: !previous ? "added" : !next ? "removed" : "updated", fromPosition: previous?.position ?? null, toPosition: next?.position ?? null, fields });
+    changes.push({ id, name: (next ?? previous).entry.name, completionMode: achievementCompletionMode((next ?? previous).entry), theoretical: (next ?? previous).entry.theoretical === true, kind: !previous ? "added" : !next ? "removed" : "updated", fromPosition: previous?.position ?? null, toPosition: next?.position ?? null, fields });
   }
   return changes;
 }
@@ -80,7 +92,9 @@ export function youtubeVideoId(value) {
 
 export function validateListEntries(input) {
   const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
-  if (!Array.isArray(input) || input.length > LIST_LIMIT) fail(`The list can contain up to ${LIST_LIMIT} achievements.`);
+  if (!Array.isArray(input) || input.length > LIST_LIMIT + THEORETICAL_LIMIT) fail(`The list can contain up to ${LIST_LIMIT} verified and ${THEORETICAL_LIMIT} theoretical achievements.`);
+  if (input.filter(entry => entry?.theoretical !== true).length > LIST_LIMIT) fail(`The list can contain up to ${LIST_LIMIT} verified achievements.`);
+  if (input.filter(entry => entry?.theoretical === true).length > THEORETICAL_LIMIT) fail(`The list can contain up to ${THEORETICAL_LIMIT} theoretical achievements.`);
   const ids = new Set();
   const names = new Set();
   const text = (value, label, max, required = true) => {
@@ -92,6 +106,8 @@ export function validateListEntries(input) {
     if (typeof entry.id !== "string" || !/^[\w-]{1,64}$/.test(entry.id) || ids.has(entry.id)) fail("Each achievement must have a unique valid ID.");
     ids.add(entry.id);
     const name = text(entry.name, "Achievement name", 120);
+    if (entry.theoretical !== undefined && typeof entry.theoretical !== "boolean") fail("Theoretical mode must be enabled or disabled.");
+    const theoretical = entry.theoretical === true;
     if (entry.completionMode !== undefined && !["", "solo", "grouped"].includes(entry.completionMode)) fail("Completion mode must be Solo or Grouped.");
     const completionMode = achievementCompletionMode(entry);
     const nameKey = JSON.stringify([name.toLowerCase(), completionMode]);
@@ -99,7 +115,7 @@ export function validateListEntries(input) {
     names.add(nameKey);
     const difficulty = difficultyRating(entry.difficulty);
     if (!difficulty) fail(`Difficulty for ${name} must be a valid number of 0.0 or higher.`);
-    const verifier = text(entry.verifier, "Verifier", 80);
+    const verifier = text(entry.verifier ?? "", "Verifier", 80, !theoretical);
     const verifiedOn = text(entry.verifiedOn ?? "", "Verification date", 10, false);
     if (verifiedOn && (!/^\d{4}-\d{2}-\d{2}$/.test(verifiedOn) || verifiedOn.startsWith("0000") || !Number.isFinite(Date.parse(`${verifiedOn}T00:00:00Z`)) || new Date(`${verifiedOn}T00:00:00Z`).toISOString().slice(0, 10) !== verifiedOn)) fail(`Use a valid verification date for ${name}.`);
     const verifiedVersion = text(entry.verifiedVersion ?? "", "Verified game version", 40, false);
@@ -109,6 +125,6 @@ export function validateListEntries(input) {
     const video = text(entry.videoUrl ?? "", "YouTube URL", 500, false);
     const videoId = youtubeVideoId(video);
     if (video && !videoId) fail(`Use a valid YouTube video link for ${name}.`);
-    return { id: entry.id, name, completionMode, difficulty: difficulty.rating, verifier, verifiedOn, verifiedVersion, thumbnailId, requirements, videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "" };
+    return { id: entry.id, name, completionMode, theoretical, difficulty: difficulty.rating, verifier, verifiedOn, verifiedVersion, thumbnailId, requirements, videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "" };
   });
 }

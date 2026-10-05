@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../api";
 import { useAuth } from "../AuthContext";
 import { Link, useLocation, useNavigate } from "../router";
-import { achievementCompletionMode, achievementThumbnailUrl, difficultyRating, formatVerificationDate, youtubeVideoId, type AchievementEntry, type AchievementList } from "../../shared/achievement-list.mjs";
+import { achievementCompletionMode, achievementRankings, achievementThumbnailUrl, difficultyRating, formatVerificationDate, youtubeVideoId, type AchievementEntry, type AchievementList } from "../../shared/achievement-list.mjs";
 import { DifficultyBadge, DifficultySpectrum, difficultyStyle } from "../Components/AchievementDifficulty";
 import AchievementChangeLog from "../Components/AchievementChangeLog";
 import AchievementMode from "../Components/AchievementMode";
 import "./AchievementList.css";
 
-export function AchievementCard({ entry, position }: { entry: AchievementEntry; position: number }) {
+export function AchievementCard({ entry, position, includeTheoretical = false }: { entry: AchievementEntry; position: number; includeTheoretical?: boolean }) {
   const videoId = youtubeVideoId(entry.videoUrl);
   const rating = difficultyRating(entry.difficulty);
   const [failedImages, setFailedImages] = useState<string[]>([]);
@@ -18,16 +18,18 @@ export function AchievementCard({ entry, position }: { entry: AchievementEntry; 
     {imageUrl
       ? <img key={imageUrl} src={imageUrl} alt="" loading="lazy" onError={() => setFailedImages(current => [...current, imageUrl])} />
       : <div className="achievement-placeholder"><img src="/favicon.png" alt="" /><span>TOWER ECLIPSE</span></div>}
-    <span className="achievement-video-label">{videoId ? "▶ WATCH VERIFICATION ↗" : "VIDEO NOT ADDED"}</span>
+    <span className="achievement-video-label">{entry.theoretical ? videoId ? "▶ WATCH SHOWCASE ↗" : "AWAITING VERIFICATION" : videoId ? "▶ WATCH VERIFICATION ↗" : "VIDEO NOT ADDED"}</span>
   </>;
   return <article className={`achievement-card ${position === 1 ? "achievement-first" : ""} ${rating?.eclipse ? "achievement-eclipse" : ""}`} style={difficultyStyle(rating?.color ?? "#76bdff")} id={`achievement-${entry.id}`}>
     <div className="achievement-rank" aria-label={`Rank ${position}`}><small>RANK</small><strong>#{String(position).padStart(2, "0")}</strong></div>
-    {videoId ? <a className="achievement-thumbnail" href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer" aria-label={`Watch ${entry.name} verification on YouTube`}>{thumbnail}</a> : <div className="achievement-thumbnail">{thumbnail}</div>}
+    {videoId ? <a className="achievement-thumbnail" href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer" aria-label={`Watch ${entry.name} ${entry.theoretical ? "showcase" : "verification"} on YouTube`}>{thumbnail}</a> : <div className="achievement-thumbnail">{thumbnail}</div>}
     <div className="achievement-copy">
-      <p className="achievement-kicker">{position === 1 ? "THE SUMMIT" : "TOP 50 ACHIEVEMENT"}</p>
+      <p className="achievement-kicker">{position === 1 ? "THE SUMMIT" : includeTheoretical ? "COMBINED RANKING" : "TOP 50 ACHIEVEMENT"}</p>
       <h3><a href={`#achievement-${entry.id}`}>{entry.name}</a></h3>
-      <p className="achievement-verifier">Verified by <strong>{entry.verifier}</strong></p>
-      <dl className="achievement-verification-meta"><div><dt>VERIFIED ON</dt><dd>{entry.verifiedOn ? <time dateTime={entry.verifiedOn}>{formatVerificationDate(entry.verifiedOn)}</time> : "Not recorded"}</dd></div><div><dt>GAME VERSION</dt><dd>{entry.verifiedVersion || "Not recorded"}</dd></div></dl>
+      {entry.theoretical ? <><span className="achievement-theoretical-badge">THEORETICAL · UNVERIFIED</span><p className="achievement-verifier">Theoretically possible. Awaiting verification.</p></> : <>
+        <p className="achievement-verifier">Verified by <strong>{entry.verifier}</strong></p>
+        <dl className="achievement-verification-meta"><div><dt>VERIFIED ON</dt><dd>{entry.verifiedOn ? <time dateTime={entry.verifiedOn}>{formatVerificationDate(entry.verifiedOn)}</time> : "Not recorded"}</dd></div><div><dt>GAME VERSION</dt><dd>{entry.verifiedVersion || "Not recorded"}</dd></div></dl>
+      </>}
       {entry.requirements && <details><summary>Completion requirements</summary><p>{entry.requirements}</p></details>}
     </div>
     <AchievementMode mode={achievementCompletionMode(entry)} />
@@ -40,7 +42,8 @@ export default function AchievementListPage() {
   const { hash, search: locationSearch } = useLocation();
   const navigate = useNavigate();
   const view = new URLSearchParams(locationSearch).get("view");
-  const activeView = view === "changes" || view === "leaderboard" ? view : "top";
+  const activeView = view === "changes" || view === "leaderboard" || view === "theoretical" ? view : "top";
+  const includeTheoretical = activeView === "theoretical";
   const [data, setData] = useState<AchievementList | null>(null);
   const [search, setSearch] = useState("");
   const [withVideo, setWithVideo] = useState(false);
@@ -58,36 +61,44 @@ export default function AchievementListPage() {
   useEffect(() => {
     if (hash.startsWith("#achievement-")) { setSearch(""); setWithVideo(false); setDifficultyFilter(null); }
   }, [hash]);
-  const visible = useMemo(() => (data?.entries ?? []).map((entry, index) => ({ entry, position: index + 1 })).filter(({ entry }) =>
-    (!withVideo || !!entry.videoUrl) && (difficultyFilter === null || difficultyRating(entry.difficulty)?.minimum === difficultyFilter) && `${entry.name} ${entry.verifier} ${entry.requirements} ${achievementCompletionMode(entry)} ${difficultyRating(entry.difficulty)?.label ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())), [data, search, withVideo, difficultyFilter]);
+  const ranked = useMemo(() => achievementRankings(data?.entries ?? [], includeTheoretical), [data, includeTheoretical]);
+  const verifiedCount = data?.entries.filter(entry => !entry.theoretical).length ?? 0;
+  const visible = useMemo(() => ranked.filter(({ entry }) =>
+    (!withVideo || (!entry.theoretical && !!entry.videoUrl)) && (difficultyFilter === null || difficultyRating(entry.difficulty)?.minimum === difficultyFilter) && `${entry.name} ${entry.theoretical ? "theoretical unverified" : entry.verifier} ${entry.requirements} ${achievementCompletionMode(entry)} ${difficultyRating(entry.difficulty)?.label ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())), [ranked, search, withVideo, difficultyFilter]);
+  useEffect(() => {
+    // Shared card URLs and older change-log links should reveal theoretical entries.
+    if (activeView === "top" && data?.entries.some(entry => entry.theoretical && hash === `#achievement-${entry.id}`)) navigate(`/list?view=theoretical${hash}`, { replace: true });
+  }, [data, hash, activeView, navigate]);
   useEffect(() => {
     if (data && hash.startsWith("#achievement-")) document.getElementById(hash.slice(1))?.scrollIntoView({ block: "center" });
   }, [data, hash, activeView, visible]);
   return <main className="achievement-page">
     <div className="achievement-container">
       <header className="achievement-hero">
-        <div><p className="achievement-kicker">TOWER ECLIPSE // THE TOP 50</p><h2>THE <span>LIST.</span></h2><p>The hardest achievements. The players who proved them possible.</p><p className="achievement-intro">Fifty places at the summit. Ranked by difficulty, with #1 as the ultimate challenge.</p>
+        <div><p className="achievement-kicker">TOWER ECLIPSE // {includeTheoretical ? "THEORETICAL ACHIEVEMENTS" : "THE TOP 50"}</p><h2>THE <span>LIST.</span></h2><p>{includeTheoretical ? "The hardest achievements. The next challenges to verify." : "The hardest achievements. The players who proved them possible."}</p><p className="achievement-intro">{includeTheoretical ? "Verified and theoretical achievements, ranked together by difficulty. Unverified challenges are clearly marked." : "Fifty places at the summit. Ranked by difficulty, with #1 as the ultimate challenge."}</p>
           {auth?.user.role === "dev" && <Link className="list-button" to="/admin/list">MANAGE LIST ↗</Link>}
         </div>
-        <div className="achievement-hero-stat"><span>THE ULTIMATE CHALLENGES</span><strong>TOP <b>50</b></strong><div><i />{data ? `${data.entries.length} ACHIEVEMENTS RANKED` : "ACHIEVEMENT RANKINGS"}</div></div>
+        <div className="achievement-hero-stat"><span>{includeTheoretical ? "VERIFIED + THEORETICAL" : "THE ULTIMATE CHALLENGES"}</span><strong>{includeTheoretical ? <>NEXT <b>UP</b></> : <>TOP <b>50</b></>}</strong><div><i />{data ? `${includeTheoretical ? ranked.length : verifiedCount} ACHIEVEMENTS RANKED` : "ACHIEVEMENT RANKINGS"}</div></div>
       </header>
       <nav className="list-view-tabs" aria-label="List sections">
         <button aria-pressed={activeView === "top"} onClick={() => navigate("/list")}><span aria-hidden="true">≡</span> The Top 50</button>
+        <button aria-pressed={includeTheoretical} onClick={() => { setWithVideo(false); navigate("/list?view=theoretical"); }}><span aria-hidden="true">◇</span> Theoretical</button>
         <button aria-pressed={activeView === "changes"} onClick={() => navigate("/list?view=changes")}><span aria-hidden="true">↕</span> Change Log</button>
         <button aria-pressed={activeView === "leaderboard"} onClick={() => navigate("/list?view=leaderboard")}><span aria-hidden="true">♜</span> Leaderboard</button>
       </nav>
-      {activeView === "changes" ? <AchievementChangeLog activeIds={new Set(data?.entries.map(entry => entry.id) ?? [])} /> : activeView === "leaderboard" ? <section className="list-leaderboard-placeholder achievement-empty" aria-label="Leaderboard"><div className="eclipse-orbit" aria-hidden="true" /><p className="achievement-kicker">THE NEXT CHAPTER</p><h3>Leaderboard</h3><p>A place for the players who conquer the list.</p><span className="list-coming-soon">COMING SOON</span><p>Player completions and rankings are on the way.</p></section> : <>
+      {activeView === "changes" ? <AchievementChangeLog activeIds={new Set(data?.entries.map(entry => entry.id) ?? [])} theoreticalIds={new Set(data?.entries.filter(entry => entry.theoretical).map(entry => entry.id) ?? [])} /> : activeView === "leaderboard" ? <section className="list-leaderboard-placeholder achievement-empty" aria-label="Leaderboard"><div className="eclipse-orbit" aria-hidden="true" /><p className="achievement-kicker">THE NEXT CHAPTER</p><h3>Leaderboard</h3><p>A place for the players who conquer the list.</p><span className="list-coming-soon">COMING SOON</span><p>Player completions and rankings are on the way.</p></section> : <>
+      {includeTheoretical && <p className="achievement-theoretical-note"><strong>THEORETICAL MODE</strong> Includes every verified achievement. Marked challenges are considered possible but have not been verified; their ratings are estimates.</p>}
       <DifficultySpectrum selected={difficultyFilter} onSelect={setDifficultyFilter} />
       <section aria-label="Achievement rankings" className="achievement-directory">
         <div className="achievement-toolbar"><label className="achievement-search"><span>SEARCH THE LIST</span><input type="search" placeholder="Achievement or verifier…" value={search} onChange={event => setSearch(event.target.value)} /></label><label className="achievement-video-filter"><input type="checkbox" checked={withVideo} onChange={event => setWithVideo(event.target.checked)} />With verification video</label></div>
-        <div className="achievement-directory-meta"><span aria-live="polite">{data ? `${visible.length} OF ${data.entries.length} ACHIEVEMENTS` : "OFFICIAL RANKINGS"}</span><span>{data?.updatedAt ? `UPDATED ${new Date(data.updatedAt).toLocaleDateString()}` : "ADMIN-CURATED · EFFORTLESS → ECLIPSE"}</span></div>
+        <div className="achievement-directory-meta"><span aria-live="polite">{data ? `${visible.length} OF ${ranked.length} ACHIEVEMENTS` : "OFFICIAL RANKINGS"}</span><span>{data?.updatedAt ? `UPDATED ${new Date(data.updatedAt).toLocaleDateString()}` : "ADMIN-CURATED · EFFORTLESS → ECLIPSE"}</span></div>
         {error ? <div className="achievement-empty" role="alert"><h3>Could not load the list</h3><p>{error}</p><button className="list-button" onClick={() => setReload(value => value + 1)}>TRY AGAIN</button></div>
           : !data ? <div className="achievement-empty" role="status">Loading the rankings…</div>
-          : !data.entries.length ? <div className="achievement-empty"><span className="achievement-empty-mark">#—</span><h3>The summit is waiting.</h3><p>The first achievements are being curated. Check back for the official rankings.</p>{auth?.user.role === "dev" && <Link className="list-button" to="/admin/list">ADD THE FIRST ACHIEVEMENT</Link>}</div>
+          : !ranked.length ? <div className="achievement-empty"><span className="achievement-empty-mark">#—</span><h3>The summit is waiting.</h3><p>{!includeTheoretical && data.entries.length ? "No verified achievements yet. Explore the theoretical challenges to find the next verification." : "The first achievements are being curated. Check back for the official rankings."}</p>{!includeTheoretical && data.entries.length > 0 && <Link className="list-button secondary" to="/list?view=theoretical">VIEW THEORETICAL ACHIEVEMENTS</Link>}{auth?.user.role === "dev" && <Link className="list-button" to="/admin/list">ADD AN ACHIEVEMENT</Link>}</div>
           : !visible.length ? <div className="achievement-empty"><h3>No matching achievements</h3><p>Try another name or clear your filters.</p><button className="list-button secondary" onClick={() => { setSearch(""); setWithVideo(false); setDifficultyFilter(null); }}>CLEAR FILTERS</button></div>
-          : <ol className="achievement-entries">{visible.map(({ entry, position }) => <li value={position} key={entry.id}><AchievementCard entry={entry} position={position} /></li>)}</ol>}
+          : <ol className="achievement-entries">{visible.map(({ entry, position }) => <li value={position} key={entry.id}><AchievementCard entry={entry} position={position} includeTheoretical={includeTheoretical} /></li>)}</ol>}
       </section>
-      <aside className="achievement-guide"><div><p className="achievement-kicker">HOW THE LIST WORKS</p><h3>Every place is earned.</h3></div><p>Rank is the official order of difficulty. Ratings start at 0.0, from Effortless through Eclipse at 8.0 and above. The decimal sets the tier: 6.0 is Baseline Extreme, while 6.9 is Peak Extreme. Open the requirements for the exact challenge, or watch its verification run.</p></aside>
+      <aside className="achievement-guide"><div><p className="achievement-kicker">HOW THE LIST WORKS</p><h3>{includeTheoretical ? "Find the next challenge." : "Every place is earned."}</h3></div><p>{includeTheoretical ? "This combined order compares verified runs with theoretical challenges. Theoretical ratings are estimates until a player verifies the achievement. " : "Rank is the official order of difficulty. "}Ratings start at 0.0, from Effortless through Eclipse at 8.0 and above. The decimal sets the tier: 6.0 is Baseline Extreme, while 6.9 is Peak Extreme. Open the requirements for the exact challenge{includeTheoretical ? "." : ", or watch its verification run."}</p></aside>
       </>}
     </div>
   </main>;
