@@ -2,6 +2,7 @@ export interface AchievementEntry {
   id: string;
   name: string;
   completionMode?: "solo" | "grouped" | "";
+  theoretical?: boolean;
   difficulty: number;
   verifier: string;
   verifiedOn?: string;
@@ -16,6 +17,8 @@ export interface AchievementList {
   updatedAt: string | null;
 }
 export const LIST_LIMIT: number;
+export const THEORETICAL_LIMIT: number;
+export function achievementRankings(entries: AchievementEntry[], includeTheoretical?: boolean): { entry: AchievementEntry; position: number }[];
 export interface DifficultyDefinition { name: string; minimum: number; color: string; range: string }
 export interface DifficultyRating extends DifficultyDefinition { rating: number; tier: string; label: string; eclipse: boolean }
 export const DIFFICULTIES: DifficultyDefinition[];
@@ -29,10 +32,11 @@ export interface AchievementChange {
   id: string;
   name: string;
   completionMode?: "solo" | "grouped" | "";
+  theoretical?: boolean;
   kind: "added" | "removed" | "updated";
   fromPosition: number | null;
   toPosition: number | null;
-  fields: { field: keyof Omit<AchievementEntry, "id">; before: string | number | null; after: string | number | null }[];
+  fields: { field: keyof Omit<AchievementEntry, "id">; before: string | number | boolean | null; after: string | number | boolean | null }[];
 }
 export interface ListPublication {
   id: string;

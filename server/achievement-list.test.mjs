@@ -2,11 +2,66 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createAchievementListRouter, createAchievementListService } from "./achievement-list.mjs";
-import { achievementChanges, achievementCompletionMode, difficultyRating, DIFFICULTIES, formatVerificationDate, validateListEntries, youtubeVideoId } from "../shared/achievement-list.mjs";
+import { achievementChanges, achievementCompletionMode, achievementRankings, difficultyRating, DIFFICULTIES, formatVerificationDate, validateListEntries, youtubeVideoId } from "../shared/achievement-list.mjs";
 import { createMemoryDb } from "./testing/careers-memory-db.mjs";
 import { config } from "./config.mjs";
 
 const entry = (id = "summit") => ({ id, name: `Achievement ${id}`, difficulty: 9.5, verifier: "Verifier", requirements: "Solo, no consumables", videoUrl: "https://youtu.be/abcdefghijk?si=share" });
+
+test("theoretical challenges allow missing verification while retaining all other validation", () => {
+  const theoretical = { ...entry(), theoretical: true };
+  delete theoretical.verifier; delete theoretical.videoUrl;
+  const [result] = validateListEntries([theoretical]);
+  assert.equal(result.theoretical, true);
+  assert.equal(result.verifier, ""); assert.equal(result.videoUrl, "");
+  for (const value of ["true", "false", null, 1, {}]) assert.throws(() => validateListEntries([{ ...theoretical, theoretical: value }]), { status: 400 });
+  for (const patch of [{ name: "" }, { difficulty: -1 }, { videoUrl: "https://example.com/video" }, { verifier: "x".repeat(81) }]) assert.throws(() => validateListEntries([{ ...theoretical, ...patch }]), { status: 400 });
+  assert.throws(() => validateListEntries([{ ...theoretical, theoretical: false }]), /Verifier/);
+  assert.equal(validateListEntries([entry()])[0].theoretical, false);
+});
+
+test("theoretical allowance preserves all 50 verified places and independently bounds each status", () => {
+  const verified = Array.from({ length: 50 }, (_, index) => entry(`verified-${index}`));
+  const theoretical = Array.from({ length: 50 }, (_, index) => ({ ...entry(`theoretical-${index}`), theoretical: true, verifier: "", videoUrl: "" }));
+  assert.equal(validateListEntries([...theoretical, ...verified]).length, 100);
+  assert.throws(() => validateListEntries([...verified, entry("extra")]), /50 verified/);
+  assert.throws(() => validateListEntries([...theoretical, { ...entry("extra"), theoretical: true }]), /50 theoretical/);
+  assert.throws(() => validateListEntries([...verified, ...theoretical, entry("extra")]), { status: 400 });
+});
+
+test("verified ranks stay contiguous and combined ranks retain every verified challenge in authored order", () => {
+  const entries = [{ ...entry("theory-a"), theoretical: true }, entry("a"), { ...entry("theory-b"), theoretical: true }, { ...entry("b"), theoretical: false }];
+  assert.deepEqual(achievementRankings(entries).map(({ entry, position }) => [entry.id, position]), [["a", 1], ["b", 2]]);
+  assert.deepEqual(achievementRankings(entries, true).map(({ entry, position }) => [entry.id, position]), [["theory-a", 1], ["a", 2], ["theory-b", 3], ["b", 4]]);
+  assert.deepEqual(achievementRankings(entries).filter(({ entry }) => entry.id === "b").map(item => item.position), [2], "Search must not change the rank");
+});
+
+test("theoretical status persists, can become verified, and status-only changes appear in history", async () => {
+  const service = createAchievementListService(createMemoryDb().db);
+  const actor = { id: "admin" };
+  const first = await service.save({ revision: 0, entries: [{ ...entry(), theoretical: true, verifier: "", videoUrl: "" }] }, actor);
+  assert.equal((await service.read()).entries[0].theoretical, true);
+  assert.equal((await service.history()).publications[0].changes[0].theoretical, true);
+  assert.deepEqual((await service.history()).publications[0].changes[0].fields.find(item => item.field === "theoretical"), { field: "theoretical", before: null, after: true });
+  await assert.rejects(service.save({ ...first, entries: [{ ...first.entries[0], theoretical: false }] }, actor), /Verifier/);
+  const second = await service.save({ ...first, entries: [{ ...first.entries[0], theoretical: false, verifier: "First verifier", videoUrl: "https://youtu.be/abcdefghijk" }] }, actor);
+  assert.equal((await service.read()).entries[0].theoretical, false);
+  assert.equal(achievementRankings(second.entries).length, 1);
+  await service.save({ ...second, entries: [{ ...second.entries[0], theoretical: true }] }, actor);
+  assert.deepEqual((await service.history()).publications[0].changes[0].fields, [{ field: "theoretical", before: false, after: true }]);
+});
+
+test("legacy achievements default to verified without causing a publication or synthetic diff", async () => {
+  const memory = createMemoryDb();
+  const [legacy] = validateListEntries([entry()]); delete legacy.theoretical;
+  memory.documents.set("achievementLists/main", { revision: 1, entries: [legacy] });
+  const service = createAchievementListService(memory.db);
+  const current = await service.read();
+  assert.equal(current.entries[0].theoretical, false);
+  await service.save(current, { id: "admin" });
+  assert.equal(memory.writes(), 0);
+  assert.deepEqual(achievementChanges([legacy], current.entries), []);
+});
 
 test("completion mode distinguishes equal names and rejects invalid or duplicate modes", () => {
   const solo = { ...entry("solo"), name: "Hardcore", completionMode: "solo" };
@@ -100,7 +155,7 @@ test("the public diff captures all changed fields, additions, removals, and shif
   const changes = achievementChanges(before, after);
   assert.equal(changes.length, 4);
   const added = changes.find(change => change.id === "new");
-  assert.equal(added.kind, "added"); assert.equal(added.toPosition, 1); assert.equal(added.fields.length, 5);
+  assert.equal(added.kind, "added"); assert.equal(added.toPosition, 1); assert.equal(added.fields.length, 6);
   const updated = changes.find(change => change.id === "a");
   assert.equal(updated.fromPosition, 1); assert.equal(updated.toPosition, 2);
   assert.deepEqual(updated.fields.map(field => field.field), ["name", "difficulty", "verifier", "requirements", "videoUrl"]);
@@ -214,4 +269,8 @@ test("HTTP list is public while edits require an admin session, same origin and 
   assert.equal((await write("dev", trusted)).status, 409);
   assert.equal((await write("dev", trusted, { revision: 1, entries: [{ ...entry(), difficulty: -1 }] })).status, 400);
   const published = await (await fetch(url)).json(); assert.equal(published.entries[0].name, entry().name); assert.equal(published.revision, 1); assert.equal(published.updatedBy, undefined);
+  assert.equal((await write("dev", trusted, { revision: 1, entries: [{ ...entry("theoretical"), theoretical: true, verifier: "", videoUrl: "" }, ...published.entries] })).status, 200);
+  const combined = await (await fetch(url)).json();
+  assert.equal(combined.entries[0].theoretical, true); assert.equal(combined.entries[0].verifier, ""); assert.equal(combined.entries[0].videoUrl, "");
+  assert.deepEqual(achievementRankings(combined.entries).map(item => item.entry.id), ["summit"]);
 });

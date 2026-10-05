@@ -252,11 +252,6 @@ export const CREDIT_GROUPS: CreditGroup[] = [
         contribution: "Joined 07/12/24",
       },
       {
-        name: "drbobrossx",
-        handle: "@CityScar",
-        contribution: "Joined 29/01/25",
-      },
-      {
         name: "ynot2f9",
         handle: "@lukas37F",
         contribution: "Joined 29/01/25",
@@ -296,12 +291,27 @@ export const CREDIT_GROUPS: CreditGroup[] = [
         handle: "@blocbusterx",
         contribution: "Joined 08/01/26",
       },
+      {
+        name: "unknown_person_3",
+        handle: "@mati123roblo",
+        contribution: "Joined 08/03/26",
+      },
+      {
+        name: "an8bitjm",
+        handle: "@An8bitjm",
+        contribution: "Joined 08/03/26",
+      },
+      {
+        name: "albert_t_ttt",
+        handle: "@roblox_user_488819793",
+        contribution: "Joined 18/03/26",
+      },
     ],
   },
   {
     id: "lead-quality",
     title: "QA Lead",
-    subtitle: "Leading the testing team and game quality",
+    subtitle: "Leading the testing team",
     icon: "quality",
     accent: "#ff4c8b",
     members: [
@@ -313,6 +323,11 @@ export const CREDIT_GROUPS: CreditGroup[] = [
       {
         name: "EvanIsSilly",
         handle: "@EvanIsSilly",
+        contribution: "Joined 29/01/25",
+      },
+      {
+        name: "kyzerones",
+        handle: "@BigBacon_BoyW",
         contribution: "Joined 29/01/25",
       },
     ],
