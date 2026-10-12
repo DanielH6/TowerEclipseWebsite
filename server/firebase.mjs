@@ -35,7 +35,7 @@ function base64url(value) {
   return Buffer.from(value).toString("base64url");
 }
 
-async function accessToken() {
+async function accessToken(signal) {
   if (cachedToken && Date.now() < tokenExpiresAt - 5 * 60 * 1000) return cachedToken;
 
   const now = Math.floor(Date.now() / 1000);
@@ -62,6 +62,7 @@ async function accessToken() {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
+    ...(signal ? { signal } : {}),
   });
 
   if (!response.ok) {
@@ -84,8 +85,10 @@ class FirestoreRestError extends Error {
   }
 }
 
-async function apiRequest(url, { method = "GET", body, allowNotFound = false } = {}) {
-  const token = await accessToken();
+async function apiRequest(url, { method = "GET", body, allowNotFound = false, signal } = {}) {
+  signal?.throwIfAborted();
+  const token = await accessToken(signal);
+  signal?.throwIfAborted();
   const response = await fetch(url, {
     method,
     headers: {
@@ -93,6 +96,7 @@ async function apiRequest(url, { method = "GET", body, allowNotFound = false } =
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
 
   if (allowNotFound && response.status === 404) return null;
@@ -249,6 +253,17 @@ function buildWrite(kind, reference, data, options = {}) {
     write.updateMask = { fieldPaths: normalFields };
   }
   if (kind === "update") write.currentDocument = { exists: true };
+  if (options.precondition !== undefined) {
+    const condition = options.precondition;
+    const keys = condition && typeof condition === "object" ? Object.keys(condition) : [];
+    const exists = keys.length === 1 && keys[0] === "exists" && typeof condition.exists === "boolean";
+    const updateTime = keys.length === 1 && keys[0] === "updateTime" && typeof condition.updateTime === "string"
+      && condition.updateTime.length <= 64 && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/.test(condition.updateTime)
+      && Number.isFinite(Date.parse(condition.updateTime))
+      && !/\.\d{6}\d*[1-9]\d*Z$/.test(condition.updateTime);
+    if (!exists && !updateTime) throw new TypeError("Invalid Firestore write precondition.");
+    write.currentDocument = exists ? { exists: condition.exists } : { updateTime: condition.updateTime };
+  }
   if (transforms.length > 0) write.updateTransforms = transforms;
   return write;
 }
@@ -287,13 +302,13 @@ class DocumentReference {
     return new CollectionReference(`${this.path}/${name}`);
   }
 
-  async get() {
-    const document = await apiRequest(documentUrl(this.path), { allowNotFound: true });
+  async get({ signal } = {}) {
+    const document = await apiRequest(documentUrl(this.path), { allowNotFound: true, signal });
     return new DocumentSnapshot(this, document);
   }
 
   async set(data, options = {}) {
-    await commitWrites([buildWrite("set", this, data, options)]);
+    await commitWrites([buildWrite("set", this, data, options)], undefined, options.signal);
   }
 
   async update(data) {
@@ -462,10 +477,11 @@ class WriteBatch {
   }
 }
 
-async function commitWrites(writes, transaction = undefined) {
+async function commitWrites(writes, transaction = undefined, signal) {
   const result = await apiRequest(`https://firestore.googleapis.com/v1/${databaseName}/documents:commit`, {
     method: "POST",
     body: { writes, ...(transaction ? { transaction } : {}) },
+    signal,
   });
   return result?.writeResults ?? [];
 }
