@@ -1,4 +1,15 @@
 .player-content { max-width: 1600px; margin: 0 auto; }
+.player-import-panel { margin-bottom: 20px; font-size: .78rem; line-height: 1.7; }
+.player-import-panel > summary { cursor: pointer; font-weight: 800; letter-spacing: .06em; }
+.player-import-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 18px 0; }
+.player-import-controls .filter-field { min-width: 180px; }
+.player-import-check { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+.player-import-check input { width: 18px; height: 18px; flex-shrink: 0; }
+.player-import-preview { border-top: 1px solid #ffffff20; padding-top: 18px; overflow-wrap: anywhere; }
+.player-import-progress { padding: 0; list-style: none; }
+.player-import-progress li { margin: 12px 0; }
+.player-import-progress span { display: block; color: #9ca3af; }
+.player-table .player-identity-source { font-size: .65rem; }
 .player-introduction { margin-bottom: 20px; }
 .player-introduction p { margin: 0; line-height: 1.7; }
 .player-introduction p + p { margin-top: 10px; }

@@ -1,20 +1,20 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { createSign } from 'node:crypto';
-import { fieldIndexConfig, fieldIndexMatches } from './firestore-index-config.mjs';
+import { fieldIndexConfig, fieldIndexMatches, compositeIndexMatches, scopedIndexDefinitions, parseIndexSetupArguments } from './firestore-index-config.mjs';
 
 // Additive index setup: existing indexes and database records are never deleted.
-const apply = process.argv.includes('--apply');
-const qaCareersOnly = process.argv.includes('--only-qa-careers');
+const { apply, requireReady, scope } = parseIndexSetupArguments(process.argv.slice(2));
+const qaCareersOnly = scope === 'qa-careers';
+const playersOnly = scope === 'players';
 const project = process.env.FIREBASE_PROJECT_ID?.trim();
 const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
 if (!project || !credentialsPath) throw new Error('Configure FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS first.');
 const credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
 const definitions = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8'));
-const indexesToCheck = qaCareersOnly
-  ? definitions.indexes.filter(index => index.collectionGroup === 'careerApplications' && index.fields[0]?.fieldPath === 'category')
-  : definitions.indexes;
-const fieldsToCheck = qaCareersOnly ? [] : definitions.fieldOverrides;
+const selected = scopedIndexDefinitions(definitions, scope);
+const indexesToCheck = selected.indexes;
+const fieldsToCheck = selected.fieldOverrides;
 const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project)}/databases/(default)/collectionGroups`;
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const now = Math.floor(Date.now() / 1000);
@@ -30,7 +30,7 @@ async function request(url, method = 'GET', body) {
   if (!response.ok) throw new Error(`Index setup failed (${response.status}): ${result.error?.message ?? 'Unknown error'}`);
   return result;
 }
-console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${qaCareersOnly ? ' / QA Careers only' : ''}`);
+console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${playersOnly ? ' / Player data only' : qaCareersOnly ? ' / QA Careers only' : ''}`);
 const byCollection = new Map();
 for (const group of new Set(indexesToCheck.map(index => index.collectionGroup))) {
   let pageToken;
@@ -45,8 +45,7 @@ for (const group of new Set(indexesToCheck.map(index => index.collectionGroup)))
 let ready = true;
 for (const definition of indexesToCheck) {
   const { collectionGroup, ...body } = definition;
-  const existing = byCollection.get(collectionGroup).find(index => index.queryScope === body.queryScope
-    && JSON.stringify(index.fields.filter(field => field.fieldPath !== '__name__').map(field => [field.fieldPath, field.order])) === JSON.stringify(body.fields.map(field => [field.fieldPath, field.order])));
+  const existing = byCollection.get(collectionGroup).find(index => compositeIndexMatches(index, body));
   const label = `${collectionGroup} [${body.fields.map(field => `${field.fieldPath} ${field.order}`).join(', ')}]`;
   if (existing) {
     console.log(`${existing.state}: ${label}`);
@@ -79,4 +78,4 @@ for (const definition of fieldsToCheck) {
 }
 console.log(ready ? 'All website query indexes are ready.' : 'Run this script again without --apply to check build progress.');
 
-if (!ready && process.argv.includes("--require-ready")) process.exitCode = 1;
+if (!ready && requireReady) process.exitCode = 1;

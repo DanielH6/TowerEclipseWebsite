@@ -24,7 +24,8 @@ function safeIndexedSummary(value, mode) {
   const bounded = item => typeof item === "string" ? item.slice(0, 64) : null;
   return {
     schemaVersion: 1, mode, userId: value.userId,
-    identity: { username: bounded(value.identity?.username), displayName: bounded(value.identity?.displayName), usernameFolded: bounded(value.identity?.usernameFolded), displayNameFolded: bounded(value.identity?.displayNameFolded), source: "saved_fields" },
+    identity: { username: bounded(value.identity?.username), displayName: bounded(value.identity?.displayName), usernameFolded: bounded(value.identity?.usernameFolded), displayNameFolded: bounded(value.identity?.displayNameFolded),
+      source: value.identity?.source === "roblox_users_api" ? "roblox_users_api" : "saved_fields", checkedAt: bounded(value.importState?.identityCheckedAt) },
     stats: { level: numeric("level"), gamesPlayed: numeric("gamesPlayed"), rankedISR: mode === "main" ? numeric("rankedISR") : null },
     lastJoinedDate: /^\d{4}-\d{2}-\d{2}$/.test(value.lastJoinedDate ?? "") ? value.lastJoinedDate : null,
     source: { updatedAt: bounded(value.source?.updatedAt), checkedAt: bounded(value.source?.checkedAt) },
@@ -41,7 +42,7 @@ export function createFirestoreSummaryIndex(db, diagnostics = {}) {
       if (filters.search) query = query.where(field, ">=", filters.search).where(field, "<", `${filters.search}\uf8ff`);
       if (filters.minLevel !== null) query = query.where("stats.level", ">=", filters.minLevel);
       query = query.orderBy(field, filters.order).orderBy("__name__", filters.order)
-        .select("schemaVersion", "mode", "userId", "identity", "stats.level", "stats.gamesPlayed", "stats.rankedISR", "lastJoinedDate", "source.updatedAt", "source.checkedAt")
+        .select("schemaVersion", "mode", "userId", "identity", "importState.identityCheckedAt", "stats.level", "stats.gamesPlayed", "stats.rankedISR", "lastJoinedDate", "source.updatedAt", "source.checkedAt")
         .limit(filters.limit + 1).atReadTime(page.snapshotAt);
       if (page.after) query = query.startAfter(...page.after.map((value, index) => index === 1 ? `tePlayerSummaries/${value}` : value));
       const result = await query.get();

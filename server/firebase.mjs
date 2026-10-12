@@ -35,7 +35,7 @@ function base64url(value) {
   return Buffer.from(value).toString("base64url");
 }
 
-async function accessToken(signal) {
+async function accessToken(signal, budget) {
   if (cachedToken && Date.now() < tokenExpiresAt - 5 * 60 * 1000) return cachedToken;
 
   const now = Math.floor(Date.now() / 1000);
@@ -58,6 +58,7 @@ async function accessToken(signal) {
     assertion: `${unsigned}.${signature}`,
   });
 
+  budget?.attempt();
   const response = await fetch(tokenUri, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -85,10 +86,11 @@ class FirestoreRestError extends Error {
   }
 }
 
-async function apiRequest(url, { method = "GET", body, allowNotFound = false, signal } = {}) {
+async function apiRequest(url, { method = "GET", body, allowNotFound = false, signal, budget } = {}) {
   signal?.throwIfAborted();
-  const token = await accessToken(signal);
+  const token = await accessToken(signal, budget);
   signal?.throwIfAborted();
+  budget?.attempt();
   const response = await fetch(url, {
     method,
     headers: {
@@ -302,13 +304,16 @@ class DocumentReference {
     return new CollectionReference(`${this.path}/${name}`);
   }
 
-  async get({ signal } = {}) {
-    const document = await apiRequest(documentUrl(this.path), { allowNotFound: true, signal });
+  async get({ signal, budget } = {}) {
+    budget?.read();
+    const document = await apiRequest(documentUrl(this.path), { allowNotFound: true, signal, budget });
     return new DocumentSnapshot(this, document);
   }
 
   async set(data, options = {}) {
-    await commitWrites([buildWrite("set", this, data, options)], undefined, options.signal);
+    const write = buildWrite("set", this, data, options);
+    options.budget?.write();
+    await commitWrites([write], undefined, options.signal, options.budget);
   }
 
   async update(data) {
@@ -359,11 +364,15 @@ class Query {
     return this.execute(true);
   }
 
-  async get() {
-    return this.execute(false);
+  async get(options = {}) {
+    return this.execute(false, options);
   }
 
-  async execute(aggregate) {
+  async execute(aggregate, { signal, budget } = {}) {
+    if (budget) {
+      if (aggregate || !Number.isInteger(this.maximum) || this.maximum < 1 || this.maximum > 5) throw new Error("Budgeted queries require a bounded document limit.");
+      budget.read(this.maximum);
+    }
     const segments = this.path.split("/");
     const collectionId = segments.at(-1);
     const parentPath = segments.slice(0, -1).join("/");
@@ -420,6 +429,7 @@ class Query {
 
     const result = await apiRequest(aggregate ? url.replace(":runQuery", ":runAggregationQuery") : url, {
       method: "POST",
+      signal, budget,
       body: { ...(aggregate ? { structuredAggregationQuery: { structuredQuery: body.structuredQuery, aggregations: [{ alias: "total", count: {} }] } } : body), ...(this.options.readTime ? { readTime: this.options.readTime } : {}) },
     });
     if (aggregate) {
@@ -477,11 +487,11 @@ class WriteBatch {
   }
 }
 
-async function commitWrites(writes, transaction = undefined, signal) {
+async function commitWrites(writes, transaction = undefined, signal, budget) {
   const result = await apiRequest(`https://firestore.googleapis.com/v1/${databaseName}/documents:commit`, {
     method: "POST",
     body: { writes, ...(transaction ? { transaction } : {}) },
-    signal,
+    signal, budget,
   });
   return result?.writeResults ?? [];
 }

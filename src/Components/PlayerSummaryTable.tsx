@@ -24,8 +24,11 @@ export default function PlayerSummaryTable({ mode, players, selected, onSelect }
               className={selected === player.userId ? "is-selected" : undefined}>
               <td>
                 <strong>{player.identity.displayName ?? `UserId ${player.userId}`}</strong>
-                <span>@{player.identity.username ?? "unknown"}</span>
+                <span className="player-username">@{player.identity.username ?? "unknown"}</span>
                 <small>{player.userId}</small>
+                <span className="player-identity-source" title={player.identity.source === "roblox_users_api" ? `Looked up ${savedTime(player.identity.checkedAt)}` : "Names from saved fields have not been checked against Roblox."}>
+                  {player.identity.source === "roblox_users_api" ? "Roblox names" : "Saved names · unverified"}
+                </span>
               </td>
               <td>{playerNumber(player.stats.level)}</td>
               <td>{playerNumber(player.stats.gamesPlayed)}</td>

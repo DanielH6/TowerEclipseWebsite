@@ -3,6 +3,7 @@ import { Link } from "../router";
 import PlayerFiltersForm from "../Components/PlayerFilters";
 import PlayerSummaryTable from "../Components/PlayerSummaryTable";
 import SavedPlayerProfile from "../Components/SavedPlayerProfile";
+import PlayerImportPanel from "../Components/PlayerImportPanel";
 import { loadPlayers, savedTime } from "../player-data";
 import type { PlayerFilters, PlayerList } from "../player-data";
 import "./Bugs.css";
@@ -60,6 +61,7 @@ export default function AdminPlayersPage() {
       <div className="player-content">
         <div className="panel-card player-introduction"><p>Saved snapshots can trail active gameplay. Name searches use indexed prefixes; exact UserId lookup also works when a player is absent from the index.</p>
           <p className="player-muted">Private admin access · No edits or game-session locks · Unknown values remain unknown</p></div>
+        <PlayerImportPanel onApplied={() => { setPages([""]); setRevision(value => value + 1); }} />
         <form className="panel-card player-lookup" onSubmit={findPlayer}><label className="filter-field"><span>EXACT ROBLOX USERID</span>
           <input inputMode="numeric" value={lookup} maxLength={16} onChange={event => setLookup(event.target.value)} placeholder="Enter UserId" aria-describedby={lookupError ? "player-lookup-error" : undefined} /></label>
           <button className="primary-action" type="submit">VIEW PROFILE</button>

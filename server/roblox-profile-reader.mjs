@@ -56,7 +56,7 @@ function decodeResponse(body, universeId, store, userId) {
 export function createRobloxProfileReader(options = {}) {
   const { config } = options;
   if (!["main", "battlefront"].every(mode => segment(config?.stores?.[mode]?.dataStoreId) && segment(config?.stores?.[mode]?.scopeId))) throw fail("READER_NOT_CONFIGURED");
-  const http = createRobloxReadHttp(options);
+  const http = options.http ?? createRobloxReadHttp(options);
   const universeId = config.universeId;
   const stores = Object.fromEntries(["main", "battlefront"].map(mode => [mode, { ...config.stores[mode] }]));
   async function read(mode, userId, options = {}) {

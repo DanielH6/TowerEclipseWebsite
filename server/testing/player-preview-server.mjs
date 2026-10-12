@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { createGameDataService } from "../game-data-service.mjs";
 import { createGameDataRouter } from "../game-data-routes.mjs";
 import { createGameDataFixtures, FIXTURE_PLAYER_ID } from "./game-data-fixtures.mjs";
+import { createPlayerImportRouter } from "../player-import-routes.mjs";
+import { createPlayerImportFixtures } from "./player-import-fixtures.mjs";
 
 // This standalone loopback preview is never imported by the production bootstrap.
 // It does not import config, dotenv, Firebase, session storage or Roblox transports.
@@ -17,6 +19,7 @@ export async function createPlayerPreviewApp() {
   await service.profile(staleId);
   fixtures.fail("main", staleId); clockOffset = 0;
   app.disable("x-powered-by");
+  app.use(express.json({ limit: "96kb" }));
   app.use((_request, response, next) => { response.set("Cache-Control", "no-store"); next(); });
   app.use((request, _response, next) => {
     const role = request.headers.cookie?.match(/(?:^|;\s*)player_preview_role=(dev|qa|leadqa|member|guest)(?:;|$)/)?.[1] ?? "dev";
@@ -32,6 +35,12 @@ export async function createPlayerPreviewApp() {
   app.get("/api/account", (request, response) => response.json({ robloxLinkingEnabled: false, profile: { discordId: "synthetic-preview", username: "preview_member", displayName: "Synthetic preview", avatarUrl: null, firstLoginAt: "2026-10-01T12:00:00Z", activitySeenAt: null, roblox: null, role: request.authUser?.role } }));
   const requireFixtureAuth = (request, response, next) => request.authSession ? next() : response.status(401).json({ error: "Authentication required." });
   const requireFixtureAdmin = (request, response, next) => request.authSession?.role === "dev" ? next() : response.status(403).json({ error: "Developer access required." });
+  const requireFixtureCsrf = (request, response, next) => request.get("X-CSRF-Token") === "synthetic-preview-only" ? next() : response.status(403).json({ error: "Invalid CSRF token." });
+  // The test origin is derived from this loopback-only preview request's host.
+  const importer = createPlayerImportFixtures();
+  app.locals.playerImportFixture = importer; // Node-only test handle; no HTTP mutation endpoint.
+  app.use("/api/admin/game-data/imports", createPlayerImportRouter({ service: importer.service, requireAuth: requireFixtureAuth,
+    requireAdmin: requireFixtureAdmin, requireCsrf: requireFixtureCsrf, appOrigin: request => `${request.protocol}://${request.get("host")}` }));
   app.use("/api/admin/game-data", createGameDataRouter({ service, requireAuth: requireFixtureAuth, requireAdmin: requireFixtureAdmin }));
   app.use("/api", (_request, response) => response.status(404).json({ error: "This API is outside the synthetic player preview." }));
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");

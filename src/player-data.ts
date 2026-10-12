@@ -5,7 +5,7 @@ export type PlayerSort = "level" | "gamesPlayed" | "rankedISR" | "lastJoinedDate
 export interface PlayerSummary {
   mode: PlayerMode;
   userId: string;
-  identity: { username: string | null; displayName: string | null; source: string };
+  identity: { username: string | null; displayName: string | null; source: string; checkedAt?: string | null };
   stats: Record<string, number | null>;
   lastJoinedDate: string | null;
   source: { updatedAt: string | null; checkedAt: string | null };
