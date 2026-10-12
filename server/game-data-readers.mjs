@@ -1,5 +1,6 @@
 import { GAME_DATA_SORTS } from "./game-data-config.mjs";
 import { gameDataError, validatePlayerId } from "./game-data-domain.mjs";
+import { createPlayerIndexReporter } from "./game-data-index-diagnostics.mjs";
 
 export function createUnavailableProfileReader() {
   return { read: async () => { throw gameDataError(503, "READER_NOT_CONNECTED", "The read-only profile connection has not been verified."); } };
@@ -30,8 +31,10 @@ function safeIndexedSummary(value, mode) {
   };
 }
 
-export function createFirestoreSummaryIndex(db) {
+export function createFirestoreSummaryIndex(db, diagnostics = {}) {
+  const reportFailure = createPlayerIndexReporter(diagnostics);
   return { async list(filters, page) {
+    let phase = "query";
     try {
       const field = GAME_DATA_SORTS[filters.sort];
       let query = db.collection("tePlayerSummaries").where("mode", "==", filters.mode);
@@ -42,8 +45,10 @@ export function createFirestoreSummaryIndex(db) {
         .limit(filters.limit + 1).atReadTime(page.snapshotAt);
       if (page.after) query = query.startAfter(...page.after.map((value, index) => index === 1 ? `tePlayerSummaries/${value}` : value));
       const result = await query.get();
+      phase = "records";
       return { items: result.docs.map(document => safeIndexedSummary(document.data(), filters.mode)), coverage: { status: "unknown", indexedRecords: null, description: "Index completeness has not been verified. Exact UserId lookup reads the saved record separately." } };
-    } catch {
+    } catch (failure) {
+      reportFailure(failure, phase, filters, page);
       throw gameDataError(503, "INDEX_UNAVAILABLE", "The player index is unavailable. You can still try an exact UserId lookup.");
     }
   } };
