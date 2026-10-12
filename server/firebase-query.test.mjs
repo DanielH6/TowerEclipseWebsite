@@ -40,12 +40,16 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
     const { db, Timestamp, firestoreMaintenance } = await import(`./firebase.mjs?fixture=${Date.now()}`);
     const importerSignal = new AbortController().signal;
     const ownerRef = db.doc("tePlayerSummaries/main:404731089");
-    const ownerSnapshot = await ownerRef.get({ signal: importerSignal });
+    const usage = { reads: 0, writes: 0, attempts: 0 };
+    const budget = { read: (count = 1) => { usage.reads += count; }, write: () => { usage.writes++; }, attempt: () => { usage.attempts++; } };
+    const ownerSnapshot = await ownerRef.get({ signal: importerSignal, budget });
+    assert.deepEqual(usage, { reads: 1, writes: 0, attempts: 2 }, "OAuth and document HTTP attempts are both counted");
     assert.equal(ownerSnapshot.updateTime.toISOString(), "2026-10-12T03:00:00.123456Z");
     assert.deepEqual(ownerSnapshot.data(), { level: 0 });
     assert.equal(calls.at(-1).method, "GET"); assert.equal(calls.at(-1).signal, importerSignal); assert.equal(tokenSignals[0], importerSignal);
     const summary = { schemaVersion: 1, mode: "main", userId: "404731089", identity: { username: null, usernameFolded: "" }, stats: { level: 0, experience: null } };
-    await ownerRef.set(summary, { merge: true, precondition: { exists: false }, signal: importerSignal });
+    await ownerRef.set(summary, { merge: true, precondition: { exists: false }, signal: importerSignal, budget });
+    assert.deepEqual(usage, { reads: 1, writes: 1, attempts: 3 });
     const create = calls.at(-1);
     assert.equal(create.method, "POST"); assert.equal(create.signal, importerSignal);
     assert.deepEqual(create.body.writes[0].currentDocument, { exists: false });
@@ -63,6 +67,18 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
     await assert.rejects(ownerRef.get({ signal: cancelled.signal }), { name: "AbortError" });
     await assert.rejects(ownerRef.set(summary, { precondition: { exists: false }, signal: cancelled.signal }), { name: "AbortError" });
     assert.equal(calls.length, beforeInvalid, "bad conditions and cancellation cannot issue a commit");
+    await db.collection("tePlayerImportFailures").where("nextAttemptAt", ">=", "1970-01-01T00:00:00.000Z")
+      .orderBy("nextAttemptAt", "asc").orderBy("__name__", "asc").limit(5).get({ signal: importerSignal, budget });
+    assert.deepEqual(usage, { reads: 6, writes: 1, attempts: 4 }, "retry query reserves its bounded maximum reads");
+    assert.equal(calls.at(-1).signal, importerSignal);
+    const beforeBounded = calls.length;
+    await assert.rejects(db.collection("tePlayerImportFailures").get({ budget }));
+    await assert.rejects(db.collection("tePlayerImportFailures").limit(6).get({ budget }));
+    await assert.rejects(db.collection("tePlayerImportFailures").limit(5).get({ signal: cancelled.signal, budget }), { name: "AbortError" });
+    const denied = { ...budget, attempt: () => { throw new Error("attempt_cap"); } };
+    await assert.rejects(ownerRef.get({ budget: denied }), /attempt_cap/);
+    await assert.rejects(ownerRef.set(summary, { budget: { ...budget, write: () => { throw new Error("write_cap"); } } }), /write_cap/);
+    assert.equal(calls.length, beforeBounded, "caps, cancellation and unbounded queries cannot issue HTTP");
     const since = new Date("2026-09-13T12:00:00Z");
     const base = db.collection("bugReports").where("reporter.discordId", "==", "alice").where("createdAt", ">=", since).orderBy("createdAt", "desc");
     assert.equal(await base.count(), 1234);

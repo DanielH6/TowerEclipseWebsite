@@ -1,4 +1,6 @@
-import { requireAuth, requireRole } from "./auth-context.mjs";
+import { requireAuth, requireRole, requireCsrf } from "./auth-context.mjs";
+import { createConfiguredPlayerImport } from "./player-import-runtime.mjs";
+import { createPlayerImportRouter } from "./player-import-routes.mjs";
 import { readGameDataConfiguration } from "./game-data-config.mjs";
 import { createConfiguredProfileReader } from "./game-data-runtime.mjs";
 import { createGameDataService } from "./game-data-service.mjs";
@@ -422,6 +424,8 @@ app.post(
 
 
 const playerDataConfiguration = readGameDataConfiguration();
+const playerImporter = createConfiguredPlayerImport({ configuration: playerDataConfiguration, db, secret: config.cookieSecret, projectId: process.env.FIREBASE_PROJECT_ID });
+app.use("/api/admin/game-data/imports", createPlayerImportRouter({ service: playerImporter, requireAuth, requireAdmin: requireRole("dev"), requireCsrf, appOrigin: config.appOrigin }));
 const playerData = createGameDataService({
   reader: createConfiguredProfileReader(playerDataConfiguration),
   summaryIndex: createFirestoreSummaryIndex(db),

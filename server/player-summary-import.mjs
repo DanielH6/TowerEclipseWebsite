@@ -29,21 +29,27 @@ function stableJson(value) {
   return JSON.stringify(value);
 }
 
-function summaryDigest(summary, revisionHash) {
+function summaryDigest(summary, revisionHash, { ignoreIdentity = false } = {}) {
   const stable = { ...summary, source: { ...summary.source } };
   delete stable.source.checkedAt;
+  if (ignoreIdentity) delete stable.identity;
   return digest(stableJson({ summary: stable, revisionHash }));
 }
 
-function candidateFromEntry(mode, userId, entry, now) {
+export function createSummaryImportCandidate(mode, userId, entry, now, resolvedIdentity = null) {
+  validatePlayerId(userId);
+  if (!SUMMARY_IMPORT_MODES.includes(mode)) throw failure("INVALID_IMPORT_MODE");
   if (entry.revision !== undefined && entry.revision !== null
     && (typeof entry.revision !== "string" || !entry.revision.length || entry.revision.length > 256 || /[\u0000-\u001f\u007f]/.test(entry.revision))) throw failure("INVALID_SOURCE_METADATA");
   if (entry.updatedAt !== undefined && entry.updatedAt !== null && !timestamp(entry.updatedAt)) throw failure("INVALID_SOURCE_METADATA");
   const { summary } = decodeSavedProfile(mode, userId, { ...entry, checkedAt: new Date(now()).toISOString() });
   if (Object.values(summary.stats).every(value => value === null)) return null;
+  if (resolvedIdentity) summary.identity = { username: resolvedIdentity.username, displayName: resolvedIdentity.displayName,
+    usernameFolded: foldIdentity(resolvedIdentity.username), displayNameFolded: foldIdentity(resolvedIdentity.displayName), source: "roblox_users_api" };
   const revisionHash = typeof entry.revision === "string" ? digest(entry.revision) : null;
   const payload = { ...summary, indexedAt: new Date(now()).toISOString(),
-    importState: { schemaVersion: 1, revisionHash, projectionHash: summaryDigest(summary, revisionHash) } };
+    importState: { schemaVersion: 1, revisionHash, projectionHash: summaryDigest(summary, revisionHash),
+      ...(resolvedIdentity ? { identityCheckedAt: resolvedIdentity.checkedAt } : {}) } };
   if (Buffer.byteLength(JSON.stringify(payload)) > 32768) throw failure("SUMMARY_TOO_LARGE");
   return payload;
 }
@@ -55,15 +61,16 @@ function exactKeys(value, template) {
 
 // A second allowlist at the write boundary prevents callers from passing an
 // envelope or arbitrary fields even if they bypass the import orchestrator.
-export function validateSummaryImportCandidate(mode, userId, value) {
-  summaryImportPath(mode, userId);
+export function validateSummaryImportCandidate(mode, userId, value, { allowOtherUsers = false, allowResolvedIdentity = false } = {}) {
+  if (allowOtherUsers) { validatePlayerId(userId); if (!SUMMARY_IMPORT_MODES.includes(mode)) throw failure("INVALID_IMPORT_MODE"); }
+  else summaryImportPath(mode, userId);
   const template = projectPlayerSummary(mode, userId, {});
   const boundedText = item => item === null || (typeof item === "string" && item.length <= 64 && !/[\u0000-\u001f\u007f]/.test(item));
   const date = item => item === null || (typeof item === "string" && /^\d{4}-\d\d-\d\d$/.test(item)
     && Number.isFinite(Date.parse(item)) && new Date(item).toISOString().slice(0, 10) === item);
   const iso = item => timestamp(item) && new Date(item).toISOString() === item;
   if (!exactKeys(value, { ...template, indexedAt: null, importState: null }) || value.schemaVersion !== 1 || value.mode !== mode || value.userId !== userId
-    || !exactKeys(value.identity, template.identity) || value.identity.source !== "saved_fields"
+    || !exactKeys(value.identity, template.identity) || !["saved_fields", ...(allowResolvedIdentity ? ["roblox_users_api"] : [])].includes(value.identity.source)
     || !boundedText(value.identity.username) || !boundedText(value.identity.displayName)
     || value.identity.usernameFolded !== foldIdentity(value.identity.username) || value.identity.displayNameFolded !== foldIdentity(value.identity.displayName)
     || !exactKeys(value.stats, template.stats) || !Object.values(value.stats).every(item => item === null || (typeof item === "number" && Number.isFinite(item) && item >= 0 && item <= Number.MAX_SAFE_INTEGER))
@@ -72,7 +79,9 @@ export function validateSummaryImportCandidate(mode, userId, value) {
     || !exactKeys(value.source, template.source) || value.source.storeName !== GAME_DATA_STORES[mode].name || value.source.scope !== "global" || value.source.key !== userId
     || !boundedText(value.source.revision) || (value.source.updatedAt !== null && !iso(value.source.updatedAt)) || !iso(value.source.checkedAt) || !iso(value.indexedAt)
     || !Array.isArray(value.missingFields) || stableJson(value.missingFields) !== stableJson(Object.keys(value.stats).filter(key => value.stats[key] === null))
-    || !exactKeys(value.importState, { schemaVersion: null, revisionHash: null, projectionHash: null }) || value.importState.schemaVersion !== 1
+    || !exactKeys(value.importState, { schemaVersion: null, revisionHash: null, projectionHash: null,
+      ...(value.identity.source === "roblox_users_api" ? { identityCheckedAt: null } : {}) }) || value.importState.schemaVersion !== 1
+    || (value.identity.source === "roblox_users_api" && !iso(value.importState.identityCheckedAt))
     || (value.importState.revisionHash !== null && (typeof value.importState.revisionHash !== "string" || !hashPattern.test(value.importState.revisionHash)))
     || typeof value.importState.projectionHash !== "string" || !hashPattern.test(value.importState.projectionHash)
     || Buffer.byteLength(JSON.stringify(value)) > 32768) throw failure("INVALID_IMPORT_SUMMARY");
@@ -80,12 +89,12 @@ export function validateSummaryImportCandidate(mode, userId, value) {
   if (summaryDigest(summary, value.importState.revisionHash) !== value.importState.projectionHash) throw failure("INVALID_IMPORT_SUMMARY");
 }
 
-function compareExisting(candidate, existing) {
+export function compareSummaryImportSnapshot(candidate, existing, { allowResolvedIdentity = false } = {}) {
   if (!object(existing) || typeof existing.exists !== "boolean") return { reason: "invalid_index_response" };
   if (!existing.exists) return { action: "create" };
   const value = existing.value;
   if (!object(value) || value.schemaVersion !== 1 || value.mode !== candidate.mode || value.userId !== candidate.userId) return { reason: "invalid_existing_summary" };
-  if (value.identity?.verified === true || value.identity?.source !== "saved_fields") return { reason: "protected_identity_source" };
+  if (value.identity?.verified === true || !["saved_fields", ...(allowResolvedIdentity ? ["roblox_users_api"] : [])].includes(value.identity?.source)) return { reason: "protected_identity_source" };
   if (value.importState?.schemaVersion !== 1 || !hashPattern.test(value.importState.projectionHash ?? "")
     || (value.importState.revisionHash !== null && !hashPattern.test(value.importState.revisionHash ?? ""))) return { reason: "unmanaged_existing_summary" };
   const template = projectPlayerSummary(candidate.mode, candidate.userId, {});
@@ -96,6 +105,14 @@ function compareExisting(candidate, existing) {
   const current = Object.fromEntries(summaryFields.map(field => [field, value[field]]));
   if (summaryDigest(current, value.importState.revisionHash) !== value.importState.projectionHash) return { reason: "conflicting_index_edits" };
   if (candidate.importState.projectionHash === value.importState.projectionHash) return { action: "unchanged" };
+  const nextSummary = Object.fromEntries(summaryFields.map(field => [field, candidate[field]]));
+  const sameProfile = summaryDigest(current, value.importState.revisionHash, { ignoreIdentity: true })
+    === summaryDigest(nextSummary, candidate.importState.revisionHash, { ignoreIdentity: true });
+  if (sameProfile && allowResolvedIdentity && candidate.identity.source === "roblox_users_api"
+    && (value.identity.source === "saved_fields" || (timestamp(value.importState.identityCheckedAt)
+      && Date.parse(candidate.importState.identityCheckedAt) > Date.parse(value.importState.identityCheckedAt)))) {
+    return timestamp(existing.updateTime) ? { action: "update" } : { reason: "missing_write_precondition" };
+  }
   const previousTime = value.source.updatedAt, nextTime = candidate.source.updatedAt;
   const previousRevision = value.importState.revisionHash, nextRevision = candidate.importState.revisionHash;
   if (previousRevision !== null && previousRevision === nextRevision) return { reason: "conflicting_snapshot" };
@@ -106,7 +123,7 @@ function compareExisting(candidate, existing) {
   return { action: "update" };
 }
 
-async function boundedOperation(operation, timeoutMs, parentSignal) {
+export async function boundedOperation(operation, timeoutMs, parentSignal) {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   parentSignal?.addEventListener("abort", cancel, { once: true });
@@ -138,11 +155,11 @@ export async function importOwnerSummaries({ userId, reader, store, apply = fals
     try {
       const entry = await boundedOperation(requestSignal => reader.read(mode, userId, { signal: requestSignal }), timeoutMs, signal);
       if (entry === null) { results.push({ mode, status: "skipped", reason: "missing_profile" }); continue; }
-      const candidate = candidateFromEntry(mode, userId, entry, now);
+      const candidate = createSummaryImportCandidate(mode, userId, entry, now);
       if (!candidate) { results.push({ mode, status: "skipped", reason: "empty_profile" }); continue; }
       phase = "index";
       const existing = await boundedOperation(requestSignal => store.read(mode, userId, { signal: requestSignal }), timeoutMs, signal);
-      const decision = compareExisting(candidate, existing);
+      const decision = compareSummaryImportSnapshot(candidate, existing);
       if (decision.reason) { results.push({ mode, status: "skipped", reason: decision.reason }); continue; }
       if (decision.action === "unchanged") { results.push({ mode, status: "unchanged" }); continue; }
       if (!apply) { results.push({ mode, status: `would_${decision.action}`, usernamePresent: candidate.identity.username !== null,

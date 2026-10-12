@@ -3,6 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "@playwright/test";
 import { createPlayerPreviewApp } from "../../server/testing/player-preview-server.mjs";
+import { createImportRunBudget, PROPOSED_IMPORT_BUDGET } from "../../server/player-import-budget.mjs";
+import { createPlayerImportStore } from "../../server/player-import-store.mjs";
+import { runPlayerImportSweep } from "../../server/player-import-runner.mjs";
 import { FIXTURE_PLAYER_ID } from "../../server/testing/game-data-fixtures.mjs";
 
 const output = path.resolve(process.env.PLAYER_QA_OUTPUT_DIR ?? ".runtime/player-viewer-qa");
@@ -89,7 +92,7 @@ try {
   await page.getByRole("button", { name: "APPLY FILTERS", exact: true }).click();
   await page.locator(".player-table tbody tr").filter({ hasText: "Preview Commander 0010" }).waitFor();
   await page.waitForTimeout(300);
-  const searchNames = await page.locator(".player-table tbody td:first-child span").allTextContents();
+  const searchNames = await page.locator(".player-table tbody .player-username").allTextContents();
   assert.ok(searchNames.length && searchNames.every(name => name.startsWith("@Preview_001")));
   await page.unroute("**/api/admin/game-data/players?**");
   checks.push("late search response cannot replace newer results");
@@ -174,6 +177,59 @@ try {
   await page.getByText("SYNTHETIC PREVIEW — fictional players", { exact: false }).waitFor();
   checks.push("repeated navigation and matching existing admin typography/button styles");
 
+  await page.getByText("IMPORT PLAYER SUMMARIES", { exact: true }).click();
+  const importer = page.locator(".player-import-panel");
+  await importer.getByText("Main: Ready to continue", { exact: true }).waitFor();
+  const requestBodies = [], importWrites = [];
+  page.on("request", request => {
+    if (request.url().includes("/api/admin/game-data/imports/") && request.method() === "POST") {
+      requestBodies.push(request.postData()); if (request.url().endsWith("/apply")) importWrites.push(request.postData());
+    }
+  });
+  await importer.getByRole("button", { name: "PREVIEW NEXT BATCH", exact: true }).click();
+  const reviewed = importer.getByRole("region", { name: "Reviewed import batch" });
+  await reviewed.getByRole("heading", { name: "REVIEW MAIN BATCH", exact: true }).waitFor();
+  assert.equal(await reviewed.locator("li").count(), 5); assert.equal(importWrites.length, 0);
+  assert.equal(await importer.getByRole("button", { name: "APPLY REVIEWED BATCH", exact: true }).isDisabled(), true);
+  await reviewed.getByLabel("I confirm this batch and its displayed destination and write budget.", { exact: true }).check();
+  await importer.getByRole("button", { name: "APPLY REVIEWED BATCH", exact: true }).click();
+  await importer.getByText("Batch finished. Preview the next batch when ready.", { exact: true }).waitFor();
+  await importer.getByText(/1 pages · 5 observed keys · 5 created/).waitFor();
+  assert.equal(importWrites.length, 1); assert.ok(!requestBodies.join("").includes("synthetic-private"));
+  await page.reload();
+  await page.getByText("IMPORT PLAYER SUMMARIES", { exact: true }).click();
+  await importer.getByText(/1 pages · 5 observed keys · 5 created/).waitFor();
+  await importer.getByRole("button", { name: "PREVIEW NEXT BATCH", exact: true }).click();
+  await reviewed.getByRole("heading", { name: "REVIEW MAIN BATCH", exact: true }).waitFor();
+  assert.ok(!(await reviewed.textContent()).includes("UserId 910000001"));
+  checks.push("dev import UI: zero-write preview, confirmation, bounded apply and durable next-batch resume after reload");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await importer.screenshot({ path: path.join(output, "import-review-mobile.png") });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await importer.screenshot({ path: path.join(output, "import-review-desktop.png") });
+  // Run the actual private engine against the same in-memory fixtures after
+  // manual-batch checks. No production transport or browser mutation route.
+  const fixture = app.locals.playerImportFixture;
+  const budget = createImportRunBudget(PROPOSED_IMPORT_BUDGET);
+  try {
+    const completed = await runPlayerImportSweep({ ...fixture.dependencies, store: createPlayerImportStore(fixture.db, { budget }), budget, apply: true });
+    assert.equal(completed.status, "scan_complete");
+  } finally { budget.dispose(); }
+  const writesBeforeStatus = fixture.writes.length;
+  await importer.getByRole("button", { name: "REFRESH IMPORT STATUS", exact: true }).click();
+  const runStatus = importer.getByRole("region", { name: "Unattended import status" });
+  await runStatus.getByText(/scan complete · Sweep day/).waitFor();
+  assert.ok((await runStatus.textContent()).includes("1000 profiles"));
+  assert.ok((await runStatus.textContent()).includes("19 created"));
+  assert.equal(fixture.writes.length, writesBeforeStatus, "reading run status cannot write");
+  await runStatus.screenshot({ path: path.join(output, "unattended-run-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await runStatus.screenshot({ path: path.join(output, "unattended-run-mobile.png") });
+  checks.push("private runner resumes manual progress; persisted limits/results display without status-read writes on desktop and mobile");
+  await page.getByText("IMPORT PLAYER SUMMARIES", { exact: true }).click();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("EXACT ROBLOX USERID", { exact: true }).fill(FIXTURE_PLAYER_ID);
   await page.getByRole("button", { name: "VIEW PROFILE", exact: true }).click();
@@ -212,9 +268,11 @@ try {
   for (const role of ["member", "qa", "leadqa"]) {
     await context.addCookies([{ name: "player_preview_role", value: role, url: base }]);
     assert.equal((await context.request.get(`${base}/api/admin/game-data/players`)).status(), 403);
+    assert.equal((await context.request.get(`${base}/api/admin/game-data/imports/status`)).status(), 403);
   }
   await context.addCookies([{ name: "player_preview_role", value: "guest", url: base }]);
   assert.equal((await context.request.get(`${base}/api/admin/game-data/players`)).status(), 401);
+  assert.equal((await context.request.get(`${base}/api/admin/game-data/imports/status`)).status(), 401);
   await page.goto(`${base}/admin/players`); await page.waitForURL(`${base}/login`);
   checks.push("guest UI redirect/401 and member/QA/leadQA server denial/403");
   assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);

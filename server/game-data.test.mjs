@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import express from "express";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
-import { requireAuth, requireRole } from "./auth-context.mjs";
+import { requireAuth, requireRole, requireCsrf } from "./auth-context.mjs";
+import { createConfiguredPlayerImport } from "./player-import-runtime.mjs";
+import { createPlayerImportRouter } from "./player-import-routes.mjs";
 import { GAME_DATA_LIMITS, gameDataEnabled, readGameDataConfiguration } from "./game-data-config.mjs";
 import { decodeSavedProfile, projectPlayerSummary, redactGameData, validatePlayerId } from "./game-data-domain.mjs";
 import { createConfiguredProfileReader } from "./game-data-runtime.mjs";
@@ -191,7 +193,9 @@ test("disabled production mount starts without new reads or credentials, both ro
   assert.equal(gameDataEnabled({ TE_DATA_VIEWER_ENABLED: "true" }), true);
   // Execute only the actual feature mount, not the production bootstrap whose
   // pre-existing Firebase/auth startup requires real credential configuration.
-  vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey }, createGameDataService, createUnavailableProfileReader, createFirestoreSummaryIndex, createGameDataRouter, createConfiguredProfileReader, readGameDataConfiguration: () => readGameDataConfiguration({}), requireAuth: auth, requireRole });
+  vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey, appOrigin: "http://127.0.0.1:4317" }, process: { env: {} },
+    createConfiguredPlayerImport, createPlayerImportRouter, requireCsrf, createGameDataService, createUnavailableProfileReader, createFirestoreSummaryIndex, createGameDataRouter, createConfiguredProfileReader,
+    readGameDataConfiguration: () => readGameDataConfiguration({}), requireAuth: auth, requireRole });
   assert.equal(databaseCalls, 0);
   const server = await new Promise(resolve => { const value = app.listen(0, "127.0.0.1", () => resolve(value)); });
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -224,7 +228,8 @@ test("enabled production mount keeps dev guards and exact reads independent of i
       return new Response(JSON.stringify({ path: new URL(url).pathname.slice("/cloud/v2/".length), value: { Data: { Level: 8, Unexpected: { Label: "synthetic-private-value" } } } }), { headers: { "content-type": "application/json" } });
     },
   });
-  vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey }, createGameDataService, createConfiguredProfileReader: configuredReader,
+  vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey, appOrigin: "http://127.0.0.1:4317" }, process: { env: {} },
+    createConfiguredPlayerImport, createPlayerImportRouter, requireCsrf, createGameDataService, createConfiguredProfileReader: configuredReader,
     createFirestoreSummaryIndex, createGameDataRouter, readGameDataConfiguration: () => readGameDataConfiguration(environment), requireAuth: auth, requireRole });
   assert.equal(profileCalls, 0); assert.equal(indexCalls, 0, "startup performs no reads even when fully configured");
   const server = await new Promise(resolve => { const value = app.listen(0, "127.0.0.1", () => resolve(value)); });
