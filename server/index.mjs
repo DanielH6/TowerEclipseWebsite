@@ -1,3 +1,9 @@
+import { requireAuth, requireRole } from "./auth-context.mjs";
+import { readGameDataConfiguration } from "./game-data-config.mjs";
+import { createConfiguredProfileReader } from "./game-data-runtime.mjs";
+import { createGameDataService } from "./game-data-service.mjs";
+import { createFirestoreSummaryIndex } from "./game-data-readers.mjs";
+import { createGameDataRouter } from "./game-data-routes.mjs";
 import { createAdminWorkspaceService, createAdminWorkspaceRouter } from "./admin-workspace.mjs";
 import { bugQueries } from "./bug-routes.mjs";
 import crypto from "node:crypto";
@@ -414,6 +420,19 @@ app.post(
   },
 );
 
+
+const playerDataConfiguration = readGameDataConfiguration();
+const playerData = createGameDataService({
+  reader: createConfiguredProfileReader(playerDataConfiguration),
+  summaryIndex: createFirestoreSummaryIndex(db),
+  cursorSecret: config.cookieSecret,
+  enabled: playerDataConfiguration.enabled,
+});
+app.use("/api/admin/game-data", createGameDataRouter({
+  service: playerData,
+  requireAuth,
+  requireAdmin: requireRole("dev"),
+}));
 
 app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());

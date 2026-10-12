@@ -29,6 +29,7 @@ const AdminCareersPage = lazy(() => import("./Pages/AdminCareers"));
 const ApplicationsPage = lazy(() => import("./Pages/Applications"));
 const AchievementListPage = lazy(() => import("./Pages/AchievementList"));
 const AdminListPage = lazy(() => import("./Pages/AdminList"));
+const AdminPlayersPage = lazy(() => import("./Pages/AdminPlayers"));
 
 function Navigation() {
   const { auth } = useAuth();
@@ -273,6 +274,7 @@ function AppRoutes() {
   else if (pathname === "/bugs/new") {
     element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;
   }
+  else if (pathname === "/admin/players") element = <ProtectedRoute role="dev"><AdminPlayersPage /></ProtectedRoute>;
   else if (pathname === "/admin/testers") element = <ProtectedRoute role="dev"><AdminTestersPage /></ProtectedRoute>;
   else if (pathname === "/admin") element = <ProtectedRoute role="dev"><AdminOverviewPage /></ProtectedRoute>;
   else if (pathname === "/admin/dictionaries") element = <ProtectedRoute role="dev"><AdminPage /></ProtectedRoute>;

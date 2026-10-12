@@ -26,7 +26,9 @@
     "backup:create": "node scripts/backup-workspace.mjs create",
     "backup:verify": "node scripts/backup-workspace.mjs verify",
     "backup:restore-disposable": "node scripts/backup-workspace.mjs restore-disposable",
-    "test:staging": "playwright test"
+    "test:staging": "playwright test",
+    "preview:players": "node server/testing/player-preview-server.mjs",
+    "test:players:browser": "node tests/browser/player-data.mjs"
   },
   "dependencies": {
     "cookie": "1.1.1",
