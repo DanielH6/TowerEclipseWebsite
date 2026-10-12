@@ -14,6 +14,7 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
   const previousProject = process.env.FIREBASE_PROJECT_ID;
   const previousCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   const calls = [];
+  const tokenSignals = [];
   let playerError = null;
   try {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
@@ -22,8 +23,13 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
     process.env.FIREBASE_PROJECT_ID = "fixture-project";
     process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
     globalThis.fetch = async (url, options) => {
-      if (String(url).includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "fixture-token", expires_in: 3600 }));
-      calls.push({ url: String(url), body: options.body ? JSON.parse(options.body) : undefined });
+      if (String(url).includes("oauth2.googleapis.com")) { tokenSignals.push(options.signal); return new Response(JSON.stringify({ access_token: "fixture-token", expires_in: 3600 })); }
+      calls.push({ url: String(url), body: options.body ? JSON.parse(options.body) : undefined, signal: options.signal, method: options.method });
+      if (decodeURIComponent(new URL(url).pathname).endsWith("/documents/tePlayerSummaries/main:404731089")) return new Response(JSON.stringify({
+        name: "projects/fixture-project/databases/(default)/documents/tePlayerSummaries/main:404731089",
+        fields: { level: { integerValue: "0" } }, updateTime: "2026-10-12T03:00:00.123456Z",
+      }));
+      if (String(url).endsWith(":commit")) return new Response(JSON.stringify({ writeResults: [{ updateTime: "2026-10-12T04:00:00.000001Z" }] }));
       if (playerError && calls.at(-1).body?.structuredQuery?.from?.[0]?.collectionId === "tePlayerSummaries") {
         return new Response(JSON.stringify({ error: playerError }), { status: 400 });
       }
@@ -32,6 +38,31 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
       return new Response(JSON.stringify(String(url).endsWith(":runAggregationQuery") ? [{ result: { aggregateFields: { total: { integerValue: "1234" } } } }] : []));
     };
     const { db, Timestamp, firestoreMaintenance } = await import(`./firebase.mjs?fixture=${Date.now()}`);
+    const importerSignal = new AbortController().signal;
+    const ownerRef = db.doc("tePlayerSummaries/main:404731089");
+    const ownerSnapshot = await ownerRef.get({ signal: importerSignal });
+    assert.equal(ownerSnapshot.updateTime.toISOString(), "2026-10-12T03:00:00.123456Z");
+    assert.deepEqual(ownerSnapshot.data(), { level: 0 });
+    assert.equal(calls.at(-1).method, "GET"); assert.equal(calls.at(-1).signal, importerSignal); assert.equal(tokenSignals[0], importerSignal);
+    const summary = { schemaVersion: 1, mode: "main", userId: "404731089", identity: { username: null, usernameFolded: "" }, stats: { level: 0, experience: null } };
+    await ownerRef.set(summary, { merge: true, precondition: { exists: false }, signal: importerSignal });
+    const create = calls.at(-1);
+    assert.equal(create.method, "POST"); assert.equal(create.signal, importerSignal);
+    assert.deepEqual(create.body.writes[0].currentDocument, { exists: false });
+    assert.deepEqual(create.body.writes[0].updateMask.fieldPaths, Object.keys(summary));
+    assert.equal(create.body.writes[0].update.fields.stats.mapValue.fields.level.integerValue, "0");
+    assert.deepEqual(create.body.writes[0].update.fields.stats.mapValue.fields.experience, { nullValue: null });
+    await ownerRef.set(summary, { merge: true, precondition: { updateTime: ownerSnapshot.updateTime.toISOString() }, signal: importerSignal });
+    assert.deepEqual(calls.at(-1).body.writes[0].currentDocument, { updateTime: "2026-10-12T03:00:00.123456Z" });
+    const beforeInvalid = calls.length;
+    for (const precondition of [{}, { exists: false, updateTime: "2026-10-12T03:00:00Z" }, { exists: "false" },
+      { updateTime: null }, { updateTime: "invalid" }, { updateTime: "2026-10-12T03:00:00.123456789Z" }]) {
+      await assert.rejects(ownerRef.set(summary, { precondition }), /Invalid Firestore write precondition/);
+    }
+    const cancelled = new AbortController(); cancelled.abort();
+    await assert.rejects(ownerRef.get({ signal: cancelled.signal }), { name: "AbortError" });
+    await assert.rejects(ownerRef.set(summary, { precondition: { exists: false }, signal: cancelled.signal }), { name: "AbortError" });
+    assert.equal(calls.length, beforeInvalid, "bad conditions and cancellation cannot issue a commit");
     const since = new Date("2026-09-13T12:00:00Z");
     const base = db.collection("bugReports").where("reporter.discordId", "==", "alice").where("createdAt", ">=", since).orderBy("createdAt", "desc");
     assert.equal(await base.count(), 1234);
