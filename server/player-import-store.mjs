@@ -1,5 +1,6 @@
 import { validateSummaryImportCandidate } from "./player-summary-import.mjs";
 import { validatePlayerId } from "./game-data-domain.mjs";
+import { isDeepStrictEqual } from "node:util";
 
 export const PLAYER_IMPORT_JOB_PATH = "tePlayerImportJobs/current";
 export const PLAYER_IMPORT_FAILURE_COLLECTION = "tePlayerImportFailures";
@@ -15,10 +16,16 @@ export function createPlayerImportStore(db, { budget } = {}) {
   return {
     async readJob(signal) { return snapshotValue(await db.doc(PLAYER_IMPORT_JOB_PATH).get({ signal, budget })); },
     async writeJob(value, previous, signal) {
-      // CAS is applied to the whole checkpoint: a lost lease cannot advance it.
+      // Freeze the submitted checkpoint while a transport may still be in flight.
+      // The GET is verification, not a receipt for SET: it may see another writer.
+      const submitted = structuredClone(value);
       budget?.ensureRoom({ writes: 1, reads: 1, attempts: 3 });
-      await db.doc(PLAYER_IMPORT_JOB_PATH).set(value, { precondition: condition(previous), signal, budget });
-      return snapshotValue(await db.doc(PLAYER_IMPORT_JOB_PATH).get({ signal, budget }));
+      await db.doc(PLAYER_IMPORT_JOB_PATH).set(submitted, { precondition: condition(previous), signal, budget });
+      const saved = snapshotValue(await db.doc(PLAYER_IMPORT_JOB_PATH).get({ signal, budget }));
+      if (!saved.updateTime || !isDeepStrictEqual(saved.value, submitted)) {
+        throw Object.assign(new Error("Import checkpoint changed during acknowledgement."), { code: "IMPORT_LEASE_LOST" });
+      }
+      return saved;
     },
     async readSummary(mode, id, signal) { return snapshotValue(await db.doc(summaryPath(mode, id)).get({ signal, budget })); },
     async writeSummary(mode, id, candidate, previous, signal) {

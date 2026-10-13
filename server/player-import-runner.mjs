@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { boundedOperation, createSummaryImportCandidate, compareSummaryImportSnapshot, validateSummaryImportCandidate } from "./player-summary-import.mjs";
 import { createImportModeState, decodePlayerImportJob, PLAYER_IMPORT_LIMITS } from "./player-import-service.mjs";
+import { planDailyImport, reserveDailyImport, finishDailyImport } from "./player-import-schedule.mjs";
 
 const modes = ["main", "battlefront"];
 const digest = value => createHash("sha256").update(value).digest("hex");
@@ -15,34 +16,60 @@ const safeFailure = (entry, fingerprint) => entry?.schemaVersion === 1 && entry.
   && BigInt(entry.userId) <= BigInt(Number.MAX_SAFE_INTEGER) && ["pending", "resolved"].includes(entry.status)
   && Number.isSafeInteger(entry.attempts) && entry.attempts >= 1;
 
-// Private process entry point. Web clients cannot invoke it. Authorization is
-// the CLI's explicit fixed scope/apply/budget contract, never a forged session.
+// Private process entry point used by the bounded CLI and opt-in website worker.
 export async function runPlayerImportSweep({ store, reader, lister, identities, target, targetFingerprint, budget,
-  apply = false, intent = "resume", timeZone = "Australia/Sydney", resumePaused = false, now = Date.now }) {
+  apply = false, intent = "resume", timeZone = "Australia/Sydney", resumePaused = false, daily = false, now = Date.now }) {
   if (typeof apply !== "boolean" || !["resume", "daily", "new"].includes(intent) || typeof timeZone !== "string" || timeZone.length > 64) throw stop("invalid_run");
-  const today = dateKey(now(), timeZone), invocationId = randomUUID();
+  if (daily && (!apply || intent !== "daily" || timeZone !== "Australia/Sydney" || resumePaused)) throw stop("invalid_run");
+  let today = dateKey(now(), timeZone);
+  const invocationId = randomUUID();
   const results = { created: 0, updated: 0, unchanged: 0, skipped: 0, deferred: 0, retried: 0, listFailures: 0, duplicates: 0, wouldCreate: 0, wouldUpdate: 0 };
   const seen = new Map(), blocked = new Set(), consecutive = { main: 0, battlefront: 0 };
   let previous, current, checkpointConfirmed = apply ? false : null, acquired = false, newSweep = false, pendingRetries = null, reason = null, status = "partial_errors";
+  let ownershipLost = false, writeUncertain = false;
+  let nextRunAt = null;
   const io = operation => boundedOperation(operation, 8000, budget.signal);
   const iso = () => new Date(now()).toISOString();
   const summary = () => ({ ok: ["scan_complete", "scan_complete_with_retries", "scan_complete_retry_status_unknown", "paused_budget", "nothing_due", "waiting_retry"].includes(status) && (!apply || checkpointConfirmed),
     status, ...(reason ? { reason } : {}), writeMode: apply ? "apply" : "dry_run", scope: "main,battlefront", target,
     intent, checkpointConfirmed, action: newSweep ? "new_sweep" : "resume", sweepId: current?.sweep?.id ?? null, sweepDay: current?.sweep?.day ?? null,
     traversalEnded: current ? modes.every(mode => current.modes[mode].done) : false, pendingRetries, coverage: "unknown",
+    ...(nextRunAt ? { nextRunAt } : {}),
     usage: budget.snapshot(), limits: budget.limits, results });
   async function persist() {
     if (!apply) return;
+    if (ownershipLost) throw stop("lease_lost");
+    if (writeUncertain) throw stop("checkpoint_write_uncertain");
     current.lease.until = now() + PLAYER_IMPORT_LIMITS.leaseMs;
     current.updatedAt = iso(); current.run.usage = budget.snapshot(); current.run.results = { ...results };
-    try { previous = await io(signal => store.writeJob(current, previous, signal)); }
-    catch (error) { if (acquired && casConflict(error)) throw stop("lease_lost"); throw error; }
-    if (previous.value?.lease?.id !== invocationId) throw stop("lease_lost");
+    let saved;
+    try {
+      saved = await io(signal => store.writeJob(current, previous, signal));
+    } catch (error) {
+      if (error?.code === "IMPORT_LEASE_LOST" || (acquired && casConflict(error))) {
+        ownershipLost = true;
+        throw stop("lease_lost");
+      }
+      if (!casConflict(error)) writeUncertain = true;
+      throw error;
+    }
+    if (!saved.updateTime || saved.value?.lease?.id !== invocationId || saved.value?.run?.id !== invocationId) {
+      ownershipLost = true;
+      throw stop("lease_lost");
+    }
+    // Only an acknowledgement positively owned by this invocation becomes a
+    // precondition. Never adopt a revision read from a cancellation/takeover.
+    previous = saved;
   }
   async function guard() {
     if (!apply) { budget.ensureRoom(); return; }
+    if (ownershipLost) throw stop("lease_lost");
+    if (writeUncertain) throw stop("checkpoint_write_uncertain");
     const latest = await io(signal => store.readJob(signal));
-    if (latest.updateTime !== previous.updateTime || latest.value?.lease?.id !== invocationId || latest.value.lease.until <= now()) throw stop("lease_lost");
+    if (latest.updateTime !== previous.updateTime || latest.value?.lease?.id !== invocationId || latest.value.lease.until <= now()) {
+      ownershipLost = true;
+      throw stop("lease_lost");
+    }
   }
   function checkStop(error) {
     if (budget.reason() || budget.signal.aborted) throw stop(budget.reason() ?? "cancelled");
@@ -68,14 +95,14 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
     const metadata = { schemaVersion: 1, mode, userId: id, status: "pending", reason: cause, attempts,
       firstFailedAt: snapshot.value?.firstFailedAt ?? iso(), lastAttemptAt: iso(), nextAttemptAt: new Date(now() + delay).toISOString(), resolvedAt: null, targetFingerprint };
     try { await io(signal => store.writeFailure(metadata, snapshot, signal)); }
-    catch (error) { checkStop(error); throw stop("failure_ledger_unavailable"); }
+    catch (error) { writeUncertain = true; checkStop(error); throw stop("failure_ledger_unavailable"); }
   }
   async function resolveFailure(snapshot, cause) {
     if (!apply || !snapshot.exists || snapshot.value.status !== "pending") return;
     await guard();
     try { await io(signal => store.writeFailure({ ...snapshot.value, status: "resolved", reason: cause,
       lastAttemptAt: iso(), nextAttemptAt: null, resolvedAt: iso() }, snapshot, signal)); }
-    catch (error) { checkStop(error); throw stop("failure_resolution_uncertain"); }
+    catch (error) { writeUncertain = true; checkStop(error); throw stop("failure_resolution_uncertain"); }
   }
   async function processProfile(mode, id, names, retry = false) {
     const key = `${mode}:${id}`;
@@ -114,11 +141,15 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
               await guard();
               try { await io(signal => store.writeSummary(mode, id, candidate, existing, signal)); }
               catch (error) {
-                checkStop(error);
                 if (casConflict(error) || [400, 401, 403, 404].includes(error?.status)) {
+                  checkStop(error);
                   cause = casConflict(error) ? "concurrent_index_change" : "write_unavailable";
                   await defer(mode, id, cause, failure); failed = true;
-                } else throw stop("summary_write_uncertain");
+                } else {
+                  writeUncertain = true;
+                  checkStop(error);
+                  throw stop("summary_write_uncertain");
+                }
               }
               if (!failed) { action = decision.action === "create" ? "created" : "updated"; cause = null; await resolveFailure(failure, "snapshot_imported"); }
             }
@@ -195,6 +226,12 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
     previous = await io(signal => store.readJob(signal)); current = decodePlayerImportJob(previous, targetFingerprint);
     if (current.lease?.until > now()) throw stop("busy");
     if (current.paused && !resumePaused) throw stop("operator_paused");
+    if (daily) {
+      const plan = planDailyImport(current, now());
+      if (!plan.limits || plan.eligibleAt > now()) throw stop("nothing_due");
+      today = plan.window.day;
+      current.daily = reserveDailyImport(plan, budget.limits, invocationId, now());
+    }
     const ended = modes.every(mode => current.modes[mode].done);
     if (intent === "new" && previous.exists && !ended) throw stop("unfinished_sweep");
     if (current.sweep?.timeZone && current.sweep.timeZone !== timeZone) throw stop("sweep_timezone_changed");
@@ -204,7 +241,7 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
     current.paused = false;
     if (apply) {
       current.lease = { id: invocationId, until: now() + PLAYER_IMPORT_LIMITS.leaseMs, kind: "runner" };
-      current.run = { schemaVersion: 1, id: invocationId, intent, status: "running", startedAt: iso(), finishedAt: null,
+      current.run = { schemaVersion: 1, id: invocationId, source: daily ? "website_worker" : "private_cli", intent, status: "running", startedAt: iso(), finishedAt: null,
         limits: budget.limits, usage: budget.snapshot(), results: { ...results }, pendingRetries: null };
       try { await persist(); acquired = true; }
       catch (error) { if (casConflict(error)) throw stop("busy"); throw error; }
@@ -212,10 +249,11 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
     await retryDue(); await scan();
     status = modes.every(mode => current.modes[mode].done) ? "scan_complete_retry_status_unknown" : "partial_errors";
   } catch (error) {
-    reason = budget.reason() ?? (error.code === "IMPORT_RUN_STOPPED" ? error.reason : "provider_unavailable");
-    status = reason.endsWith("_budget") ? "paused_budget" : ["cancelled", "lease_lost", "busy", "operator_paused"].includes(reason) ? reason : "partial_errors";
+    reason = ownershipLost ? "lease_lost" : budget.reason() ?? (error.code === "IMPORT_RUN_STOPPED" ? error.reason : "provider_unavailable");
+    status = reason.endsWith("_budget") ? "paused_budget" : ["cancelled", "lease_lost", "busy", "operator_paused", "nothing_due"].includes(reason) ? reason : "partial_errors";
   } finally {
-    if (current && ((!apply && !["busy", "operator_paused", "partial_errors"].includes(status)) || acquired)) {
+    if (current && ((!apply && !["busy", "operator_paused", "partial_errors"].includes(status))
+      || (acquired && !ownershipLost && !writeUncertain))) {
       try {
         await budget.close(async () => {
           const remaining = Math.min(8000, budget.deadline - now());
@@ -226,11 +264,24 @@ export async function runPlayerImportSweep({ store, reader, lister, identities, 
           if (apply) {
             current.lease = null; current.run.status = status; current.run.finishedAt = iso(); current.run.pendingRetries = pendingRetries;
             current.run.usage = budget.snapshot(); current.run.results = { ...results }; current.updatedAt = iso();
+            if (daily) {
+              current.daily = finishDailyImport(current.daily, { usage: budget.snapshot(), retried: results.retried,
+                status, pendingRetryAt: failures[0]?.value?.nextAttemptAt, now: now() });
+            }
             const saved = await boundedOperation(signal => store.writeJob(current, previous, signal), Math.min(8000, budget.deadline - now()));
             checkpointConfirmed = saved.value?.run?.id === invocationId && saved.value.run.status === status && saved.value.lease === null;
+            if (daily && checkpointConfirmed) nextRunAt = new Date(planDailyImport(saved.value, now()).eligibleAt).toISOString();
           }
         });
-      } catch { /* Lost leases/uncertain checkpoints are never blindly overwritten. */ }
+      } catch (error) {
+        // Finalization also uses the last owned CAS revision. An uncertain
+        // response is never retried or promoted to a newer writer's revision.
+        if (casConflict(error) || error?.code === "IMPORT_LEASE_LOST") {
+          ownershipLost = true;
+          status = "lease_lost";
+          reason = "lease_lost";
+        }
+      }
     }
   }
   return summary();

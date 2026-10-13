@@ -5,6 +5,7 @@ import { chromium } from "@playwright/test";
 import { createPlayerPreviewApp } from "../../server/testing/player-preview-server.mjs";
 import { createImportRunBudget, PROPOSED_IMPORT_BUDGET } from "../../server/player-import-budget.mjs";
 import { createPlayerImportStore } from "../../server/player-import-store.mjs";
+import { planDailyImport } from "../../server/player-import-schedule.mjs";
 import { runPlayerImportSweep } from "../../server/player-import-runner.mjs";
 import { FIXTURE_PLAYER_ID } from "../../server/testing/game-data-fixtures.mjs";
 
@@ -155,12 +156,13 @@ try {
   const retryProfileUrl = new RegExp(`/api/admin/game-data/players/${retryId}$`);
   await page.route(retryProfileUrl, route => {
     if (!profileFailure) return route.continue();
-    profileFailure = false;
     return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Synthetic profile outage." }) });
   });
   await lookup.fill(retryId);
   await page.getByRole("button", { name: "VIEW PROFILE", exact: true }).click();
   await mainRecord.getByText("Synthetic profile outage.", { exact: true }).waitFor();
+  // Keep the simulated outage active through any repeated GETs until the user retries.
+  profileFailure = false;
   await mainRecord.getByRole("button", { name: "TRY AGAIN", exact: true }).click();
   await mainRecord.getByRole("heading", { name: "Preview Commander 0007", exact: true }).waitFor();
   await page.unroute(retryProfileUrl);
@@ -228,6 +230,72 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await runStatus.screenshot({ path: path.join(output, "unattended-run-mobile.png") });
   checks.push("private runner resumes manual progress; persisted limits/results display without status-read writes on desktop and mobile");
+
+  const dailyBudget = createImportRunBudget(planDailyImport(fixture.records.get("tePlayerImportJobs/current")?.value, Date.now()).limits);
+  try {
+    const daily = await runPlayerImportSweep({ ...fixture.dependencies,
+      store: createPlayerImportStore(fixture.db, { budget: dailyBudget }), budget: dailyBudget,
+      apply: true, intent: "daily", daily: true });
+    assert.equal(daily.status, "scan_complete");
+  } finally {
+    dailyBudget.dispose();
+  }
+  const writesBeforeDailyStatus = fixture.writes.length;
+  await importer.getByRole("button", { name: "REFRESH IMPORT STATUS", exact: true }).click();
+  await runStatus.getByRole("heading", { name: "LAST DAILY REFRESH", exact: true }).waitFor();
+  assert.equal(fixture.writes.length, writesBeforeDailyStatus);
+  await runStatus.screenshot({ path: path.join(output, "daily-refresh-mobile.png") });
+  checks.push("website daily refresh status displays its source and remains read-only");
+
+  // Model an acquisition SET that committed while its acknowledgement was lost.
+  let job = await fixture.store.readJob();
+  await fixture.store.writeJob({ ...job.value, daily: { ...job.value.daily, dueAt: new Date().toISOString() } }, job);
+  let acquisitionLost = false;
+  fixture.hooks.afterSet = (name, value) => {
+    if (!acquisitionLost && name === "tePlayerImportJobs/current" && value.lease) {
+      acquisitionLost = true;
+      throw new Error("Synthetic acquisition acknowledgement lost");
+    }
+  };
+  const uncertainBudget = createImportRunBudget(planDailyImport((await fixture.store.readJob()).value, Date.now()).limits);
+  try {
+    const uncertain = await runPlayerImportSweep({ ...fixture.dependencies,
+      store: createPlayerImportStore(fixture.db, { budget: uncertainBudget }), budget: uncertainBudget,
+      apply: true, intent: "daily", daily: true });
+    assert.equal(uncertain.checkpointConfirmed, false);
+  } finally {
+    uncertainBudget.dispose();
+    fixture.hooks.afterSet = null;
+  }
+  job = await fixture.store.readJob();
+  await fixture.store.writeJob({ ...job.value, lease: { ...job.value.lease, until: Date.now() - 1 } }, job);
+  await importer.getByRole("button", { name: "REFRESH IMPORT STATUS", exact: true }).click();
+  const dailyStatus = importer.getByRole("region", { name: "Daily refresh budget" });
+  await dailyStatus.getByText(/unconfirmed chunk · Budget day/).waitFor();
+  await dailyStatus.getByText(/Unconfirmed allocations remain charged: 25 profiles/).waitFor();
+  await dailyStatus.getByText(/Next eligible:.*Australia\/Sydney/).waitFor();
+  assert.ok((await runStatus.textContent()).includes("0 profiles"));
+  await dailyStatus.screenshot({ path: path.join(output, "uncertain-chunk-mobile.png") });
+  checks.push("uncertain acquisition displays durable charged/reserved quota and Sydney eligibility even with zero recorded profiles");
+
+  // Exhaust the synthetic day's time allowance without refunding unverified chunks.
+  job = await fixture.store.readJob();
+  const exhausted = structuredClone(job.value);
+  exhausted.daily.used.seconds = 1800;
+  exhausted.daily.uncertainUsed.seconds = 1740;
+  await fixture.store.writeJob(exhausted, job);
+  const beforeBudgetStatus = fixture.writes.length;
+  await importer.getByRole("button", { name: "REFRESH IMPORT STATUS", exact: true }).click();
+  await dailyStatus.getByText(/daily budget exhausted · Budget day/).waitFor();
+  await dailyStatus.getByText(/Next eligible:.*03:00:00.*Australia\/Sydney/).waitFor();
+  assert.equal(fixture.writes.length, beforeBudgetStatus);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await dailyStatus.screenshot({ path: path.join(output, "daily-lockout-mobile.png") });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await dailyStatus.evaluate(element => element.scrollIntoView({ block: "center" }));
+  await dailyStatus.screenshot({ path: path.join(output, "daily-lockout-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  checks.push("daily quota lockout and next 03:00 Sydney eligibility remain visible and status reads write nothing");
   await page.getByText("IMPORT PLAYER SUMMARIES", { exact: true }).click();
 
   await page.setViewportSize({ width: 390, height: 844 });

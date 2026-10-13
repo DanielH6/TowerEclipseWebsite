@@ -1,5 +1,7 @@
 import { requireAuth, requireRole, requireCsrf } from "./auth-context.mjs";
-import { createConfiguredPlayerImport } from "./player-import-runtime.mjs";
+import { createConfiguredPlayerImport, createPlayerImportDependencies } from "./player-import-runtime.mjs";
+import { createPlayerImportStore } from "./player-import-store.mjs";
+import { createPlayerImportWorker, dailyPlayerImportEnabled } from "./player-import-worker.mjs";
 import { createPlayerImportRouter } from "./player-import-routes.mjs";
 import { readGameDataConfiguration } from "./game-data-config.mjs";
 import { createConfiguredProfileReader } from "./game-data-runtime.mjs";
@@ -425,6 +427,18 @@ app.post(
 
 const playerDataConfiguration = readGameDataConfiguration();
 const playerImporter = createConfiguredPlayerImport({ configuration: playerDataConfiguration, db, secret: config.cookieSecret, projectId: process.env.FIREBASE_PROJECT_ID });
+const dailyImportEnabled = dailyPlayerImportEnabled();
+if (dailyImportEnabled && (!playerDataConfiguration.enabled || process.env.TE_DATA_IMPORT_ENABLED !== "true")) {
+  throw new Error("Daily imports require TE_DATA_VIEWER_ENABLED and TE_DATA_IMPORT_ENABLED to be true.");
+}
+const playerImportWorker = createPlayerImportWorker({
+  enabled: dailyImportEnabled,
+  store: createPlayerImportStore(db),
+  ready: () => firestoreReadyPromise,
+  loadResources: ({ budget }) => createPlayerImportDependencies({ configuration: playerDataConfiguration,
+    db, projectId: config.firebase.projectId, budget }),
+  report: result => console.log(`Player import worker: ${result.status}; checkpoint confirmed: ${result.checkpointConfirmed === true}.`),
+});
 app.use("/api/admin/game-data/imports", createPlayerImportRouter({ service: playerImporter, requireAuth, requireAdmin: requireRole("dev"), requireCsrf, appOrigin: config.appOrigin }));
 const playerData = createGameDataService({
   reader: createConfiguredProfileReader(playerDataConfiguration),
@@ -483,9 +497,24 @@ app.use((error, _request, response, _next) => {
   });
 });
 
-app.listen(config.port, "0.0.0.0", () => {
+const server = app.listen(config.port, "0.0.0.0", () => {
   console.log(`Discord authentication API listening on port ${config.port}.`);
   console.log(`Frontend origin: ${config.appOrigin}`);
   console.log(`R2 attachments: ${config.r2 ? `enabled (${config.r2.bucket})` : "disabled"}`);
   console.log(`Register this exact Discord OAuth redirect: ${config.discord.redirectUri}`);
+  playerImportWorker.start();
 });
+
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const deadline = setTimeout(() => process.exit(1), 20000);
+  const closed = new Promise(resolve => server.close(resolve));
+  server.closeIdleConnections();
+  await playerImportWorker.stop();
+  await closed;
+  clearTimeout(deadline);
+}
+process.once("SIGTERM", () => { void shutdown(); });
+process.once("SIGINT", () => { void shutdown(); });

@@ -5,6 +5,7 @@ import { importOwnerSummaries, validateSummaryImportTarget } from "../server/pla
 import { createFirestoreSummaryImportStore } from "../server/player-summary-import-store.mjs";
 import { createRobloxProfileReader } from "../server/roblox-profile-reader.mjs";
 import { readRobloxDataStoreConfig } from "../server/game-data-config.mjs";
+import { loadBackendEnvironment } from "../server/backend-environment.mjs";
 
 const usage = "node scripts/import-player-summaries.mjs --user-id 404731089\nnode scripts/import-player-summaries.mjs --user-id 404731089 --apply";
 const safeCodes = new Set(["INVALID_IMPORT_ARGUMENTS", "INVALID_PLAYER_ID", "IMPORT_TARGET_NOT_ALLOWED", "INVALID_IMPORT_CONFIGURATION", "INVALID_PLAYER_DATA_CONFIG"]);
@@ -33,8 +34,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const result = await runOwnerImportCommand({ argv: process.argv.slice(2), signal: controller.signal,
       loadResources: async ({ apply }) => {
-        // Load only after exact targeting/arguments have been validated. Existing
-        // backend env is supplied by the container or Node --env-file, not argv.
+        // Argument validation precedes dotenv, source configuration and Firebase.
+        loadBackendEnvironment();
         const configuration = readRobloxDataStoreConfig(process.env);
         const { db } = await import("../server/firebase.mjs");
         return { reader: createRobloxProfileReader({ fetch: globalThis.fetch, config: configuration }),

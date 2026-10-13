@@ -5,6 +5,7 @@ import { createImportRunBudget, PROPOSED_IMPORT_BUDGET, validateImportBudget } f
 import { runPlayerImportSweep } from "../server/player-import-runner.mjs";
 import { createPlayerImportDependencies } from "../server/player-import-runtime.mjs";
 import { readRobloxDataStoreConfig } from "../server/game-data-config.mjs";
+import { loadBackendEnvironment } from "../server/backend-environment.mjs";
 
 const names = { "max-profiles": "profiles", "max-reads": "reads", "max-writes": "writes", "max-attempts": "attempts", "max-seconds": "seconds", "retry-profiles": "retryProfiles" };
 const usage = "node scripts/run-player-import.mjs --scope main,battlefront --sweep daily --timezone Australia/Sydney --max-profiles 1000 --max-reads 10000 --max-writes 4000 --max-attempts 20000 --max-seconds 1800 --retry-profiles 50 [--apply]\nDefault: dry-run. daily resumes unfinished sweeps and starts a new sweep only after the local day changes. resume never restarts a completed scan. new refuses unfinished scans. --resume-paused explicitly clears an operator stop.";
@@ -45,17 +46,20 @@ export async function runPlayerImportCommand({ argv, loadResources, signal, now 
   finally { budget.dispose(); }
 }
 
+export async function loadPlayerImportCommandResources({ budget, environment = process.env, envPath,
+  loadDatabase = () => import("../server/firebase.mjs") } = {}) {
+  loadBackendEnvironment({ environment, envPath });
+  const configuration = { enabled: true, readerConfig: readRobloxDataStoreConfig(environment) };
+  const { db } = await loadDatabase();
+  return createPlayerImportDependencies({ configuration, db, projectId: environment.FIREBASE_PROJECT_ID, budget });
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const controller = new AbortController(), cancel = () => controller.abort();
   process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
   try {
-    const result = await runPlayerImportCommand({ argv: process.argv.slice(2), signal: controller.signal, loadResources: async ({ budget }) => {
-      // The host supplies its existing private backend environment. No app,
-      // bot, analytics, timer, dotenv startup or new credentials are loaded.
-      const configuration = { enabled: true, readerConfig: readRobloxDataStoreConfig(process.env) };
-      const { db } = await import("../server/firebase.mjs");
-      return createPlayerImportDependencies({ configuration, db, projectId: process.env.FIREBASE_PROJECT_ID, budget });
-    } });
+    const result = await runPlayerImportCommand({ argv: process.argv.slice(2), signal: controller.signal,
+      loadResources: loadPlayerImportCommandResources });
     console.log(JSON.stringify(result, null, 2)); if (!result.ok) process.exitCode = controller.signal.aborted ? 130 : 1;
   } finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
 }

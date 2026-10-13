@@ -121,6 +121,8 @@ test("uncertain commits stop additional summary writes and are verified on resum
   const f = fixture(3); let once = false;
   f.hooks.afterSet = path => { if (!once && path.startsWith("tePlayerSummaries/")) { once = true; throw new Error("synthetic-private-transport-reset"); } };
   const first = await f.run({ apply: true }); assert.equal(first.reason, "summary_write_uncertain"); assert.equal(summaries(f).length, 1);
+  assert.equal((await f.run({ apply: true })).status, "busy");
+  f.advance(45001);
   f.hooks.afterSet = null; await f.run({ apply: true }); assert.equal(summaries(f).length, 6);
 });
 
@@ -179,6 +181,7 @@ test("failure-ledger outage never advances the failed source key or exposes prov
   assert.equal(f.records.get(PLAYER_IMPORT_JOB_PATH).value.modes.main.pending[0], id);
   assert.equal(summaries(f).length, 0); assert.ok(!JSON.stringify(first).includes("synthetic-private"));
   f.hooks.beforeSet = null; f.failures.profiles.clear();
+  f.advance(45001);
   assert.equal((await f.run({ apply: true })).status, "scan_complete"); assert.equal(summaries(f).length, 6);
 });
 
@@ -215,4 +218,106 @@ test("completed traversal does not claim a confirmed durable finish when its fin
   f.hooks.beforeSet = null; const resumed = await f.run({ apply: true });
   assert.equal(resumed.checkpointConfirmed, true); assert.equal(resumed.ok, true);
   assert.equal(f.writes.filter(write => write.path.startsWith("tePlayerSummaries/")).length, 2);
+});
+
+
+for (const takeover of [false, true]) {
+  test(`SET/GET ${takeover ? "takeover" : "cancel"} keeps newer progress and forbids stale cleanup`, async () => {
+    const f = fixture(3);
+    let interrupted = false, newer, writesAtLoss;
+    f.hooks.afterSet = async (path, value) => {
+      if (interrupted || path !== PLAYER_IMPORT_JOB_PATH || !value.modes.main.pageLoaded) return;
+      interrupted = true;
+      if (takeover) {
+        const snapshot = await f.store.readJob();
+        const changed = structuredClone(snapshot.value);
+        changed.lease = { id: "newer-owner", kind: "runner", until: f.now() + 45000 };
+        changed.modes.main.pending = changed.modes.main.pending.slice(1);
+        changed.modes.main.attempts++;
+        await f.store.writeJob(changed, snapshot);
+      } else {
+        await f.service.cancel();
+      }
+      newer = structuredClone(f.records.get(PLAYER_IMPORT_JOB_PATH));
+      writesAtLoss = f.writes.length;
+    };
+    const result = await f.run({ apply: true });
+    assert.equal(result.status, "lease_lost");
+    assert.equal(result.checkpointConfirmed, false);
+    assert.deepEqual(f.records.get(PLAYER_IMPORT_JOB_PATH), newer);
+    assert.equal(f.writes.length, writesAtLoss, "no checkpoint, release or finalization after ownership loss");
+    assert.equal(summaries(f).length, 0);
+  });
+}
+
+for (const boundary of ["acquisition", "finalization"]) {
+  test(`cancellation between ${boundary} SET/GET preserves the operator pause`, async () => {
+    const f = fixture(1);
+    let interrupted = false, newer, writesAtLoss;
+    f.hooks.afterSet = async (path, value) => {
+      if (interrupted || path !== PLAYER_IMPORT_JOB_PATH) return;
+      const matches = boundary === "acquisition" ? value.lease && !value.modes.main.pageLoaded : value.lease === null;
+      if (!matches) return;
+      interrupted = true;
+      await f.service.cancel();
+      newer = structuredClone(f.records.get(PLAYER_IMPORT_JOB_PATH));
+      writesAtLoss = f.writes.length;
+    };
+    const result = await f.run({ apply: true });
+    assert.equal(result.status, "lease_lost");
+    assert.equal(result.checkpointConfirmed, false);
+    assert.deepEqual(f.records.get(PLAYER_IMPORT_JOB_PATH), newer);
+    assert.equal(f.writes.length, writesAtLoss);
+  });
+}
+
+test("uncertain checkpoint commit leaves the lease and page intact without any cleanup write", async () => {
+  const f = fixture(3);
+  let writesAtFailure;
+  f.hooks.afterSet = (path, value) => {
+    if (path === PLAYER_IMPORT_JOB_PATH && value.modes.main.pageLoaded) {
+      writesAtFailure = f.writes.length;
+      throw new Error("synthetic acknowledgement lost");
+    }
+  };
+  const result = await f.run({ apply: true });
+  assert.equal(result.checkpointConfirmed, false);
+  assert.equal(f.writes.length, writesAtFailure);
+  assert.equal(summaries(f).length, 0);
+  const saved = f.records.get(PLAYER_IMPORT_JOB_PATH).value;
+  assert.equal(saved.modes.main.pending.length, 3);
+  assert.ok(saved.lease);
+  f.hooks.afterSet = null;
+  f.advance(45001);
+  assert.equal((await f.run({ apply: true })).status, "scan_complete");
+});
+
+test("a submitted summary may finish after cancellation, but no old checkpoint or release follows it", async () => {
+  const f = fixture(3), controller = new AbortController();
+  let started, release;
+  const writing = new Promise(resolve => { started = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  f.hooks.beforeSet = async path => {
+    if (path.startsWith("tePlayerSummaries/")) {
+      started();
+      await gate; // Model a transport that ignores cancellation after submission.
+    }
+  };
+  const running = f.run({ apply: true, signal: controller.signal });
+  await writing;
+  controller.abort();
+  const result = await running;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.checkpointConfirmed, false);
+  await f.service.cancel();
+  const newer = structuredClone(f.records.get(PLAYER_IMPORT_JOB_PATH));
+  const checkpointWrites = f.writes.filter(write => write.path === PLAYER_IMPORT_JOB_PATH).length;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(summaries(f).length, 1);
+  assert.deepEqual(f.records.get(PLAYER_IMPORT_JOB_PATH), newer);
+  assert.equal(f.writes.filter(write => write.path === PLAYER_IMPORT_JOB_PATH).length, checkpointWrites);
+  f.hooks.beforeSet = null;
+  assert.equal((await f.run({ apply: true, resumePaused: true })).status, "scan_complete");
+  assert.equal(f.writes.filter(write => write.path.startsWith("tePlayerSummaries/")).length, 6);
 });

@@ -7,17 +7,25 @@ import type { PlayerMode } from "../player-data";
 type ImportRow = { userId: string; action: string; reason?: string; identitySource?: string };
 type ModeProgress = { done: boolean; pending: number; pages: number; observed: number; attempts: number; created: number; updated: number; unchanged: number; skipped: number; failures: number };
 type ImportTarget = { experience: string; universeId: string; projectId: string; collection: string; stores: Record<PlayerMode, string>; scope: string };
-type ImportRun = { status: string; startedAt: string | null; finishedAt: string | null; sweepDay: string | null; pendingRetries: boolean | null;
+type ImportRun = { source: "private_cli" | "website_worker"; status: string; startedAt: string | null; finishedAt: string | null; sweepDay: string | null; pendingRetries: boolean | null;
   usage: { profiles: number | null; reads: number | null; writes: number | null; attempts: number | null; elapsedSeconds: number | null };
   results: { created: number | null; updated: number | null; unchanged: number | null; deferred: number | null; retried: number | null };
   limits: { profiles: number | null; reads: number | null; writes: number | null; attempts: number | null; seconds: number | null } };
-type ImportStatus = { enabled: boolean; target: ImportTarget | null; progress: null | { busy: boolean; paused: boolean; leaseExpiresAt: string | null; updatedAt: string | null; modes: Record<PlayerMode, ModeProgress>; lastBatch: ImportRow[]; run: ImportRun | null } };
+type DailyUsage = { profiles: number; reads: number; writes: number; attempts: number; seconds: number; retryProfiles: number };
+type DailyProgress = { day: string; timeZone: string; state: string; nextEligibleAt: string | null;
+  charged: DailyUsage; uncertainCharged: DailyUsage; reserved: DailyUsage; remaining: DailyUsage; limits: DailyUsage; chunkLimits: DailyUsage };
+type ImportStatus = { enabled: boolean; target: ImportTarget | null; progress: null | { busy: boolean; paused: boolean; leaseExpiresAt: string | null; updatedAt: string | null; modes: Record<PlayerMode, ModeProgress>; lastBatch: ImportRow[]; run: ImportRun | null; daily: DailyProgress | null } };
 type ImportPreview = { token: string; mode: PlayerMode; restart: boolean; target: ImportTarget; rows: ImportRow[]; identityStatus: string; expiresAt: string;
   budget: { maxSourceHttpAttempts: number; maxIdentityRequests: number; maxPreviewSummaryReads: number; maxPreviewCheckpointReads: number;
     maxApplySummaryReads: number; maxApplySummaryWrites: number; maxApplyCheckpointReads: number; maxApplyCheckpointWrites: number; requestSeconds: number } };
 const endpoint = "/api/admin/game-data/imports";
 const modeName = (mode: PlayerMode) => mode === "main" ? "Main" : "Battlefront";
 const rowLabel = (row: ImportRow) => `${row.action.replaceAll("_", " ")}${row.reason ? ` · ${row.reason.replaceAll("_", " ")}` : ""}`;
+const dailyUsage = (value: DailyUsage) => `${value.profiles} profiles · ${value.reads} read units · ${value.writes} writes · ${value.attempts} HTTP attempts · ${value.seconds} seconds · ${value.retryProfiles} retry profiles`;
+function dailyTime(value: string | null, timeZone: string) {
+  if (!value) return "Paused by operator";
+  return `${new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "medium", timeStyle: "long" }).format(new Date(value))} (${timeZone})`;
+}
 
 export default function PlayerImportPanel({ onApplied }: { onApplied: () => void }) {
   const { auth } = useAuth();
@@ -77,7 +85,7 @@ export default function PlayerImportPanel({ onApplied }: { onApplied: () => void
   }
   return <details className="panel-card player-import-panel">
     <summary>IMPORT PLAYER SUMMARIES</summary>
-    <p>Preview and apply up to five profiles at a time. Main and Battlefront have separate checkpoints. Progress survives server restarts; each batch runs only when requested.</p>
+    <p>Preview and apply up to five profiles at a time. Main and Battlefront have separate checkpoints. Progress survives server restarts. A host-enabled daily refresh can continue the same saved progress.</p>
     <p className="player-muted">Repeat a mode sweep to refresh saved progress and Roblox names. Traversal is not an atomic snapshot, so index coverage remains unknown. Missing or failed reads never delete summaries.</p>
     {error && <p className="player-warning" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
@@ -86,8 +94,20 @@ export default function PlayerImportPanel({ onApplied }: { onApplied: () => void
     {!status && !error && <p role="status">Loading import status…</p>}
     {status && !status.enabled && <p className="player-muted">Imports are disabled. Enable the server import setting after setup review.</p>}
     {status?.enabled && <>
+      {status.progress?.daily && <section className="player-import-preview" aria-label="Daily refresh budget">
+        <h3>DAILY REFRESH BUDGET</h3>
+        <p>{status.progress.daily.state.replaceAll("_", " ")} · Budget day {status.progress.daily.day}</p>
+        <p>Next eligible: {dailyTime(status.progress.daily.nextEligibleAt, status.progress.daily.timeZone)}</p>
+        <p className="player-muted">Charged against that day's limits, including reservations: {dailyUsage(status.progress.daily.charged)}.</p>
+        <p className="player-muted">Reserved chunk: {dailyUsage(status.progress.daily.reserved)}.</p>
+        {Object.values(status.progress.daily.uncertainCharged).some(value => value > 0) && <p className="player-warning">
+          Unconfirmed allocations remain charged: {dailyUsage(status.progress.daily.uncertainCharged)}. Usage may have occurred even when the last run shows zero profiles.
+        </p>}
+        <p className="player-muted">Available in the current Sydney budget window: {dailyUsage(status.progress.daily.remaining)}.</p>
+        <p className="player-muted">Daily limits: {dailyUsage(status.progress.daily.limits)}. Each interruption can forfeit at most one reserved chunk; repeated interruptions can exhaust the day.</p>
+      </section>}
       {status.progress?.run && <section className="player-import-preview" aria-label="Unattended import status">
-        <h3>LAST PRIVATE RUN</h3><p>{status.progress.run.status.replaceAll("_", " ")} · Sweep day {status.progress.run.sweepDay ?? "Unknown"}</p>
+        <h3>{status.progress.run.source === "website_worker" ? "LAST DAILY REFRESH" : "LAST PRIVATE RUN"}</h3><p>{status.progress.run.status.replaceAll("_", " ")} · Sweep day {status.progress.run.sweepDay ?? "Unknown"}</p>
         <p className="player-muted">Started {savedTime(status.progress.run.startedAt)} · Finished {savedTime(status.progress.run.finishedAt)}.
           Recorded through the last checkpoint: {status.progress.run.usage.profiles ?? "—"} profiles, {status.progress.run.usage.reads ?? "—"} read units,{" "}
           {status.progress.run.usage.writes ?? "—"} writes, {status.progress.run.usage.attempts ?? "—"} HTTP attempts.</p>

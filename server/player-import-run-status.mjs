@@ -9,7 +9,7 @@ export function projectImportRunStatus(job, now) {
   if (!run || run.schemaVersion !== 1 || !identifier(run.id)) return null;
   let status = statuses.has(run.status) ? run.status : "interrupted";
   if (status === "running" && (job.lease?.id !== run.id || job.lease.until <= now)) status = job.paused ? "operator_paused" : "interrupted";
-  return { id: run.id, source: "private_cli", status, writeMode: "apply", startedAt: timestamp(run.startedAt), finishedAt: timestamp(run.finishedAt),
+  return { id: run.id, source: run.source === "website_worker" ? "website_worker" : "private_cli", status, writeMode: "apply", startedAt: timestamp(run.startedAt), finishedAt: timestamp(run.finishedAt),
     sweepId: identifier(job.sweep?.id), sweepDay: typeof job.sweep?.day === "string" && /^\d{4}-\d\d-\d\d$/.test(job.sweep.day) ? job.sweep.day : null,
     intent: ["resume", "daily", "new"].includes(run.intent) ? run.intent : null,
     pendingRetries: typeof run.pendingRetries === "boolean" ? run.pendingRetries : null,

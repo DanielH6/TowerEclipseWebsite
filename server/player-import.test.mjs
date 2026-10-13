@@ -109,10 +109,13 @@ test("checkpoint failure after a successful write safely replays the pending row
 });
 
 test("uncertain summary commits stop the batch and retain the row for verification instead of deleting data", async () => {
-  const f = createPlayerImportFixtures({ count: 5 }); let failed = false;
+  let clock = Date.parse("2026-10-12T03:00:00Z");
+  const f = createPlayerImportFixtures({ count: 5, now: () => clock }); let failed = false;
   f.hooks.afterSet = path => { if (!failed && path.startsWith("tePlayerSummaries/")) { failed = true; throw new Error("synthetic-private-transport-reset"); } };
-  const result = await apply(f.service, await f.service.preview({}, actor)); assert.equal(result.uncertain, true);
-  assert.equal(summaries(f).length, 1); assert.equal(result.progress.modes.main.pending, 5); assert.equal(result.progress.lastBatch[0].reason, "write_uncertain");
+  await assert.rejects(apply(f.service, await f.service.preview({}, actor)), { code: "IMPORT_INTERRUPTED" });
+  assert.equal(summaries(f).length, 1);
+  assert.equal((await f.service.status()).progress.modes.main.pending, 5);
+  clock += 45001;
   f.hooks.afterSet = null; await apply(f.service, await f.service.preview({}, actor)); assert.equal(summaries(f).length, 5);
 });
 
@@ -217,3 +220,24 @@ test("status allowlists persisted diagnostics and rejects malformed progress ins
   value.modes.main.created = { private: "synthetic-private-counter" };
   await assert.rejects(f.service.status(), { code: "IMPORT_TARGET_CHANGED" });
 });
+
+for (const boundary of ["acquisition", "checkpoint", "finalization"]) {
+  test(`manual SET/GET cancellation during ${boundary} preserves newer pause/progress`, async () => {
+    const f = createPlayerImportFixtures({ count: 1 });
+    const preview = await f.service.preview({}, actor);
+    let newer, writesAtLoss;
+    f.hooks.afterSet = async (path, value) => {
+      if (newer || path !== PLAYER_IMPORT_JOB_PATH) return;
+      const matches = boundary === "acquisition" ? value.lease && value.modes.main.attempts === 0
+        : boundary === "checkpoint" ? value.lease && value.modes.main.attempts === 1 : value.lease === null;
+      if (!matches) return;
+      f.hooks.afterSet = null;
+      await f.service.cancel();
+      newer = structuredClone(f.records.get(PLAYER_IMPORT_JOB_PATH));
+      writesAtLoss = f.writes.length;
+    };
+    await assert.rejects(apply(f.service, preview), { code: "IMPORT_LEASE_LOST" });
+    assert.deepEqual(f.records.get(PLAYER_IMPORT_JOB_PATH), newer);
+    assert.equal(f.writes.length, writesAtLoss);
+  });
+}
