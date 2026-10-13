@@ -1,5 +1,7 @@
-import "dotenv/config";
+import { loadBackendEnvironment } from "./backend-environment.mjs";
 import { MAX_IMAGES_PER_UPDATE } from "./update-content.mjs";
+
+loadBackendEnvironment();
 
 function optional(name) {
   const value = process.env[name]?.trim();

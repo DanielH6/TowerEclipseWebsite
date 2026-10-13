@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { gameDataError, validatePlayerId } from "./game-data-domain.mjs";
 import { boundedOperation, compareSummaryImportSnapshot, createSummaryImportCandidate, validateSummaryImportCandidate } from "./player-summary-import.mjs";
 import { projectImportRunStatus } from "./player-import-run-status.mjs";
+import { validateDailyImportState, projectDailyImportState } from "./player-import-schedule.mjs";
 
 export const PLAYER_IMPORT_LIMITS = Object.freeze({ pageSize: 5, requestMs: 18000, operationMs: 8000, leaseMs: 45000, previewMs: 300000, tokenBytes: 65536 });
 const modes = ["main", "battlefront"];
@@ -35,6 +36,7 @@ export function decodePlayerImportJob(snapshot, targetFingerprint) {
           && typeof state.done === "boolean" && typeof state.pageLoaded === "boolean"
           && ["pages", "observed", "rejectedKeys", "attempts", "created", "updated", "unchanged", "skipped", "failures"].every(key => Number.isSafeInteger(state[key]) && state[key] >= 0);
       })) throw fail("IMPORT_TARGET_CHANGED", "The checkpoint belongs to a different source configuration or needs review before resuming.");
+    validateDailyImportState(snapshot.value.daily);
     return structuredClone(snapshot.value);
 }
 
@@ -49,7 +51,7 @@ export function createPlayerImportService({ store, lister, reader, identities, s
     updatedAt: value.updatedAt, modes: Object.fromEntries(modes.map(mode => { const state = value.modes[mode]; return [mode, {
       done: state.done, pending: state.pending.length, pages: state.pages, observed: state.observed, rejectedKeys: state.rejectedKeys,
       attempts: state.attempts, created: state.created, updated: state.updated, unchanged: state.unchanged, skipped: state.skipped, failures: state.failures,
-    }]; })), lastBatch: publicResults(value.lastBatch), run: projectImportRunStatus(value, now()) });
+    }]; })), lastBatch: publicResults(value.lastBatch), run: projectImportRunStatus(value, now()), daily: projectDailyImportState(value, now()) });
   function open(token, actor) {
     if (typeof token !== "string" || token.length > PLAYER_IMPORT_LIMITS.tokenBytes) throw fail("INVALID_IMPORT_PREVIEW", "Create a new preview before applying.");
     const [text, signature, extra] = token.split(".");
@@ -69,7 +71,7 @@ export function createPlayerImportService({ store, lister, reader, identities, s
       if (!enabled) return { enabled: false, target: null, coverage: "unknown", limits: PLAYER_IMPORT_LIMITS, progress: null };
       const current = job(await io(s => store.readJob(s), signal));
       return { enabled: true, target, coverage: "unknown", limits: PLAYER_IMPORT_LIMITS, progress: view(current),
-        strategy: "The panel applies reviewed batches. The private CLI can continue an approved bounded sweep using the same lease. Scheduling is external; this server starts no timer." };
+        strategy: "Reviewed batches, the private CLI and the opt-in website daily worker share durable progress and one importer lease." };
     },
     async preview({ mode = "main", restart = false } = {}, actor, signal) {
       available();
@@ -127,7 +129,7 @@ export function createPlayerImportService({ store, lister, reader, identities, s
           expiresAt: new Date(plan.expiresAt).toISOString(), budget: {
             previewSummaryWrites: 0, previewCheckpointWrites: 0, maxSourceHttpAttempts: 3 * (1 + state.pending.length), maxIdentityRequests: state.pending.length ? 1 : 0,
             maxPreviewSummaryReads: state.pending.length, maxPreviewCheckpointReads: 1,
-            maxApplySummaryReads: state.pending.length, maxApplySummaryWrites: writable, maxApplyCheckpointReads: rows.length * 2 + 3,
+            maxApplySummaryReads: state.pending.length, maxApplySummaryWrites: writable, maxApplyCheckpointReads: rows.length * 3 + 3,
             maxApplyCheckpointWrites: rows.length + 2, requestSeconds: PLAYER_IMPORT_LIMITS.requestMs / 1000,
           } };
       }, signal);
@@ -146,8 +148,15 @@ export function createPlayerImportService({ store, lister, reader, identities, s
         current.modes[plan.mode] = plan.state; current.lastBatch = [];
         const persist = async () => {
           current.updatedAt = new Date(now()).toISOString();
-          previous = await io(s => store.writeJob(current, previous, s), budgetSignal);
-          if (previous.value?.lease?.id !== leaseId) throw fail("IMPORT_LEASE_LOST", "Batch stopped. Refresh progress before continuing.");
+          const saved = await io(s => store.writeJob(current, previous, s), budgetSignal);
+          if (saved.value?.lease?.id !== leaseId) throw fail("IMPORT_LEASE_LOST", "Batch stopped. Refresh progress before continuing.");
+          previous = saved;
+        };
+        const guard = async () => {
+          const latest = await io(s => store.readJob(s), budgetSignal);
+          if (latest.updateTime !== previous.updateTime || latest.value?.lease?.id !== leaseId || latest.value.lease.until <= now()) {
+            throw fail("IMPORT_LEASE_LOST", "Batch stopped. Refresh progress before continuing.");
+          }
         };
         try { await persist(); }
         catch (error) { if (conflict(error)) throw fail("IMPORT_BUSY", "Another operator started first. Refresh status."); throw error; }
@@ -156,8 +165,7 @@ export function createPlayerImportService({ store, lister, reader, identities, s
           for (const row of plan.rows) {
             if (budgetSignal.aborted) break;
             // Check the durable lease and operator cancellation before each row.
-            const latest = await io(s => store.readJob(s), budgetSignal);
-            if (latest.updateTime !== previous.updateTime || latest.value?.lease?.id !== leaseId || latest.value.lease.until <= now()) throw fail("IMPORT_LEASE_LOST", "Batch stopped. Refresh progress before continuing.");
+            await guard();
             const result = { userId: row.userId, action: row.action, ...(row.reason ? { reason: row.reason } : {}) };
             if (row.candidate && ["create", "update", "unchanged"].includes(row.action)) {
               const existing = await io(s => store.readSummary(plan.mode, row.userId, s), budgetSignal);
@@ -166,6 +174,10 @@ export function createPlayerImportService({ store, lister, reader, identities, s
               else if (decision.action === "unchanged") result.action = "unchanged";
               else if (!["create", "update"].includes(row.action)) { result.action = "retry"; result.reason = "concurrent_index_change"; }
               else {
+                // This guard observes cancellation, but a submitted write can
+                // still finish after it. Summary CAS protects that document;
+                // it is not an atomic transaction with the importer lease.
+                await guard();
                 try {
                   await io(s => store.writeSummary(plan.mode, row.userId, row.candidate, existing, s), budgetSignal);
                   result.action = decision.action === "create" ? "created" : "updated";
@@ -175,6 +187,7 @@ export function createPlayerImportService({ store, lister, reader, identities, s
                 }
               }
             }
+            if (uncertain) throw fail("IMPORT_INTERRUPTED", "Summary write acknowledgement was uncertain. Wait for the lease to expire before resuming.", 503);
             state.attempts++;
             const terminal = ["created", "updated", "unchanged"].includes(result.action) || (result.action === "skip" && terminalSkip(result.reason));
             if (terminal) { state.pending = state.pending.filter(id => id !== row.userId); if (result.action === "skip") state.skipped++; else state[result.action]++; }
@@ -183,7 +196,6 @@ export function createPlayerImportService({ store, lister, reader, identities, s
             // A crash after a summary write but before this checkpoint replays
             // that row. Summary fingerprints/CAS make the replay idempotent.
             await persist();
-            if (uncertain) break;
           }
           if (!state.pending.length) { state.cursor = state.nextCursor; state.pageLoaded = false; state.done = !state.nextCursor; }
           current.lease = null;

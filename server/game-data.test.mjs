@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { requireAuth, requireRole, requireCsrf } from "./auth-context.mjs";
 import { createConfiguredPlayerImport } from "./player-import-runtime.mjs";
+import { createPlayerImportStore } from "./player-import-store.mjs";
+import { createPlayerImportWorker, dailyPlayerImportEnabled } from "./player-import-worker.mjs";
 import { createPlayerImportRouter } from "./player-import-routes.mjs";
 import { GAME_DATA_LIMITS, gameDataEnabled, readGameDataConfiguration } from "./game-data-config.mjs";
 import { decodeSavedProfile, projectPlayerSummary, redactGameData, validatePlayerId } from "./game-data-domain.mjs";
@@ -194,6 +196,7 @@ test("disabled production mount starts without new reads or credentials, both ro
   // Execute only the actual feature mount, not the production bootstrap whose
   // pre-existing Firebase/auth startup requires real credential configuration.
   vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey, appOrigin: "http://127.0.0.1:4317" }, process: { env: {} },
+    createPlayerImportStore, createPlayerImportWorker, dailyPlayerImportEnabled: () => dailyPlayerImportEnabled({}),
     createConfiguredPlayerImport, createPlayerImportRouter, requireCsrf, createGameDataService, createUnavailableProfileReader, createFirestoreSummaryIndex, createGameDataRouter, createConfiguredProfileReader,
     readGameDataConfiguration: () => readGameDataConfiguration({}), requireAuth: auth, requireRole });
   assert.equal(databaseCalls, 0);
@@ -229,6 +232,7 @@ test("enabled production mount keeps dev guards and exact reads independent of i
     },
   });
   vm.runInNewContext(source.slice(start, end), { app, db, config: { cookieSecret: signingKey, appOrigin: "http://127.0.0.1:4317" }, process: { env: {} },
+    createPlayerImportStore, createPlayerImportWorker, dailyPlayerImportEnabled: () => dailyPlayerImportEnabled({}),
     createConfiguredPlayerImport, createPlayerImportRouter, requireCsrf, createGameDataService, createConfiguredProfileReader: configuredReader,
     createFirestoreSummaryIndex, createGameDataRouter, readGameDataConfiguration: () => readGameDataConfiguration(environment), requireAuth: auth, requireRole });
   assert.equal(profileCalls, 0); assert.equal(indexCalls, 0, "startup performs no reads even when fully configured");
