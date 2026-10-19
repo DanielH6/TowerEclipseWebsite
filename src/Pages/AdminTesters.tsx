@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { loadAccountResource } from "../api";
 import { Link } from "../router";
 import RoleBadge from "../Components/RoleBadge";
+import { ROLE_LABELS } from "../roles";
 import type { AccountReports, AccountStats, AccountEvent } from "../types";
 import "./Bugs.css";
 
-type Tester = { discordId: string; username: string; displayName: string; avatarUrl: string | null; role: "qa" | "leadqa"; roleVerifiedAt: string; firstLoginAt: string };
+type Tester = { discordId: string; username: string; displayName: string; avatarUrl: string | null; role: "qa" | "pentester" | "leadqa"; roleVerifiedAt: string; firstLoginAt: string };
 type Detail = AccountReports & { stats: AccountStats; activity: AccountEvent[]; onboarding: { version: string; completed: Record<string, string> } | null };
 const date = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 
@@ -70,11 +71,11 @@ export default function AdminTestersPage() {
   const visible = testers.filter(tester => (!role || tester.role === role) && `${tester.displayName} ${tester.username} ${tester.discordId}`.toLowerCase().includes(search.toLowerCase()));
   const tester = testers.find(item => item.discordId === selected);
   return <section className="workspace-page">
-    <div className="workspace-header"><div><p className="workspace-kicker">DEVELOPER ADMIN</p><h2>TESTER OVERVIEW</h2><p>Connected website accounts with a last verified QA Tester or QA Lead rank.</p></div><div className="button-row"><Link className="ghost-link" to="/admin">ADMIN</Link><button className="primary-action" disabled={loading} onClick={() => setRevision(value => value + 1)}>REFRESH</button></div></div>
+    <div className="workspace-header"><div><p className="workspace-kicker">DEVELOPER ADMIN</p><h2>TESTER OVERVIEW</h2><p>Connected website accounts with a last verified QA Tester, PEN Tester or QA Lead rank.</p></div><div className="button-row"><Link className="ghost-link" to="/admin">ADMIN</Link><button className="primary-action" disabled={loading} onClick={() => setRevision(value => value + 1)}>REFRESH</button></div></div>
     <p>Ranks are checked when users sign in or refresh their Discord role. This is not a live Discord member list or online-status tracker. Existing accounts appear after their next sign-in or account refresh.</p>
-    <div className="bug-filters"><label className="filter-field filter-search"><span>Find tester</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, username, Discord ID…" /></label><label className="filter-field"><span>Rank</span><select value={role} onChange={event => setRole(event.target.value)}><option value="">All testers</option><option value="qa">QA Tester</option><option value="leadqa">QA Lead</option></select></label></div>
+    <div className="bug-filters"><label className="filter-field filter-search"><span>Find tester</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, username, Discord ID…" /></label><label className="filter-field"><span>Rank</span><select value={role} onChange={event => setRole(event.target.value)}><option value="">All testers</option><option value="qa">QA Tester</option><option value="pentester">PEN Tester</option><option value="leadqa">QA Lead</option></select></label></div>
     {loading && <p role="status">Loading testers…</p>}{error && <p className="workspace-error" role="alert">{error}</p>}
     {limited && <p role="status">Showing up to 500 accounts per rank. Directory results are incomplete.</p>}
-    {!loading && !error && <><p>{visible.length} tester{visible.length === 1 ? "" : "s"}</p><div className="tester-layout"><div className="tester-list">{visible.map(item => <button className={`tester-select${selected === item.discordId ? " is-selected" : ""}`} aria-pressed={selected === item.discordId} key={item.discordId} onClick={() => setSelected(item.discordId)}><strong>{item.displayName}</strong><span>@{item.username} · {item.role === "leadqa" ? "QA Lead" : "QA Tester"}</span><small>Verified {date(item.roleVerifiedAt)}</small></button>)}{!visible.length && <p>No testers match. Accounts appear after a verified sign-in.</p>}</div>{tester ? <TesterHistory tester={tester} key={`${tester.discordId}:${revision}`} /> : <p>Select a tester to view their report history and activity.</p>}</div></>}
+    {!loading && !error && <><p>{visible.length} tester{visible.length === 1 ? "" : "s"}</p><div className="tester-layout"><div className="tester-list">{visible.map(item => <button className={`tester-select${selected === item.discordId ? " is-selected" : ""}`} aria-pressed={selected === item.discordId} key={item.discordId} onClick={() => setSelected(item.discordId)}><strong>{item.displayName}</strong><span>@{item.username} · {ROLE_LABELS[item.role]}</span><small>Verified {date(item.roleVerifiedAt)}</small></button>)}{!visible.length && <p>No testers match. Accounts appear after a verified sign-in.</p>}</div>{tester ? <TesterHistory tester={tester} key={`${tester.discordId}:${revision}`} /> : <p>Select a tester to view their report history and activity.</p>}</div></>}
   </section>;
 }

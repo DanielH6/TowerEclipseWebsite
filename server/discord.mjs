@@ -133,6 +133,10 @@ export function mapDiscordRole(roleIds) {
     return "leadqa";
   }
 
+  if (roleSet.has(config.discord.roleIds.pentester)) {
+    return "pentester";
+  }
+
   if (roleSet.has(config.discord.roleIds.qa)) {
     return "qa";
   }
@@ -146,6 +150,8 @@ export function roleLabel(role) {
       return "Member";
     case "leadqa":
       return "QA Lead";
+    case "pentester":
+      return "PEN Tester";
     case "qa":
       return "QA Tester";
     case "dev":

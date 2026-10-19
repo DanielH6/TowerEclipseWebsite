@@ -205,7 +205,7 @@ test("disabled production mount starts without new reads or credentials, both ro
   const base = `http://127.0.0.1:${server.address().port}/api/admin/game-data/players`;
   for (const suffix of ["", "/123"]) {
     assert.equal((await fetch(base + suffix)).status, 401);
-    assert.equal((await fetch(base + suffix, { headers: { "X-Test-Role": "member" } })).status, 403);
+    for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await fetch(base + suffix, { headers: { "X-Test-Role": role } })).status, 403);
     const disabled = await fetch(base + suffix, { headers: { "X-Test-Role": "dev" } });
     assert.equal(disabled.status, 503); assert.equal((await disabled.json()).code, "VIEWER_DISABLED");
   }
@@ -241,7 +241,7 @@ test("enabled production mount keeps dev guards and exact reads independent of i
   const base = `http://127.0.0.1:${server.address().port}/api/admin/game-data/players`;
   for (const suffix of ["", "/123"]) {
     assert.equal((await fetch(base + suffix)).status, 401);
-    for (const role of ["member", "qa", "leadqa"]) assert.equal((await fetch(base + suffix, { headers: { "X-Test-Role": role } })).status, 403);
+    for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await fetch(base + suffix, { headers: { "X-Test-Role": role } })).status, 403);
   }
   assert.equal(profileCalls, 0); assert.equal(indexCalls, 0);
   const options = { headers: { "X-Test-Role": "dev" } };
@@ -300,7 +300,7 @@ test("Firestore list uses bounded projection, stable snapshot, cursor and only r
   assert.ok(!calls.some(call => ["set", "update", "delete"].includes(call[0])));
 });
 
-test("real server role guard rejects anonymous/member/QA/leadQA; dev allowed; errors/rate limits safe", async t => {
+test("real server role guard rejects anonymous/member/QA/PEN/leadQA; dev allowed; errors/rate limits safe", async t => {
   const app = express(); let calls = 0;
   const auth = (req, res, next) => { const role = req.get("X-Test-Role"); if (!role) return res.status(401).json({ error: "Authentication required." }); req.authSession = { role }; req.authUser = { id: `fixture-${role}` }; next(); };
   app.use("/data", createGameDataRouter({ service: { list: async () => { calls++; return {}; }, profile: async id => { validatePlayerId(id); calls++; return {}; } }, requireAuth: auth, requireAdmin: requireRole("dev"), requestsPerMinute: 4 }));
@@ -309,7 +309,7 @@ test("real server role guard rejects anonymous/member/QA/leadQA; dev allowed; er
   const base = `http://127.0.0.1:${server.address().port}/data/players`;
   for (const path of ["", "/123"]) {
     assert.equal((await fetch(base + path)).status, 401);
-    for (const role of ["member", "qa", "leadqa"]) assert.equal((await fetch(base + path, { headers: { "X-Test-Role": role } })).status, 403);
+    for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await fetch(base + path, { headers: { "X-Test-Role": role } })).status, 403);
   }
   assert.equal(calls, 0);
   const options = { headers: { "X-Test-Role": "dev" } };

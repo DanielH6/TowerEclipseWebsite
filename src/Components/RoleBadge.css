@@ -26,6 +26,12 @@
   color: #111;
 }
 
+.role-badge[data-role="pentester"] {
+  border-color: #ff7474;
+  color: #fff;
+  background: #b91c1c;
+}
+
 .role-badge[data-role="dev"] {
   background: #0369a1;
 }

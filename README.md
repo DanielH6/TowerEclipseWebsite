@@ -29,9 +29,13 @@ API health: `http://localhost:3001/api/health`
 
 ### Browser CSP regression check
 
-Run `npm run test:list-csp` (or `PLAYWRIGHT_CHANNEL=chrome npm run test:list-csp` with installed Google Chrome). It builds the site and uses a local server, disposable in-memory list, and fake image storage. It verifies thumbnail upload/preview/publication and both local fonts with `blob:` images and external fonts blocked, asserting zero CSP violations. No production data is touched.
+Run `npm run test:list-csp` (or `PLAYWRIGHT_CHANNEL=chrome npm run test:list-csp` with installed Google Chrome). It builds the site and uses a local server, disposable in-memory list, and fake image storage. It verifies thumbnail upload/preview/publication and local Montserrat weights with `blob:` images and external fonts blocked, asserting zero CSP violations. No production data is touched.
 
 Page and API deployments may set different response headers. The CSP on the HTML document (`/list` or `/admin/list`) governs its images and fonts; checking `/api/health` alone does not verify that policy. Thumbnail validation uses permitted `data:` images, and fonts are bundled in `public/fonts/`. Automatic YouTube thumbnails still require `https://i.ytimg.com` in the **frontend document's** `img-src` policy.
+
+## Homepage video
+
+The featured video is configured in `src/content/homeContent.ts`. Its locally served thumbnail (`public/home/game-video.jpg`) links directly to the YouTube video. This works with the current frontend CSP, which blocks third-party frames and YouTube thumbnail hosts. Playback opens on YouTube; the homepage does not load an embedded player or autoplay media.
 
 ## Environment
 
@@ -48,12 +52,14 @@ Publish `firestore.rules`. Browser access is denied; the Node API uses the Fireb
 ## Attachment permissions
 
 ```text
-QA:      own pending reports
+QA/PEN:  own pending reports
 QA Lead: non-terminal reports
 Dev:     every report, including terminal reports
 ```
 
 QA Leads remain comments-only after a report becomes terminal. Only developers can reopen terminal reports.
+
+`DISCORD_ROLE_PENTESTER_ID` defaults to `1369651343010299995`. This role displays as **PEN Tester** in red and has the same bug-report, comment, own-pending-report editing, attachment and account-workspace permissions as QA Tester. It does not grant QA Lead or Developer permissions. Role priority is Developer (including Owner/Admin), QA Lead, PEN Tester, QA Tester, then Member. After deployment, existing users can use **RE-CHECK DISCORD ROLE** in Account or sign in again to refresh their rank.
 
 ## Pages
 
@@ -143,7 +149,7 @@ The persistent dictionary/bug cache is designed for one active Node backend. If 
 
 Public Roblox launch instructions, production environment values, and policy review details are in [Roblox public launch](docs/roblox-public-launch.md). The public operator/contact details are in `src/content/legalContent.tsx`; the prepared policies use Eclipse Development Studio, Australia, and contact@towereclipse.com.
 
-`/login` remains the Account navigation destination. Discord sign-in now returns to this account home instead of redirecting to the public bug list. All Discord members receive a profile and Connections section; QA Testers, QA Leads, and Developers (including the existing Discord Admin mapping) also receive personal reports, activity, statistics, and a contribution calendar.
+`/login` remains the Account navigation destination. Discord sign-in now returns to this account home instead of redirecting to the public bug list. All Discord members receive a profile and Connections section; QA Testers, PEN Testers, QA Leads, and Developers (including the existing Discord Admin mapping) also receive personal reports, activity, statistics, and a contribution calendar.
 
 The dashboard uses the existing website Firestore project. It does not read or write the Tower Eclipse player-data mirror. Roblox identity linking uses Roblox OAuth with `openid profile`; see [Roblox linking setup](docs/roblox-account-linking.md) to register the app and enable the flow. Personal game statistics remain a future feature.
 
@@ -207,7 +213,7 @@ Read [Careers setup and operating guide](docs/careers.md) before launch. It incl
 
 - **Bug Reports → Export Data** exports all applied-filter matches across pages as formatted JSON, with copy, select-text, and download options. It uses the same hydrated dictionary values and public filter function as the table. Unfinished uploads are excluded. Public comments and ready attachment metadata/links are included; internal developer notes are not. No data is sent to an AI provider. Attachment URLs may expire and file binaries are not bundled.
 - The list and export now cover all submitted reports. Pages, dictionaries, comments and attachment metadata use a signed Firestore read-time snapshot valid for 45 minutes. Refresh Data creates a new snapshot. Exports are limited to three requests per minute per IP and fail rather than returning a partial file. This public export is not a full private database backup.
-- **Admin → Tester Overview** lists connected profiles last verified as QA Tester or QA Lead, searchable by identity and rank. Each account has a viewer for all-time paginated report history, rolling submission totals, and the most recent 30 updates on its reports. Directory output is capped at 500 per rank with an explicit incomplete-results notice.
+- **Admin → Tester Overview** lists connected profiles last verified as QA Tester, PEN Tester or QA Lead, searchable by identity and rank. Each account has a viewer for all-time paginated report history, rolling submission totals, and the most recent 30 updates on its reports. Directory output is capped at 500 per rank with an explicit incomplete-results notice.
 - The roster is a last-verified snapshot, not a live Discord membership or online-status list. Existing profiles populate after login, auth refresh, or opening Account. A newer verified rank supersedes the stored rank; an older session cannot roll it back. No OAuth credentials, Roblox connections, or notification-read markers are returned in directory rows.
 - Deploy the checked-in `websiteAccounts.verifiedRole` field index before using the directory and `updates.linkedReportIds` array index (`npm run db:indexes -- --apply`, then `npm run db:indexes -- --require-ready` until ready). Existing report/activity indexes are reused. No report-data migration or Discord bot permission is required.
 

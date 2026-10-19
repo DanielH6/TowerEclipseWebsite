@@ -12,10 +12,8 @@ import "./About.css";
 
 const CREDIT_PAGE_SIZE = 4;
 
-function StoryImage({ image, eyebrow, index }: {
+function StoryImage({ image }: {
   image: AboutStorySection["images"][number];
-  eyebrow: string;
-  index: number;
 }) {
   const [failed, setFailed] = useState(false);
   const hasImage = Boolean(image.src);
@@ -30,12 +28,11 @@ function StoryImage({ image, eyebrow, index }: {
           onError={() => setFailed(true)}
         />
       ) : (
-        <div className="about-image-placeholder" role="img" aria-label="About artwork has not been added yet">
-          <span>IMAGE SLOT</span>
-          <strong>{hasImage ? image.src : `ADD IMAGE ${index + 1}`}</strong>
+        <div className="about-image-placeholder" role="img" aria-label={image.alt}>
+          <span>Image unavailable</span>
         </div>
       )}
-      <figcaption>{eyebrow} · {index + 1} OF 3</figcaption>
+      <figcaption>{image.caption}</figcaption>
     </figure>
   );
 }
@@ -94,15 +91,6 @@ function CreditIcon({ name, ...props }: { name: CreditIconName } & SVGProps<SVGS
   );
 }
 
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 function CreditMemberList({
   groupTitle,
   members,
@@ -120,10 +108,9 @@ function CreditMemberList({
       <ul className="credit-member-list">
         {visibleMembers.map((member) => (
           <li key={`${member.name}-${member.handle}`}>
-            <span className="credit-avatar" aria-hidden="true">{initials(member.name)}</span>
             <span className="credit-member-name">
               <strong>{member.name}</strong>
-              <small>{member.handle}</small>
+              {member.handle && <small>{member.handle}</small>}
             </span>
             <span className="credit-role">{member.contribution}</span>
           </li>
@@ -159,10 +146,6 @@ function CreditMemberList({
 }
 
 export default function AboutUs() {
-  const creditBackgroundStyle = {
-    "--credits-background": `url(${ABOUT_CREDITS.backgroundImage})`,
-  } as CSSProperties;
-
   return (
     <div className="about-page">
       <section className="about-introduction" aria-labelledby="about-intro-title">
@@ -173,11 +156,10 @@ export default function AboutUs() {
 
       <section className="about-story-band" aria-label="Our story">
         <div className="about-story-list">
-          {ABOUT_STORY_SECTIONS.map((section, index) => (
+          {ABOUT_STORY_SECTIONS.map((section) => (
             <article className="about-story-card" key={section.title}>
               <div className="about-story-copy">
-                <span className="about-story-number" aria-hidden="true">0{index + 1}</span>
-                <p className="about-eyebrow">{section.eyebrow}</p>
+                {section.eyebrow && <p className="about-eyebrow">{section.eyebrow}</p>}
                 <h2>{section.title}</h2>
                 <p className="about-byline">{section.byline}</p>
                 <div className="about-story-paragraphs">
@@ -185,8 +167,8 @@ export default function AboutUs() {
                 </div>
               </div>
               <div className="about-story-images" aria-label={`${section.title} image gallery`}>
-                {section.images.map((image, imageIndex) => (
-                  <StoryImage image={image} eyebrow={section.eyebrow} index={imageIndex} key={imageIndex} />
+                {section.images.map((image) => (
+                  <StoryImage image={image} key={image.src} />
                 ))}
               </div>
             </article>
@@ -195,19 +177,11 @@ export default function AboutUs() {
       </section>
 
       <section className="credits-wrap" aria-labelledby="credits-title">
-        <div className="credits-board" style={creditBackgroundStyle}>
+        <div className="credits-board">
           <header className="credits-header">
-            <div>
-              <p className="about-eyebrow">{ABOUT_CREDITS.eyebrow}</p>
-              <h2 id="credits-title">{ABOUT_CREDITS.title}</h2>
-            </div>
+            <h2 id="credits-title">{ABOUT_CREDITS.title}</h2>
             <p className="credits-thank-you">{ABOUT_CREDITS.thankYou}</p>
           </header>
-
-          <div className="credits-message">
-            <CreditIcon name="supporters" />
-            <p>{ABOUT_CREDITS.message}</p>
-          </div>
 
           <div className="credits-grid">
             {CREDIT_GROUPS.map((group) => (
@@ -228,24 +202,10 @@ export default function AboutUs() {
                   <CreditMemberList groupTitle={group.title} members={group.members} />
                 )}
 
-                {group.acknowledgements && (
-                  <div className="credit-acknowledgements">
-                    {group.acknowledgements.map((acknowledgement) => (
-                      <span key={acknowledgement}>{acknowledgement}</span>
-                    ))}
-                  </div>
-                )}
-
                 {group.closingNote && <p className="credit-closing-note">{group.closingNote}</p>}
               </article>
             ))}
           </div>
-
-          <p className="credits-footer-line">
-            <span aria-hidden="true" />
-            THANK YOU FOR BEING PART OF TOWER ECLIPSE
-            <span aria-hidden="true" />
-          </p>
         </div>
       </section>
     </div>

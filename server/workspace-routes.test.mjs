@@ -13,10 +13,15 @@ test('workspace HTTP routes reject members, enforce CSRF and scope queue/progres
   const request = (path, role, method = 'GET', headers = {}, body) => fetch(base + path, { method, headers: { ...(role ? { 'X-Test-Role': role } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   for (const path of ['/account/onboarding', '/account/queues']) {
     assert.equal((await request(path)).status, 401); assert.equal((await request(path, 'member')).status, 403);
-    for (const role of ['qa','leadqa','dev']) { assert.equal((await request(path, role)).status, 200); assert.equal((await request(path, role, 'PUT')).status, 403); }
+    for (const role of ['qa','pentester','leadqa','dev']) { assert.equal((await request(path, role)).status, 200); assert.equal((await request(path, role, 'PUT')).status, 403); }
   }
   assert.equal((await request('/admin', 'qa')).status, 403); assert.equal((await request('/admin', 'member')).status, 403); assert.equal((await request('/admin', 'dev')).status, 200);
-  assert.equal((await request('/account/queues', 'qa', 'PUT', { 'X-CSRF-Token': 'test-token', Origin: 'https://wrong.test' })).status, 403);
-  assert.equal((await request('/account/onboarding', 'qa', 'PUT', { 'X-CSRF-Token': 'test-token', Origin: config.appOrigin, 'Content-Type': 'application/json' }, { userId: 'someone-else' })).status, 200);
-  assert.equal(calls.at(-1).args[0], 'signed-qa');
+  for (const role of ['qa', 'pentester']) {
+    assert.equal((await request('/admin', role)).status, 403);
+    for (const path of ['/account/queues', '/account/onboarding']) {
+      assert.equal((await request(path, role, 'PUT', { 'X-CSRF-Token': 'test-token', Origin: 'https://wrong.test' })).status, 403);
+      assert.equal((await request(path, role, 'PUT', { 'X-CSRF-Token': 'test-token', Origin: config.appOrigin, 'Content-Type': 'application/json' }, { userId: 'someone-else' })).status, 200);
+      assert.equal(calls.at(-1).args[0], `signed-${role}`);
+    }
+  }
 });

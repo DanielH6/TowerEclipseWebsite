@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { accountActivityFields, buildCalendar, createAccountService, DAY_MS, decodeCursor, isAccountStaff } from "./account-service.mjs";
+import { createAdminWorkspaceService } from "./admin-workspace.mjs";
 
 const NOW = Date.parse("2026-09-14T12:00:00Z");
 function fixture(initial = {}) {
@@ -127,9 +128,9 @@ test("calendar uses 365 UTC days, excludes drafts, and explicitly signals its re
   assert.equal(buildCalendar(Array.from({ length: 2001 }, () => docs[0]), NOW).limited, true);
 });
 
-test("staff account sections cover QA, QA lead, and Developer, preserving the existing admin mapping", () => {
-  for (const role of ["qa", "leadqa", "dev"]) assert.equal(isAccountStaff(role), true);
-  for (const role of ["member", null, "admin"]) assert.equal(isAccountStaff(role), false);
+test("staff account sections cover QA, PEN Tester, QA lead, and Developer, preserving the existing admin mapping", () => {
+  for (const role of ["qa", "pentester", "leadqa", "dev"]) assert.equal(isAccountStaff(role), true);
+  for (const role of ["member", null, "admin", "PEN Tester"]) assert.equal(isAccountStaff(role), false);
 });
 
  test("pagination retains microsecond timestamp precision", () => {
@@ -163,4 +164,37 @@ test("tester viewer scopes report history, counts and update activity to selecte
   const detail = await service.tester("123456");
   assert.deepEqual(detail.reports.map(item => item.id), ["one"]);
   assert.equal(detail.stats.counts.lifetime, 1);
+});
+
+test("PEN Tester profiles join the tester directory and count, while unrelated stored ranks stay excluded", async () => {
+  const { db, records } = fixture({
+    "bugReports/pen": report("123456"),
+    "bugReports/other": report("654321"),
+    "bugReports/pen/activity/update": { recipientId: "123456", createdAt: new Date(NOW), reportId: "pen", accountSummary: "updated your report" },
+    "bugReports/other/activity/update": { recipientId: "654321", createdAt: new Date(NOW), reportId: "other" },
+  });
+  const service = createAccountService(db, { now: () => NOW });
+  const roles = ["pentester", "qa", "leadqa", "dev", "member", "admin"];
+  for (const [index, role] of roles.entries()) {
+    const id = String(123456 + index);
+    await service.ensureProfile({ id, username: role, displayName: role, avatarUrl: null, role, roleCheckedAt: NOW });
+  }
+  records.get("websiteAccounts/123456").onboarding = { completed: ["read-guidelines"] };
+  assert.equal(records.get("websiteAccounts/123456").verifiedRole, "pentester");
+  assert.deepEqual((await service.testers()).testers.map(tester => tester.role).sort(), ["leadqa", "pentester", "qa"]);
+  const detail = await service.tester("123456");
+  assert.deepEqual(detail.reports.map(item => item.id), ["pen"]);
+  assert.equal(detail.stats.counts.lifetime, 1);
+  assert.deepEqual(detail.activity.map(item => item.reportId), ["pen"]);
+  assert.deepEqual(detail.onboarding, { completed: ["read-guidelines"] });
+  for (const id of ["123459", "123460", "123461"]) await assert.rejects(service.tester(id), { status: 404 });
+
+  const bugs = { snapshot: () => ({ at: new Date(NOW).toISOString() }), async *scan() {} };
+  assert.equal((await createAdminWorkspaceService(db, bugs).overview()).counts.testers, 3);
+
+  await service.ensureProfile({ id: "123456", username: "pentester", displayName: "pentester", avatarUrl: null, role: "member", roleCheckedAt: NOW + 1000 });
+  await service.ensureProfile({ id: "123456", username: "pentester", displayName: "pentester", avatarUrl: null, role: "pentester", roleCheckedAt: NOW });
+  assert.equal(records.get("websiteAccounts/123456").verifiedRole, "member", "an older PEN session cannot restore its display rank");
+  await assert.rejects(service.tester("123456"), { status: 404 });
+  assert.equal((await createAdminWorkspaceService(db, bugs).overview()).counts.testers, 2);
 });

@@ -205,7 +205,7 @@ export default function BugDetailsPage() {
     if (auth.user.role === "leadqa") {
       return details.report.status.terminal !== true;
     }
-    return auth.user.role === "qa" &&
+    return (auth.user.role === "qa" || auth.user.role === "pentester") &&
       details.report.reporter.discordId === auth.user.id &&
       details.report.approval.state === "pending";
   }, [auth, details]);

@@ -151,7 +151,7 @@ async function canModifyAttachments(session, report) {
   const terminal = await statusIsTerminal(report.status);
   if (session.role === "leadqa") return !terminal;
 
-  return session.role === "qa"
+  return (session.role === "qa" || session.role === "pentester")
     && report.reporter?.discordId === session.discordUser.id
     && reportIsPending(report);
 }
@@ -392,7 +392,8 @@ async function patchReport(request, response, next) {
     requireSubmittedReport(current);
     const body = request.body ?? {};
     const session = request.authSession;
-    const isQaOwner = session.role === "qa" && current.reporter?.discordId === session.discordUser.id;
+    const isQaOwner = (session.role === "qa" || session.role === "pentester")
+      && current.reporter?.discordId === session.discordUser.id;
     const isStaff = session.role === "leadqa" || session.role === "dev";
     const currentIsTerminal = await statusIsTerminal(current.status);
 
@@ -954,7 +955,7 @@ async function deleteReport(request, response, next) {
 
 export function createBugRouter() {
   const router = express.Router();
-  const requireBugStaff = requireRole("qa", "leadqa", "dev");
+  const requireBugStaff = requireRole("qa", "pentester", "leadqa", "dev");
 
   router.get("/", listReports);
   router.put("/:reportId/duplicate", requireAuth, requireRole("leadqa", "dev"), requireCsrf, async (request, response) => response.json(await createDuplicateService(db, undefined, statusIsTerminal)(request.params.reportId, request.body?.targetId ?? null, actorSnapshot(request.authSession))));

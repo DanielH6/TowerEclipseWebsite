@@ -3,7 +3,7 @@ import { Timestamp } from "./firestore-timestamp.mjs";
 // Personal routes use the authenticated ID; admin target IDs require the dev-only router guard.
 export const CALENDAR_LIMIT = 2000;
 export const DAY_MS = 86_400_000;
-const STAFF = new Set(["qa", "leadqa", "dev"]);
+const STAFF = new Set(["qa", "pentester", "leadqa", "dev"]);
 export const isAccountStaff = (role) => STAFF.has(role);
 
 export function toIso(value) {
@@ -181,7 +181,7 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
   }
 
   async function testers() {
-    const pages = await Promise.all(["qa", "leadqa"].map(role => db.collection("websiteAccounts")
+    const pages = await Promise.all(["qa", "pentester", "leadqa"].map(role => db.collection("websiteAccounts")
       .where("verifiedRole", "==", role).limit(501)
       .select("discordId", "username", "displayName", "avatarUrl", "verifiedRole", "roleVerifiedAt", "firstLoginAt").get()));
     return { testers: pages.flatMap(page => page.docs.slice(0, 500).map(document => {
@@ -194,7 +194,7 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
   async function tester(userId, query = {}) {
     if (!/^\d{5,25}$/.test(userId)) throw Object.assign(new Error("Invalid tester ID."), { status: 400 });
     const profile = await db.doc(`websiteAccounts/${userId}`).get();
-    if (!profile.exists || !["qa", "leadqa"].includes(profile.data().verifiedRole)) {
+    if (!profile.exists || !["qa", "pentester", "leadqa"].includes(profile.data().verifiedRole)) {
       throw Object.assign(new Error("Tester account not found. Refresh the directory."), { status: 404 });
     }
     const [history, totals, updates] = await Promise.all([reports(userId, query), stats(userId), activity(userId)]);

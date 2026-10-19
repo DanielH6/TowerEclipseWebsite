@@ -22,7 +22,7 @@ test("every import route requires server-derived dev access; every POST requires
     headers: { "Content-Type": "application/json", ...(role ? { "X-Test-Session": role } : {}), ...headers }, ...(method === "POST" ? { body: JSON.stringify(body) } : {}) });
   for (const [action, method] of [["status", "GET"], ["preview", "POST"], ["apply", "POST"], ["cancel", "POST"]]) {
     assert.equal((await request(action, null, method)).status, 401);
-    for (const role of ["member", "qa", "leadqa"]) assert.equal((await request(action, role, method)).status, 403);
+    for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await request(action, role, method)).status, 403);
   }
   assert.equal(calls.length, 0);
   assert.equal((await request("status", "dev", "GET")).status, 200); assert.equal(calls.at(-1).name, "status");

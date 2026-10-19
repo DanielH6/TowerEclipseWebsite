@@ -31,13 +31,13 @@ const { db, documents } = createWorkflowMemoryDb(seed); const accounts = createA
 const app = express(); app.use(express.json());
 // Keep disposable sessions local: never attempt a real Discord refresh.
 app.use((req, _res, next) => { const session = sessionFromRequest(req); if (session) session.roleCheckedAt = Date.now(); next(); });
-app.get('/__test/login/:role', async (req, res) => { if (!['qa', 'leadqa', 'dev', 'member'].includes(req.params.role)) return res.sendStatus(400); const role = req.params.role; const id = role === 'qa' ? '123456789' : `98765432${['member','dev','leadqa'].indexOf(role)}`; const session = createSession({ role, roleCheckedAt: Date.now(), discordUser: { id, username: `fixture_${role}` }, discordMember: { nick: `Fixture ${role}` } }); await accounts.ensureProfile(publicUser(session)); setSignedCookie(res, SESSION_COOKIE, session.id, 3600); res.redirect('/login?tab=onboarding'); });
+app.get('/__test/login/:role', async (req, res) => { if (!['qa', 'pentester', 'leadqa', 'dev', 'member'].includes(req.params.role)) return res.sendStatus(400); const role = req.params.role; const id = role === 'qa' ? '123456789' : `98765432${['member','dev','leadqa','pentester'].indexOf(role)}`; const session = createSession({ role, roleCheckedAt: Date.now(), discordUser: { id, username: `fixture_${role}` }, discordMember: { nick: `Fixture ${role}` } }); await accounts.ensureProfile(publicUser(session)); setSignedCookie(res, SESSION_COOKIE, session.id, 3600); res.redirect('/login?tab=onboarding'); });
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ authenticated: true, user: req.authUser, csrfToken: req.authSession.csrfToken }));
 app.get('/api/dictionaries', (_req, res) => res.json({ dictionaries }));
 app.get('/api/bugs', async (req, res) => res.json(await bugs.list(req.query)));
 app.get('/api/bugs/related', async (req, res) => res.json(await bugs.related(req.query)));
 app.get('/api/bugs/export', async (req, res) => res.json(await bugs.exportData(req.query)));
-app.get('/api/bugs/storage-config', requireAuth, requireRole('qa','leadqa','dev'), (_req, res) => res.json({ attachmentPolicy: { enabled: false, allowedExtensions: ['png'], maxFileSizeBytes: 25000000, maxFilesPerReport: 5 } }));
+app.get('/api/bugs/storage-config', requireAuth, requireRole('qa','pentester','leadqa','dev'), (_req, res) => res.json({ attachmentPolicy: { enabled: false, allowedExtensions: ['png'], maxFileSizeBytes: 25000000, maxFilesPerReport: 5 } }));
 app.get('/api/bugs/:id', (req, res) => res.json({ report: documents.get(`bugReports/${req.params.id}`), attachments: [], comments: [], developerNotes: [], activity: [], relatedUpdates: [], attachmentPolicy: { enabled: false, allowedExtensions: ['png'] } }));
 app.put('/api/bugs/:id/duplicate', requireAuth, requireRole('leadqa','dev'), async (req, res) => res.json(await createDuplicateService(db)(req.params.id, req.body.targetId, req.authUser)));
 app.use('/api/admin/overview', createAdminWorkspaceRouter(createAdminWorkspaceService(db, bugs)));

@@ -22,10 +22,10 @@ export async function createPlayerPreviewApp() {
   app.use(express.json({ limit: "96kb" }));
   app.use((_request, response, next) => { response.set("Cache-Control", "no-store"); next(); });
   app.use((request, _response, next) => {
-    const role = request.headers.cookie?.match(/(?:^|;\s*)player_preview_role=(dev|qa|leadqa|member|guest)(?:;|$)/)?.[1] ?? "dev";
+    const role = request.headers.cookie?.match(/(?:^|;\s*)player_preview_role=(dev|qa|pentester|leadqa|member|guest)(?:;|$)/)?.[1] ?? "dev";
     if (role !== "guest") {
       request.authSession = { role };
-      request.authUser = { id: "synthetic-preview", username: "preview_admin", displayName: "Synthetic preview", role, roleLabel: role === "dev" ? "Developer" : "Member", avatarUrl: null, guildNickname: null };
+      request.authUser = { id: "synthetic-preview", username: "preview_admin", displayName: "Synthetic preview", role, roleLabel: role === "dev" ? "Developer" : role === "pentester" ? "PEN Tester" : "Member", avatarUrl: null, guildNickname: null };
     }
     next();
   });

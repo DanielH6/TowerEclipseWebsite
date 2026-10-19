@@ -73,15 +73,13 @@ export default function News() {
       <div className="news-page-inner">
         <header className="news-heading">
           <div className="news-heading-copy">
-            <p className="workspace-kicker">PATCH NOTES & ANNOUNCEMENTS</p>
             <h2>NEWS</h2>
             <p>Game updates, balancing notes, fixes, and development commentary.</p>
           </div>
-          <div className="news-heading-telemetry" aria-label="Published update archive summary">
-            <div><strong>{loading ? "—" : updates.length}</strong><span>PUBLISHED POSTS</span></div>
-            <div><strong className="news-current-version">{loading ? "—" : currentVersion}</strong><span>CURRENT VERSION</span></div>
-            <p><i /> DEVELOPMENT FEED ONLINE</p>
-          </div>
+          <dl className="news-summary" aria-label="Published update archive summary">
+            <div><dt>Published posts</dt><dd>{loading ? "—" : updates.length}</dd></div>
+            <div><dt>Current version</dt><dd>{loading ? "—" : currentVersion}</dd></div>
+          </dl>
         </header>
 
         {loading && <div className="news-message">Loading updates…</div>}
@@ -93,8 +91,7 @@ export default function News() {
         {!loading && !error && updates.length > 0 && (
           <div className="news-archive-tools">
             <div>
-              <span>UPDATE ARCHIVE</span>
-              <strong>{visibleUpdates.length} OF {updates.length}</strong>
+              <span>{visibleUpdates.length} of {updates.length} posts</span>
             </div>
             <label>
               <span>Search updates</span>

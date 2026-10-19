@@ -6,6 +6,7 @@ export interface AboutStorySection {
   images: Array<{
     src: string;
     alt: string;
+    caption: string;
   }>;
 }
 
@@ -13,7 +14,7 @@ export type CreditIcon = "development" | "contributors" | "quality" | "testing" 
 
 export interface CreditMember {
   name: string;
-  handle: string;
+  handle?: string;
   contribution: string;
 }
 
@@ -50,9 +51,9 @@ export const ABOUT_STORY_SECTIONS: AboutStorySection[] = [
     ],
     // Add or replace these paths as artwork is ready. Each story card always reserves three wide slots.
     images: [
-      { src: "/home/render.jpg", alt: "A render of the tower, Cadet with its weapons facing towards the camera" },
-      { src: "/home/subzero-x-1-map.png", alt: "The map Subzero X-1 in game." },
-      { src: "/home/military-camp-model.png", alt: "The Military Camp model in blender." },
+      { src: "/home/render.jpg", alt: "A render of the tower, Cadet with its weapons facing towards the camera", caption: "Cadet tower render" },
+      { src: "/home/subzero-x-1-map.png", alt: "The map Subzero X-1 in game.", caption: "Subzero X-1 in game" },
+      { src: "/home/military-camp-model.png", alt: "The Military Camp model in blender.", caption: "Military Camp model in Blender" },
     ],
   },
   {
@@ -78,9 +79,9 @@ export const ABOUT_STORY_SECTIONS: AboutStorySection[] = [
     ],
     // Add or replace these paths as artwork is ready. Each story card always reserves three wide slots.
     images: [
-      { src: "/home/version1.jpg", alt: "An image of the original version of the project back from v1.0 in 2024" },
-      { src: "/home/mech-center-leak.png", alt: "An image of the ETF Mech Center model in blender." },
-      { src: "/home/overlord.png", alt: "An image of the Overlord model in blender." },
+      { src: "/home/version1.jpg", alt: "An image of the original version of the project back from v1.0 in 2024", caption: "The original Tower Eclipse, v1.0 in 2024" },
+      { src: "/home/mech-center-leak.png", alt: "An image of the ETF Mech Center model in blender.", caption: "ETF Mech Center model in Blender" },
+      { src: "/home/overlord.png", alt: "An image of the Overlord model in blender.", caption: "Overlord model in Blender" },
     ],
   },
 ];
@@ -158,12 +159,12 @@ export const CREDIT_GROUPS: CreditGroup[] = [
       {
         name: "linxthedeveloper",
         handle: "@supereroulnoptizet",
-        contribution: "X+ Maps, 2 Tower Models, Concept Art",
+        contribution: "Maps, 2 Tower Models, Concept Art",
       },
       {
         name: "railrunner.",
         handle: "@RaiIRunner",
-        contribution: "2 Tower Models, X+ Enemy Models",
+        contribution: "2 Tower Models, Enemy Models",
       },
       {
         name: "vengeful_rivynant",
@@ -187,13 +188,11 @@ export const CREDIT_GROUPS: CreditGroup[] = [
       },
       {
         name: "luomixer",
-        handle: "@?",
         contribution: "Triumph Soundtrack",
       },
       {
         name: ".gviper",
-        handle: "@?",
-        contribution: "X Enemy Models",
+        contribution: "Enemy Models",
       },
       {
         name: "unknown_person_3",
@@ -227,7 +226,6 @@ export const CREDIT_GROUPS: CreditGroup[] = [
       },
       {
         name: "lexdros8888",
-        handle: "@?",
         contribution: "Placeholder Maps",
       },
       {

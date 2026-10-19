@@ -260,7 +260,7 @@ test("HTTP list is public while edits require an admin session, same origin and 
   const write = (role, extra = {}, body = { revision: 0, entries: [entry()] }) => fetch(url, { method: "PUT", headers: { "Content-Type": "application/json", ...(role ? { "X-Test-Role": role } : {}), ...extra }, body: JSON.stringify(body) });
   assert.equal((await fetch(url + "/history")).status, 200); assert.equal((await fetch(url + "/history?before=invalid")).status, 400); assert.equal((await fetch(url)).status, 200); assert.equal((await write()).status, 401);
   const trusted = { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin };
-  for (const role of ["member", "qa", "leadqa"]) assert.equal((await write(role, trusted)).status, 403);
+  for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await write(role, trusted)).status, 403);
   assert.equal((await write("dev")).status, 403);
   assert.equal((await write("dev", { ...trusted, Origin: "https://untrusted.example" })).status, 403);
   assert.equal((await write("dev", { ...trusted, "X-CSRF-Token": "bad" })).status, 403);

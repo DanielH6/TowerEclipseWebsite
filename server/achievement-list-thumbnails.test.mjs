@@ -93,7 +93,7 @@ test("upload endpoints enforce real admin, origin and CSRF guards; public downlo
   const request = (path, method = "GET", headers = {}, body) => fetch(base + path, { method, headers, redirect: "manual", ...(body ? { body: JSON.stringify(body) } : {}) });
   for (const [path, method] of [["/thumbnail-config", "GET"], ["/thumbnails", "POST"], ["/thumbnails/fixture/complete", "POST"], ["/thumbnails/fixture", "DELETE"]]) {
     assert.equal((await request(path, method)).status, 401);
-    for (const role of ["member", "qa", "leadqa"]) assert.equal((await request(path, method, { ...trusted, "X-Test-Role": role })).status, 403);
+    for (const role of ["member", "qa", "pentester", "leadqa"]) assert.equal((await request(path, method, { ...trusted, "X-Test-Role": role })).status, 403);
     if (method !== "GET") {
       assert.equal((await request(path, method, { "X-Test-Role": "dev" })).status, 403);
       assert.equal((await request(path, method, { ...trusted, Origin: "https://untrusted.example" })).status, 403);
