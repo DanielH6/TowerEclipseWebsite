@@ -14,7 +14,7 @@
 .account-identity h3, .account-handle, .account-details dd { overflow-wrap: anywhere; }
 .account-handle { margin: 5px 0 17px; font-size: .79rem; color: #91a6b7; }
 .account-details { text-align: left; border-block: 1px solid #203342; margin: 26px 0 18px; padding: 20px 0; display: grid; gap: 20px; }
-.account-details dt { font-family: "Roboto Mono", monospace; font-size: .54rem; letter-spacing: .12em; color: #8096a8; margin-bottom: 7px; }
+.account-details dt { font-family: "Montserrat", sans-serif; font-size: .54rem; letter-spacing: .12em; color: #8096a8; margin-bottom: 7px; }
 .account-details dd { margin: 0; font-size: .78rem; color: #d8e7f2; }
 .account-connected-dot { display: inline-block; width: 6px; height: 6px; background: #76bdff; border-radius: 50%; margin-right: 5px; }
 .account-session-actions { display: grid; gap: 13px; margin-top: 20px; }
@@ -36,12 +36,12 @@
 .account-periods button[aria-pressed="true"] { background: #213d60; color: #d8f1ff; }
 .account-impact { background: radial-gradient(ellipse at top right, #16324766, transparent 65%), linear-gradient(135deg, #0e1f30, #081521); }
 .account-stat-block { display: flex; align-items: center; gap: 22px; padding: 2px 0 14px; }
-.account-stat-block > strong { font-family: "Roboto Mono", monospace; font-size: clamp(2.5rem, 5vw, 3.7rem); letter-spacing: -.07em; color: #b5daff; line-height: 1.3; }
+.account-stat-block > strong { font-family: "Montserrat", sans-serif; font-size: clamp(2.5rem, 5vw, 3.7rem); letter-spacing: -.07em; color: #b5daff; line-height: 1.3; }
 .account-stat-block h4 { font-size: .82rem; margin: 0 0 7px; }
 .account-stat-block p { color: #8fa8bb; font-size: .69rem; margin: 0; }
 .account-stat-decoration { color: #34546c; margin-left: auto; font-size: 3rem; }
 .account-footnote { font-size: .63rem; line-height: 1.7; color: #8299ad; margin: 16px 0 0; }
-.account-tag { display: inline-block; width: max-content; flex-shrink: 0; color: #9bb6cd; background: #132435; border: 1px solid #294256; border-radius: 4px; padding: 5px 7px; font-family: "Roboto Mono", monospace; letter-spacing: .07em; font-size: .5rem; }
+.account-tag { display: inline-block; width: max-content; flex-shrink: 0; color: #9bb6cd; background: #132435; border: 1px solid #294256; border-radius: 4px; padding: 5px 7px; font-family: "Montserrat", sans-serif; letter-spacing: .07em; font-size: .5rem; }
 .account-tag.is-connected { color: #9bcfff; border-color: #36577d; background: #142a43; }
 .account-calendar-scroll { overflow-x: auto; padding: 6px 0 10px; scrollbar-color: #2c4b63 #0c1b28; }
 .account-calendar { display: flex; gap: 4px; width: max-content; min-width: 100%; }
@@ -61,7 +61,7 @@
 .account-report { display: flex; align-items: center; gap: 15px; padding: 19px 0; border-top: 1px solid #1d3242; color: inherit; text-decoration: none; }
 .account-report:hover { background: #17314544; }
 .account-report-copy { flex: 1; min-width: 0; }
-.account-report-id { display: flex; flex-wrap: wrap; gap: 12px; font-family: "Roboto Mono", monospace; font-size: .59rem; color: #96c8e9; }
+.account-report-id { display: flex; flex-wrap: wrap; gap: 12px; font-family: "Montserrat", sans-serif; font-size: .59rem; color: #96c8e9; }
 .account-report-id > span { font-family: "Montserrat", sans-serif; color: #8c9fae; }
 .account-report-copy > strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-weight: 500; font-size: .79rem; line-height: 1.7; margin: 7px 0; }
 .account-report-meta { color: #809aad; font-size: .62rem; }
@@ -150,7 +150,7 @@
 .content-band.account-dashboard::before { background: radial-gradient(circle at 50% 0%, rgba(118, 189, 255, .10), transparent 40%), linear-gradient(180deg, rgba(3, 11, 22, .7), rgba(3, 11, 22, .96)); }
 .account-profile-link { color: var(--account-accent); text-decoration: none; overflow-wrap: anywhere; }
 .account-profile-link:hover { text-decoration: underline; }
-.account-roblox-id { display: block; margin-top: 7px; color: #94abc4; font-family: "Roboto Mono", monospace; font-size: .62rem; }
+.account-roblox-id { display: block; margin-top: 7px; color: #94abc4; font-family: "Montserrat", sans-serif; font-size: .62rem; }
 .account-connection-actions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 8px; }
 .account-link-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; padding: 28px; color: #e5effa; background: #0c192b; border: 1px solid #365a80; border-radius: 10px; box-shadow: 0 20px 80px #0009; }
 .account-link-dialog::backdrop { background: #010711bb; backdrop-filter: blur(4px); }

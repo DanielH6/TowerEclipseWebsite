@@ -76,12 +76,12 @@ try {
   await page.getByRole("link", { name: "VIEW PUBLIC LIST" }).click();
   await page.waitForFunction(() => document.querySelector(".achievement-thumbnail > img")?.naturalWidth > 0);
   const fonts = await page.evaluate(async () => {
-    const loaded = await Promise.all([document.fonts.load('500 16px "Montserrat"'), document.fonts.load('600 16px "Roboto Mono"')]);
+    const loaded = await Promise.all([document.fonts.load('500 16px "Montserrat"'), document.fonts.load('600 16px "Montserrat"')]);
     return loaded.map(faces => faces.map(face => face.status));
   });
   assert.deepEqual(fonts, [["loaded"], ["loaded"]]);
   assert.deepEqual(errors, []);
   assert.deepEqual(violations, []);
   assert.deepEqual(externalRequests, []);
-  console.log("PASS: corrupt image rejected; PNG upload, preview, publication and public thumbnail work with blob: blocked; both local fonts load; zero CSP violations or external requests. Isolated storage only.");
+  console.log("PASS: corrupt image rejected; PNG upload, preview, publication and public thumbnail work with blob: blocked; local Montserrat loads at both weights; zero CSP violations or external requests. Isolated storage only.");
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

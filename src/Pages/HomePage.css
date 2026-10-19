@@ -50,7 +50,7 @@
 .home-overline {
   margin: 0;
   color: #76bdff;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.19em;
@@ -157,7 +157,7 @@
 
 .readout-label {
   color: #76bdff;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -188,7 +188,7 @@
 
 .readout-metrics span {
   color: #899ba8;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.51rem;
   line-height: 1.45;
 }
@@ -207,7 +207,7 @@
   justify-items: center;
   gap: 10px;
   color: rgba(219, 240, 242, 0.68);
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.53rem;
   letter-spacing: 0.18em;
   text-decoration: none;
@@ -331,7 +331,7 @@
   padding: 24px;
   color: rgba(226, 250, 252, 0.42);
   background: linear-gradient(135deg, rgba(140, 239, 241, 0.11), transparent 55%), #07101a;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.18em;

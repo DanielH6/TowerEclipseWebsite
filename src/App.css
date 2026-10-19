@@ -73,7 +73,7 @@
 .wordmark-copy small,
 .footer-brand span {
   color: #7c98a6;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.46rem;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -154,28 +154,19 @@
   padding: 0 clamp(20px, 4vw, 58px);
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   border-bottom: 1px solid rgba(143, 230, 236, 0.09);
   color: #88a4b1;
   background: rgba(3, 10, 17, 0.77);
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.51rem;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
 
-.status-indicator {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #8ceff1;
-  box-shadow: 0 0 12px rgba(140, 239, 241, 0.78);
-}
-
 .stats-row {
-  margin-left: auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
   border-left: 1px solid rgba(143, 230, 236, 0.12);
 }
@@ -186,7 +177,7 @@
   display: grid;
   align-content: center;
   border-right: 1px solid rgba(143, 230, 236, 0.12);
-  text-align: right;
+  text-align: center;
 }
 
 .stats-row span {
@@ -333,7 +324,7 @@
 .section-kicker {
   margin: 0 0 22px;
   color: #8ceff1;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -439,7 +430,7 @@
   justify-self: end;
   margin: 0;
   color: #718894;
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "Montserrat", sans-serif;
   font-size: 0.5rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -502,7 +493,6 @@
   .header-play-link { grid-column: 2; grid-row: 1; min-height: 34px; padding: 0 10px; font-size: 0.5rem; }
   .site-status-line { min-height: 30px; padding: 0 16px; font-size: 0.43rem; }
   .stats-row > div { min-width: 48px; padding: 0 5px; }
-  .stats-row span { display: none; }
   .stats-row strong { font-size: 0.5rem; }
   .content-band { min-height: 370px; padding: 36px 16px; }
   .login-panel, .simple-panel { padding: 28px 20px; }
@@ -515,5 +505,4 @@
 @media (max-width: 430px) {
   .wordmark-copy small { display: none; }
   .top-navigation { justify-content: flex-start; }
-  .stats-row > div:nth-child(2) { display: none; }
 }

@@ -81,7 +81,7 @@ export default function HomePage() {
           </div>
         </div>
         <div className="home-hero-readout" data-reveal="left" aria-label="Project summary">
-          <span className="readout-label">OPERATIONAL BRIEF</span>
+          <span className="readout-label">STORY FOCUSED</span>
           <strong>DEFEND SORORTERRA.</strong>
           <p>Strategic tower defence created by players and developers who care about strategy.</p>
           <div className="readout-metrics">

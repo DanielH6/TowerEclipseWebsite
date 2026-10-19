@@ -230,8 +230,6 @@ function PageShell({ children }: { children: ReactNode }) {
           </a>
         </header>
         <div className="site-status-line">
-          <span className="status-indicator" aria-hidden="true" />
-          <span>PROJECT STATUS // IN DEVELOPMENT</span>
           <Stats />
         </div>
         {!isHomePage && pathname !== "/privacy" && pathname !== "/terms" && <h1 className="sr-only">{pageTitle}</h1>}

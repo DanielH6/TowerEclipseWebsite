@@ -30,7 +30,7 @@ export interface CreditGroup {
 
 export const ABOUT_INTRO = {
   eyebrow: "ECLIPSE DEVELOPMENT STUDIO",
-  title: "BUILT TO BE DIFFERENT",
+  title: "DESIGNED WITH CARE",
   description:
     "Tower Eclipse is an independent Roblox tower defense project shaped by a love of strategy, worldbuilding, and games that respect the player's time.",
 };
