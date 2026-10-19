@@ -1327,7 +1327,7 @@ button:disabled {
 }
 
 .bug-export { margin-block: 20px; padding: 20px; }
-.bug-export textarea { width: 100%; min-height: 320px; margin-top: 16px; font-family: monospace; resize: vertical; background: #0b1119; color: #e7eef6; border: 1px solid #384957; padding: 16px; }
+.bug-export textarea { width: 100%; min-height: 320px; margin-top: 16px; font-family: "Montserrat", sans-serif; resize: vertical; background: #0b1119; color: #e7eef6; border: 1px solid #384957; padding: 16px; }
 .tester-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr); gap: 24px; align-items: start; }
 .tester-list { display: grid; gap: 10px; }
 .tester-select { display: grid; gap: 8px; text-align: left; padding: 16px; color: inherit; background: #111c29; border: 1px solid #384957; border-radius: 8px; overflow-wrap: anywhere; cursor: pointer; }

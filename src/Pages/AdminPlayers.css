@@ -40,7 +40,7 @@
 .player-record { margin-top: 22px; }
 .player-record summary { cursor: pointer; font-size: .7rem; font-weight: 800; letter-spacing: .08em; padding: 10px 0; }
 .player-record p { color: #9ca3af; font-size: .72rem; line-height: 1.7; }
-.player-record pre { max-height: 420px; overflow: auto; margin: 12px 0 0; background: #0b1119; border: 1px solid #384957; padding: 16px; font: .72rem/1.65 "Roboto Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.player-record pre { max-height: 420px; overflow: auto; margin: 12px 0 0; background: #0b1119; border: 1px solid #384957; padding: 16px; font: .72rem/1.65 "Montserrat", sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
 .player-empty { margin-top: 24px; color: #9ca3af; }
 @media (max-width: 1200px) { .player-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .player-mode-grid { grid-template-columns: 1fr; } .player-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .player-filters > button { grid-column: 1 / -1; } .player-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .player-lookup > button { width: 100%; } .player-table .ghost-link { min-height: 44px; } }
