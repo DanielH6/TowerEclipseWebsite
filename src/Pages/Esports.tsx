@@ -55,32 +55,28 @@ export default function EsportsPage() {
   const entrants = tournaments.reduce((total, tournament) => total + tournament.participantCount, 0);
 
   return (
-    <section className="esports-page">
-      <div className="esports-hero">
+    <section className="esports-page esports-index-page">
+      <header className="esports-hero">
         <div className="esports-hero-copy">
-          <p className="esports-eyebrow">{ESPORTS_CONTENT.eyebrow}</p>
           <h2>{ESPORTS_CONTENT.title}</h2>
           <p>{ESPORTS_CONTENT.introduction}</p>
-          <div className="esports-hero-actions">
-            <a href="#tournaments" className="esports-primary-button">VIEW TOURNAMENTS</a>
-            {auth?.user.role === "dev" && (
+          {auth?.user.role === "dev" && (
+            <div className="esports-hero-actions">
               <Link to="/esports/manage" className="esports-secondary-button">TOURNAMENT CONTROL</Link>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-        <div className="esports-scoreboard" aria-label="Tournament overview">
-          <div><strong>{liveCount}</strong><span>LIVE NOW</span></div>
-          <div><strong>{upcomingCount}</strong><span>UPCOMING</span></div>
-          <div><strong>{entrants}</strong><span>ENTRANTS</span></div>
-          <div className="scoreboard-signal"><i /><span>COMPETITIVE NETWORK</span></div>
-        </div>
-      </div>
+        <dl className="esports-summary" aria-label="Tournament overview">
+          <div><dt>Live now</dt><dd>{loading ? "—" : liveCount}</dd></div>
+          <div><dt>Upcoming</dt><dd>{loading ? "—" : upcomingCount}</dd></div>
+          <div><dt>Entrants</dt><dd>{loading ? "—" : entrants}</dd></div>
+        </dl>
+      </header>
 
       <div className="tournament-directory" id="tournaments">
         <header className="directory-header">
           <div>
-            <p className="esports-eyebrow">EVENT DIRECTORY</p>
-            <h2>TOURNAMENTS</h2>
+            <h2>Tournaments</h2>
           </div>
           <label className="tournament-search">
             <span>Search tournaments</span>
@@ -113,7 +109,6 @@ export default function EsportsPage() {
           <div className="tournament-loading" aria-label="Loading tournaments"><span /><span /><span /></div>
         ) : visible.length === 0 ? (
           <div className="tournament-directory-empty">
-            <span>00</span>
             <h3>{ESPORTS_CONTENT.emptyTitle}</h3>
             <p>{ESPORTS_CONTENT.emptyDescription}</p>
             {auth?.user.role === "dev" && (

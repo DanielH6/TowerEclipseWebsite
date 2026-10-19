@@ -48,7 +48,7 @@ export default function AchievementChangeLog({ activeIds, theoreticalIds }: { ac
     return () => controller.abort();
   }, [cursor, retry]);
   return <section className="list-history" aria-label="Public change log">
-    <header className="list-section-heading"><div><p className="achievement-kicker">THE LIST, THROUGH TIME</p><h3>Change Log</h3><p>Every published addition, removal, rerating, and edit. Recorded automatically when an admin updates the list.</p></div><span className="list-history-seal">PUBLIC RECORD</span></header>
+    <header className="list-section-heading"><div><h3>Change Log</h3><p>Every published addition, removal, rerating, and edit. Recorded automatically when an admin updates the list.</p></div><span className="list-history-seal">PUBLIC RECORD</span></header>
     <ol className="list-publications">{publications.map(publication => <li className="list-publication" key={publication.id}>
       <header><div><span className="list-revision">REVISION {String(publication.revision).padStart(2, "0")}</span><h4>{publication.changes.length} achievement{publication.changes.length === 1 ? "" : "s"} updated</h4><p>Published by <strong>{publication.editorName}</strong></p></div><time dateTime={publication.createdAt}>{new Date(publication.createdAt).toLocaleString()}</time></header>
       {publication.note && <p className="list-publication-note">{publication.note}</p>}

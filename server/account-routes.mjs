@@ -42,7 +42,7 @@ export function createAccountRouter() {
     response.sendStatus(204);
   });
   router.use("/testers", createTesterRouter(accounts, requireRole("dev")));
-  const staff = requireRole("qa", "leadqa", "dev");
+  const staff = requireRole("qa", "pentester", "leadqa", "dev");
   const workspace = createWorkspaceService(db);
   router.use(createWorkspaceRouter(workspace, (_req, _res, next) => next()));
   router.get("/reports", staff, async (request, response) => response.json(await accounts.reports(request.authUser.id, request.query)));

@@ -20,12 +20,15 @@ test("HTTP boundary grants QA Leads read-only application access and reserves ma
   const request = (path, role, method = "GET", extra = {}) => fetch(base + path, { method, headers: { ...(role ? { "X-Test-Role": role } : {}), ...extra } });
   assert.equal((await request("/forms")).status, 200);
   for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications"]) assert.equal((await request(path)).status, 401);
-  for (const role of ["member", "qa", "leadqa"]) {
+  for (const role of ["member", "qa", "pentester", "leadqa"]) {
     for (const path of ["/admin/forms", "/admin/forms/test"]) assert.equal((await request(path, role)).status, 403);
     assert.equal((await request("/admin/forms", role, "POST", { "X-CSRF-Token": "fixture-csrf" })).status, 403);
   }
-  for (const role of ["member", "qa"]) {
-    for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, role)).status, 403);
+  for (const role of ["member", "qa", "pentester"]) {
+    const callsBefore = calls.length;
+    for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, role)).status, 403, `${role} cannot read private application reviews`);
+    assert.equal((await request("/admin/applications/test", role, "PUT", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403, `${role} cannot change application reviews`);
+    assert.equal(calls.length, callsBefore, `${role} review requests must not reach the service`);
   }
   for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, "leadqa")).status, 200);
   assert.equal((await request("/admin/applications/test", "leadqa", "PUT", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403);
