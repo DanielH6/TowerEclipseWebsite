@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { APPLICATION_STATUSES, fail, identifier, normalizeForm, reviewInput, validateAnswers } from "./careers-domain.mjs";
+import { createCareerImageService } from "./careers-images.mjs";
+import { normalizeAiReview, aiFingerprint } from "./careers-ai-domain.mjs";
+import { createCareerAiProvider, readCareerAiConfiguration } from "./careers-ai-provider.mjs";
+import { createCareerAiService } from "./careers-ai-service.mjs";
 
 const PAGE_SIZE = 20;
 const SUMMARY = ["formId", "versionId", "title", "category", "applicantId", "applicant", "status", "createdAt", "updatedAt", "revision", "feedback"];
-const FORM_SUMMARY = ["title", "category", "description", "commitment", "closesAt", "state", "publishedVersion", "revision", "createdAt", "updatedAt"];
+const FORM_SUMMARY = ["title", "category", "description", "commitment", "formatting", "closesAt", "state", "publishedVersion", "revision", "createdAt", "updatedAt"];
 const QA_CATEGORIES = ["Quality assurance", "Quality Assurance", "quality assurance", "QUALITY ASSURANCE"];
 const isQaApplication = category => typeof category === "string" && category.trim().toLowerCase() === "quality assurance";
 const pick = (data, keys) => Object.fromEntries(keys.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
@@ -14,8 +18,11 @@ function checkOpen(form, now) {
   if (form.state !== "open" || !form.publishedVersion || (form.closesAt && Date.parse(form.closesAt) <= now)) fail("This opening is closed to new applications.", 409);
 }
 
-export function createCareersService(db, { now = Date.now } = {}) {
+export function createCareersService(db, { now = Date.now, imageStorage, aiProvider = createCareerAiProvider(readCareerAiConfiguration()) } = {}) {
   let publicCache = new Map();
+  const statsCache = new Map();
+  const images = createCareerImageService(db, imageStorage);
+  const ai = createCareerAiService(db, { provider: aiProvider, images, now });
   const ref = (collection, id) => db.doc(`${collection}/${identifier(id)}`);
   const stamp = () => new Date(now()).toISOString();
   async function page(query, collection, options, fields, order = "createdAt", direction = "desc", scope = "") {
@@ -56,9 +63,23 @@ export function createCareersService(db, { now = Date.now } = {}) {
     if (admin && user.role === "leadqa" && !isQaApplication(data.category)) fail("This application could not be found.", 404);
     if (!admin && data.applicantId !== user.id) fail("This application could not be found.", 404);
     const form = snapshotData(await ref("careerFormVersions", data.versionId).get());
-    return { application: { ...pick(data, [...SUMMARY, "id", "answers", "history"]), ...(admin ? pick(data, ["internalNotes", "reviewer"]) : {}) }, form };
+    const visible = { ...pick(data, [...SUMMARY, "id", "answers", "history", "feedbackFormatting"]), ...(admin ? pick(data, ["internalNotes", "reviewer", "notesFormatting"]) : {}) };
+    return { application: admin ? (await ai.decorate([visible]))[0] : visible, form };
+  }
+  function applicationQuery(user, options, admin) {
+    if (admin && !["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view applications.", 403);
+    let query = db.collection("careerApplications");
+    if (!admin) query = query.where("applicantId", "==", user.id);
+    if (admin && user.role === "leadqa") query = query.where("category", "in", QA_CATEGORIES);
+    if (options.formId) query = query.where("formId", "==", identifier(options.formId));
+    if (options.status) {
+      if (!APPLICATION_STATUSES.includes(options.status)) fail("Unknown application status.");
+      query = query.where("status", "==", options.status);
+    }
+    return query;
   }
   return {
+    images, ai,
     async listForms(options = {}, admin = false) {
       if (admin) return page(db.collection("careerForms"), "careerForms", options, FORM_SUMMARY, "createdAt", "desc", "admin-forms");
       const key = String(options.cursor ?? "");
@@ -81,13 +102,19 @@ export function createCareersService(db, { now = Date.now } = {}) {
       const action = input?.action;
       if (!["save", "publish", "close"].includes(action)) fail("Choose a form action.");
       const draft = action === "close" ? null : normalizeForm(input.draft, action === "publish");
+      const aiReview = action !== "close" && input.aiReview !== undefined ? normalizeAiReview(input.aiReview) : null;
       if (action === "publish" && draft.closesAt && Date.parse(draft.closesAt) <= now()) fail("The closing date must be in the future.");
       const result = await db.runTransaction(async tx => {
         const target = ref("careerForms", id);
         const old = snapshotData(await tx.get(target));
         expectRevision(old, input.revision);
+        const publicationImages = draft ? await images.prepare(tx, id, draft.questions) : [];
         const revision = old.revision + 1;
         const changes = { revision, updatedAt: stamp() };
+        if (aiReview) {
+          changes.aiReview = aiReview;
+          changes.aiRevision = (old.aiRevision ?? 0) + (aiFingerprint(normalizeAiReview(old.aiReview)) === aiFingerprint(aiReview) ? 0 : 1);
+        }
         if (draft) changes.draft = draft;
         if (action === "close") changes.state = "closed";
         if (action === "save" && !old.publishedVersion) Object.assign(changes, pick(draft, FORM_SUMMARY));
@@ -95,6 +122,7 @@ export function createCareersService(db, { now = Date.now } = {}) {
           const versionId = `${id}_${revision}`;
           tx.set(ref("careerFormVersions", versionId), { ...draft, formId: id, publishedAt: stamp() });
           Object.assign(changes, pick(draft, FORM_SUMMARY), { state: "open", openUntil: draft.closesAt ?? "9999-12-31T23:59:59.999Z", publishedVersion: versionId });
+          for (const image of publicationImages) tx.update(image, { published: true });
         }
         tx.update(target, changes);
         return { ...old, ...changes };
@@ -105,7 +133,7 @@ export function createCareersService(db, { now = Date.now } = {}) {
     formForApplicant,
     async submit(id, user, input) {
       if (input?.consent !== true) fail("Confirm that you have read the application privacy notice.");
-      return db.runTransaction(async tx => {
+      const result = await db.runTransaction(async tx => {
         const identity = await linkedIdentity(user, tx);
         const target = ref("careerApplications", appId(id, user.id));
         const existing = await tx.get(target);
@@ -118,29 +146,106 @@ export function createCareersService(db, { now = Date.now } = {}) {
         const createdAt = stamp();
         tx.set(target, { formId: id, versionId: form.publishedVersion, title: version.title, category: version.category,
           applicantId: user.id, applicant: identity, answers, status: "submitted", createdAt, updatedAt: createdAt, revision: 1,
-          feedback: "", internalNotes: "", reviewer: null, consentAt: createdAt, privacyNoticeVersion: "careers-2026-09-14",
+          feedback: "", internalNotes: "", reviewer: null, consentAt: createdAt, privacyNoticeVersion: "careers-2026-11-04",
           history: [{ status: "submitted", at: createdAt, feedback: "Application received." }] });
         return { id: target.path.split("/").at(-1), alreadySubmitted: false };
       });
+      statsCache.clear();
+      return result;
     },
     async listApplications(user, options = {}, admin = false) {
-      if (admin && !["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view applications.", 403);
-      let query = db.collection("careerApplications");
-      if (!admin) query = query.where("applicantId", "==", user.id);
-      if (admin && user.role === "leadqa") query = query.where("category", "in", QA_CATEGORIES);
-      if (options.formId) query = query.where("formId", "==", identifier(options.formId));
-      if (options.status) {
-        if (!APPLICATION_STATUSES.includes(options.status)) fail("Unknown application status.");
-        query = query.where("status", "==", options.status);
+      const query = applicationQuery(user, options, admin);
+      const sort = options.sort ?? "newest", search = String(options.search ?? "").trim().toLowerCase();
+      if (admin && (!["newest", "oldest", "ai_rank", "quality"].includes(sort) || search.length > 100)) fail("Choose a supported sort and a search of up to 100 characters.");
+      if (admin && (sort !== "newest" || search)) {
+        if (!options.formId) fail("Choose one application form before searching or sorting its applications.");
+        let all = [], cursor;
+        const base = query.orderBy("createdAt", "desc").orderBy("__name__", "desc").select(...SUMMARY);
+        while (true) {
+          const result = await (cursor ? base.startAfter(...cursor) : base).limit(500).get();
+          all.push(...result.docs.map(snapshotData));
+          if (all.length > 5000) fail("Search and ranked sorting support up to 5,000 applications per opening.");
+          if (result.docs.length < 500) break;
+          const last = result.docs.at(-1); cursor = [last.data().createdAt, last.ref.path];
+        }
+        if (!all.length) return { items: [], nextCursor: null };
+        const index = ["ai_rank", "quality"].includes(sort) ? await ai.scoreIndex(options.formId) : { runId: null, scores: new Map() };
+        const scope = JSON.stringify([user.role, options.formId, options.status ?? "", sort, search, index.runId]);
+        if (search) all = all.filter(item => [item.applicant?.username, item.applicant?.displayName, item.applicant?.roblox?.username].some(value => String(value ?? "").toLowerCase().includes(search)));
+        all.sort((a, b) => {
+          if (["ai_rank", "quality"].includes(sort)) {
+            const key = sort === "quality" ? "qualityScore" : "relativeScore";
+            const score = item => item.status === "withdrawn" ? -1 : index.scores.get(item.id)?.[key] ?? -1;
+            if (score(a) !== score(b)) return score(b) - score(a);
+          }
+          return (a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)) * (sort === "oldest" ? 1 : -1);
+        });
+        let offset = 0;
+        if (options.cursor) {
+          try {
+            if (typeof options.cursor !== "string" || options.cursor.length > 1000) throw new Error();
+            const parsed = JSON.parse(Buffer.from(options.cursor, "base64url").toString());
+            const position = all.findIndex(item => item.id === parsed.id);
+            if (parsed.scope !== scope || position < 0) throw new Error();
+            offset = position + 1;
+          } catch { fail("The results changed. Return to the first page before continuing.", 409); }
+        }
+        const items = all.slice(offset, offset + PAGE_SIZE);
+        return { items: await ai.decorate(items), nextCursor: offset + PAGE_SIZE < all.length ? Buffer.from(JSON.stringify({ scope, id: items.at(-1).id })).toString("base64url") : null };
       }
       const scope = JSON.stringify([admin ? user.role : user.id, options.formId ?? "", options.status ?? ""]);
-      return page(query, "careerApplications", options, SUMMARY, "createdAt", "desc", scope);
+      const result = await page(query, "careerApplications", options, SUMMARY, "createdAt", "desc", scope);
+      return admin ? { ...result, items: await ai.decorate(result.items) } : result;
+    },
+    async reviewForms(user) {
+      if (!["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view application forms.", 403);
+      const stats = await this.applicationStats(user);
+      if (user.role === "leadqa") return { items: stats.openings.map(item => ({ ...item, category: "Quality assurance", state: "received", createdAt: null })) };
+      const items = [], counts = new Map(stats.openings.map(item => [item.id, item.applications]));
+      let cursor;
+      const base = db.collection("careerForms").orderBy("createdAt", "desc").orderBy("__name__", "desc").select("title", "category", "state", "createdAt", "closesAt");
+      while (true) {
+        const result = await (cursor ? base.startAfter(...cursor) : base).limit(500).get();
+        items.push(...result.docs.map(doc => ({ ...snapshotData(doc), applications: counts.get(doc.id) ?? 0 })));
+        if (items.length > 5000) fail("The form selector supports up to 5,000 recruitment rounds.");
+        if (result.docs.length < 500) break;
+        const last = result.docs.at(-1); cursor = [last.data().createdAt, last.ref.path];
+      }
+      return { items };
+    },
+    async applicationStats(user, options = {}) {
+      const base = applicationQuery(user, options, true).orderBy("createdAt", "desc").orderBy("__name__", "desc").select("applicantId", "category", "formId", "title", "createdAt");
+      const key = JSON.stringify([user.role, options.formId ?? "", options.status ?? ""]);
+      const cached = statsCache.get(key);
+      if (cached?.until > now()) return cached.data;
+      const applicants = new Set(), categories = new Map(), openings = new Map();
+      let applications = 0, cursor;
+      // Read small projections in bounded batches, using existing list indexes.
+      // No answer, identity snapshot, feedback or private note is fetched for counts.
+      while (true) {
+        const batch = await (cursor ? base.startAfter(...cursor) : base).limit(500).get();
+        for (const snapshot of batch.docs) {
+          const data = snapshot.data(), category = isQaApplication(data.category) ? "Quality assurance" : data.category;
+          applications++; applicants.add(data.applicantId);
+          for (const [map, id, label] of [[categories, category, { category }], [openings, data.formId, { id: data.formId, title: data.title }]]) {
+            if (!map.has(id)) map.set(id, { ...label, applications: 0, people: new Set() });
+            const group = map.get(id); group.applications++; group.people.add(data.applicantId);
+          }
+        }
+        if (batch.docs.length < 500) break;
+        const last = batch.docs.at(-1); cursor = [last.data().createdAt, `careerApplications/${last.id}`];
+      }
+      const groups = map => [...map.values()].map(({ people, ...group }) => ({ ...group, applicants: people.size })).sort((a, b) => b.applications - a.applications || String(a.category ?? a.title).localeCompare(String(b.category ?? b.title)));
+      const data = { applicants: applicants.size, applications, categories: groups(categories), openings: groups(openings) };
+      if (statsCache.size >= 100) statsCache.clear();
+      statsCache.set(key, { until: now() + 60_000, data });
+      return data;
     },
     application,
     async review(id, user, input, withdraw = false) {
       if (!withdraw && user?.role !== "dev") fail("You do not have permission to change applications.", 403);
       const changes = withdraw ? { status: "withdrawn" } : reviewInput(input);
-      return db.runTransaction(async tx => {
+      const result = await db.runTransaction(async tx => {
         const target = ref("careerApplications", id);
         const data = snapshotData(await tx.get(target));
         if (withdraw && data.applicantId !== user.id) fail("This application could not be found.", 404);
@@ -148,10 +253,12 @@ export function createCareersService(db, { now = Date.now } = {}) {
         if (data.status === "withdrawn" || (withdraw && ["accepted", "rejected"].includes(data.status))) fail("This application cannot be changed in its current status.", 409);
         const updatedAt = stamp();
         const history = [...(data.history ?? [])];
-        if (data.status !== changes.status || (!withdraw && data.feedback !== changes.feedback)) history.push({ status: changes.status, at: updatedAt, feedback: withdraw ? "Withdrawn by applicant." : changes.feedback });
+        if (data.status !== changes.status || (!withdraw && (data.feedback !== changes.feedback || JSON.stringify(data.feedbackFormatting ?? {}) !== JSON.stringify(changes.feedbackFormatting)))) history.push({ status: changes.status, at: updatedAt, feedback: withdraw ? "Withdrawn by applicant." : changes.feedback, ...(!withdraw ? { feedbackFormatting: changes.feedbackFormatting } : {}) });
         tx.update(target, { ...changes, updatedAt, revision: data.revision + 1, history: history.slice(-50), ...(!withdraw ? { reviewer: { id: user.id, displayName: user.displayName } } : {}) });
         return { id, revision: data.revision + 1 };
       });
+      statsCache.clear();
+      return result;
     },
   };
 }

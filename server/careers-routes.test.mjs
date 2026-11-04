@@ -6,7 +6,8 @@ import { config } from "./config.mjs";
 
 test("HTTP boundary grants QA Leads read-only application access and reserves management for developers", async t => {
   const calls = [];
-  const service = new Proxy({}, { get: (_, method) => async (...args) => { calls.push({ method, args }); return { ok: true }; } });
+  const ai = new Proxy({}, { get: (_, method) => async (...args) => { calls.push({ method: `ai.${method}`, args }); return { ok: true }; } });
+  const service = new Proxy({}, { get: (_, method) => method === "ai" ? ai : async (...args) => { calls.push({ method, args }); return { ok: true }; } });
   const app = express(); app.use(express.json());
   const auth = (req, res, next) => {
     const role = req.get("X-Test-Role");
@@ -19,22 +20,27 @@ test("HTTP boundary grants QA Leads read-only application access and reserves ma
   const base = `http://127.0.0.1:${server.address().port}/api/careers`;
   const request = (path, role, method = "GET", extra = {}) => fetch(base + path, { method, headers: { ...(role ? { "X-Test-Role": role } : {}), ...extra } });
   assert.equal((await request("/forms")).status, 200);
-  for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications"]) assert.equal((await request(path)).status, 401);
+  for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications", "/admin/application-stats", "/images/test", "/admin/review-forms", "/admin/ai-config", "/admin/forms/test/ai-reviews"]) assert.equal((await request(path)).status, 401);
   for (const role of ["member", "qa", "pentester", "leadqa"]) {
-    for (const path of ["/admin/forms", "/admin/forms/test"]) assert.equal((await request(path, role)).status, 403);
+    for (const path of ["/admin/forms", "/admin/forms/test", "/admin/image-config", "/admin/ai-config", "/admin/forms/test/ai-reviews"]) assert.equal((await request(path, role)).status, 403);
     assert.equal((await request("/admin/forms", role, "POST", { "X-CSRF-Token": "fixture-csrf" })).status, 403);
+    for (const path of ["/admin/forms/test/images", "/admin/forms/test/images/test/complete", "/admin/ai-criteria/draft", "/admin/forms/test/ai-reviews", "/admin/forms/test/ai-reviews/run/cancel"]) assert.equal((await request(path, role, "POST", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403);
   }
   for (const role of ["member", "qa", "pentester"]) {
     const callsBefore = calls.length;
-    for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, role)).status, 403, `${role} cannot read private application reviews`);
+    for (const path of ["/admin/applications", "/admin/applications/test", "/admin/application-stats", "/admin/review-forms"]) assert.equal((await request(path, role)).status, 403, `${role} cannot read private application reviews`);
     assert.equal((await request("/admin/applications/test", role, "PUT", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403, `${role} cannot change application reviews`);
     assert.equal(calls.length, callsBefore, `${role} review requests must not reach the service`);
   }
   for (const path of ["/admin/applications", "/admin/applications/test"]) assert.equal((await request(path, "leadqa")).status, 200);
   assert.equal((await request("/admin/applications/test", "leadqa", "PUT", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403);
   assert.equal(calls.at(-1).method, "application", "QA Lead write must not reach the service");
+  assert.equal((await request("/admin/application-stats", "leadqa")).status, 200);
+  assert.equal(calls.at(-1).method, "applicationStats");
   assert.equal((await request("/admin/forms", "dev")).status, 200);
-  for (const [path, role, method] of [["/forms/test/applications", "member", "POST"], ["/applications/test/withdraw", "member", "POST"], ["/admin/forms", "dev", "POST"], ["/admin/forms/test", "dev", "PUT"], ["/admin/applications/test", "dev", "PUT"]]) {
+  assert.equal((await request("/admin/ai-config", "dev")).status, 200);
+  assert.equal((await request("/admin/review-forms", "leadqa")).status, 200);
+  for (const [path, role, method] of [["/admin/ai-criteria/draft", "dev", "POST"], ["/admin/forms/test/ai-reviews", "dev", "POST"], ["/admin/forms/test/ai-reviews/run/cancel", "dev", "POST"], ["/forms/test/applications", "member", "POST"], ["/applications/test/withdraw", "member", "POST"], ["/admin/forms", "dev", "POST"], ["/admin/forms/test", "dev", "PUT"], ["/admin/applications/test", "dev", "PUT"]]) {
     assert.equal((await request(path, role, method)).status, 403);
     assert.equal((await request(path, role, method, { "X-CSRF-Token": "fixture-csrf", Origin: "https://untrusted.example" })).status, 403);
     assert.ok((await request(path, role, method, { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).ok);

@@ -26,20 +26,21 @@ export function compositeIndexMatches(current, definition) {
 }
 
 export function scopedIndexDefinitions(definitions, scope = 'all') {
-  if (!['all', 'qa-careers', 'players'].includes(scope)) throw new Error('Invalid index scope.');
+  if (!['all', 'qa-careers', 'players', 'careers-ai'].includes(scope)) throw new Error('Invalid index scope.');
   const players = new Set(['tePlayerSummaries', 'tePlayerImportJobs', 'tePlayerImportFailures']);
+  const careersAi = new Set(['careerAiRuns', 'careerAiScores']);
   return {
-    indexes: definitions.indexes.filter(index => scope === 'all' || (scope === 'players' ? players.has(index.collectionGroup)
+    indexes: definitions.indexes.filter(index => scope === 'all' || (scope === 'careers-ai' ? careersAi.has(index.collectionGroup) : scope === 'players' ? players.has(index.collectionGroup)
       : index.collectionGroup === 'careerApplications' && index.fields[0]?.fieldPath === 'category')),
-    fieldOverrides: scope === 'qa-careers' ? [] : definitions.fieldOverrides.filter(field => scope === 'all' || players.has(field.collectionGroup)),
+    fieldOverrides: scope === 'qa-careers' ? [] : definitions.fieldOverrides.filter(field => scope === 'all' || (scope === 'careers-ai' ? careersAi.has(field.collectionGroup) : players.has(field.collectionGroup))),
   };
 }
 
 export function parseIndexSetupArguments(argv) {
   const { values, tokens } = parseArgs({ args: argv, strict: true, allowPositionals: false, tokens: true,
-    options: Object.fromEntries(['apply', 'only-qa-careers', 'only-player-data', 'require-ready'].map(key => [key, { type: 'boolean' }])) });
+    options: Object.fromEntries(['apply', 'only-qa-careers', 'only-player-data', 'only-careers-ai', 'require-ready'].map(key => [key, { type: 'boolean' }])) });
   const flags = tokens.map(token => token.name);
-  if (new Set(flags).size !== flags.length || (values['only-qa-careers'] && values['only-player-data'])) throw new Error('Choose one index setup scope without duplicate flags.');
+  if (new Set(flags).size !== flags.length || (['only-qa-careers', 'only-player-data', 'only-careers-ai'].filter(key => values[key]).length > 1)) throw new Error('Choose one index setup scope without duplicate flags.');
   return { apply: values.apply === true, requireReady: values['require-ready'] === true,
-    scope: values['only-player-data'] ? 'players' : values['only-qa-careers'] ? 'qa-careers' : 'all' };
+    scope: values['only-careers-ai'] ? 'careers-ai' : values['only-player-data'] ? 'players' : values['only-qa-careers'] ? 'qa-careers' : 'all' };
 }
