@@ -1,0 +1,150 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createCareersService } from "./careers-service.mjs";
+import { createCareerAiProvider } from "./careers-ai-provider.mjs";
+import { normalizeAiReview, rankAssessments, normalizeAssessment } from "./careers-ai-domain.mjs";
+import { createMemoryDb } from "./testing/careers-memory-db.mjs";
+
+const admin = { id: "admin", role: "dev", displayName: "Reviewer" };
+const settings = { brief: "Reward clear practical reasoning over length.", criteria: [{ id: "reasoning", name: "Reasoning", description: "Assess useful, justified reproduction steps.", weight: 2, low: "Vague", middle: "Usable with gaps", high: "Clear and specific" }, { id: "clarity", name: "Clarity", description: "Assess how actionable the explanation is.", weight: 1, low: "", middle: "", high: "" }], examples: [] };
+const draft = { title: "Tester round", category: "Quality assurance", description: "Help test", commitment: "Volunteer", confirmation: "Thanks", closesAt: null, questions: [{ id: "answer", type: "paragraph", label: "How would you reproduce this?", help: "Explain your approach", required: true }] };
+async function fixture({ provider: supplied } = {}) {
+  const memory = createMemoryDb(), calls = [];
+  let time = Date.parse("2026-11-04T00:00:00Z");
+  const provider = supplied ?? { enabled: true, draftCriteria: async () => ({ value: { criteria: settings.criteria } }), assess: async input => {
+    calls.push(input);
+    const score = Number(input.questions[0].answer.match(/\d/)[0]);
+    return { value: { summary: "Assessment based on the submitted example.", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "The answer supplies the stated level of detail.", evidence: [{ questionId: "answer", quote: input.questions[0].answer }] })) }, usage: { inputTokens: 100, outputTokens: 40 } };
+  } };
+  const service = createCareersService(memory.db, { aiProvider: provider, now: () => time });
+  const form = await service.createForm();
+  const published = await service.saveForm(form.id, { action: "publish", revision: 1, draft, aiReview: settings });
+  const add = (id, score, extra = {}) => memory.documents.set(`careerApplications/${id}`, { formId: form.id, versionId: published.publishedVersion, title: draft.title, category: draft.category, applicantId: id,
+    applicant: { discordId: `secret-${id}`, username: id, displayName: `Applicant ${id}`, roblox: { userId: "123", username: `Roblox${id}` } },
+    answers: { answer: `I explain ${score} practical steps.` }, status: "submitted", revision: 1, createdAt: new Date(time).toISOString(), updatedAt: new Date(time).toISOString(), feedback: "Previous reviewer feedback", internalNotes: "Private reviewer note", history: [], ...extra });
+  return { ...memory, service, form: published, add, calls, advance: ms => { time += ms; } };
+}
+async function finish(service, max = 100) { for (let n = 0; n < max; n++) if (!await service.ai.workNext({ owner: "worker", signal: new AbortController().signal })) return; throw new Error("Worker did not finish"); }
+
+test("normal curve centres on five, stays bounded, preserves ties and does not invent grades", () => {
+  for (const scores of [[], [2], [2, 2], [0, 1, 1, 1, 4], Array.from({ length: 1000 }, (_, i) => i / 100)]) {
+    const result = rankAssessments(scores.map((qualityScore, i) => ({ id: String(i), qualityScore })));
+    if (!result.length) continue;
+    assert.ok(Math.abs(result.reduce((sum, r) => sum + r.relativeScore, 0) / result.length - 5) < 1e-8);
+    assert.ok(result.every(r => r.relativeScore >= 0 && r.relativeScore <= 10));
+    for (const a of result) for (const b of result.slice(0, 5)) if (a.qualityScore === b.qualityScore) assert.equal(a.relativeScore, b.relativeScore);
+  }
+});
+test("criteria are bounded, weighted server-side, and fabricated evidence is rejected", () => {
+  assert.throws(() => normalizeAiReview({ ...settings, criteria: [{ ...settings.criteria[0], weight: 100 }] }));
+  assert.throws(() => normalizeAiReview({ ...settings, criteria: [settings.criteria[0], settings.criteria[0]] }));
+  assert.throws(() => normalizeAiReview({ brief: "", criteria: [], examples: [] }, true));
+  const grades = settings.criteria.map((c, i) => ({ criterionId: c.id, score: i === 0 ? 4 : 1, explanation: "Explanation", evidence: [{ questionId: "answer", quote: "practical" }] }));
+  const result = normalizeAssessment({ grades, summary: "Summary", observations: "" }, settings, draft, { answers: { answer: "practical approach" } });
+  assert.equal(result.qualityScore, 6);
+  grades[0].evidence[0].quote = "invented quotation";
+  assert.throws(() => normalizeAssessment({ grades, summary: "Summary" }, settings, draft, { answers: { answer: "practical approach" } }), /not in/);
+});
+test("review criteria stay private when drafts are saved, forms published and applications read", async () => {
+  const f = await fixture(); f.add("person", 3);
+  assert.equal((await f.service.listForms()).items[0].aiReview, undefined);
+  assert.equal(f.documents.get(`careerFormVersions/${f.form.publishedVersion}`).aiReview, undefined);
+  assert.equal((await f.service.application("person", { id: "person" })).application.aiReview, undefined);
+  assert.deepEqual((await f.service.adminForm(f.form.id)).aiReview, settings);
+  const saved = await f.service.saveForm(f.form.id, { action: "save", revision: f.form.revision, draft, aiReview: { ...settings, brief: "Updated guidance" } });
+  assert.equal(saved.aiRevision, f.form.aiRevision + 1);
+  assert.equal(saved.publishedVersion, f.form.publishedVersion, "private criteria do not require public republishing");
+});
+test("a run evaluates only its frozen form pool and applies all scores atomically", async () => {
+  const f = await fixture(); f.add("weak", 1); f.add("strong", 5); f.add("withdrawn", 4, { status: "withdrawn" }); f.add("other", 5, { formId: "different-form" });
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  await assert.rejects(f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }), { status: 409 });
+  assert.equal(run.total, 2);
+  await f.service.ai.workNext({ owner: "worker" });
+  assert.equal((await f.service.application("weak", admin, true)).application.aiReview, null, "partial results are not exposed");
+  f.advance(1); f.add("late", 3);
+  await finish(f.service);
+  assert.equal(f.calls.length, 2);
+  assert.ok(f.calls.every(call => !JSON.stringify(call).includes("Private reviewer") && !JSON.stringify(call).includes("Previous reviewer") && !JSON.stringify(call).includes("secret-") && !Object.hasOwn(call, "applicant")));
+  const strong = (await f.service.application("strong", admin, true)).application.aiReview;
+  assert.equal(strong.rank, 1); assert.equal(strong.qualityScore, 10); assert.equal(strong.poolSize, 2);
+  assert.equal((await f.service.application("late", admin, true)).application.aiReview, null);
+  assert.equal((await f.service.application("strong", { id: "strong" })).application.aiReview, undefined);
+  assert.equal((await f.service.ai.overview(f.form.id, admin)).runs[0].state, "completed");
+});
+test("run requests are admin-only and stale guide revisions cannot start paid work", async () => {
+  const f = await fixture(); f.add("one", 3);
+  for (const role of ["member", "qa", "pentester", "leadqa"]) {
+    await assert.rejects(f.service.ai.start(f.form.id, { id: role, role }, { revision: f.form.aiRevision }), { status: 403 });
+    await assert.rejects(f.service.ai.draftCriteria({ id: role, role }, { form: draft, settings }), { status: 403 });
+  }
+  await assert.rejects(f.service.ai.start(f.form.id, admin, { revision: 999 }), { status: 409 });
+  assert.equal(f.calls.length, 0);
+});
+test("failed or cancelled runs keep the last completed ranking and never make status decisions", async () => {
+  const f = await fixture(); f.add("one", 3); await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  const original = (await f.service.application("one", admin, true)).application.aiReview.runId;
+  f.advance(1);
+  const cancelled = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  await f.service.ai.cancel(f.form.id, cancelled.id, admin); await finish(f.service);
+  assert.equal(f.calls.length, 1);
+  f.advance(1); f.add("one", 3, { status: "withdrawn" }); f.add("two", 4);
+  await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  f.documents.get("careerApplications/two").status = "withdrawn";
+  await finish(f.service);
+  assert.equal(f.documents.get(`careerForms/${f.form.id}`).aiCompletedRun.id, original);
+  assert.equal(f.documents.get("careerApplications/two").status, "withdrawn");
+});
+test("a lost request is marked interrupted without reissuing a potentially billed call", async () => {
+  const f = await fixture(); f.add("one", 3);
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  Object.assign(f.documents.get(`careerAiRuns/${run.id}`), { state: "running", owner: "old-process", activeItem: "one", leaseUntil: 0 });
+  await finish(f.service);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.documents.get(`careerAiRuns/${run.id}`).state, "failed");
+});
+test("ranked sorting covers all pages and search/status filters do not recurve the pool", async () => {
+  const f = await fixture();
+  for (let i = 0; i < 47; i++) f.add(`person${String(i).padStart(2, "0")}`, i % 6);
+  await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  const first = await f.service.listApplications(admin, { formId: f.form.id, sort: "ai_rank" }, true);
+  const second = await f.service.listApplications(admin, { formId: f.form.id, sort: "ai_rank", cursor: first.nextCursor }, true);
+  const third = await f.service.listApplications(admin, { formId: f.form.id, sort: "ai_rank", cursor: second.nextCursor }, true);
+  assert.deepEqual([first.items.length, second.items.length, third.items.length], [20, 20, 7]);
+  const all = [...first.items, ...second.items, ...third.items];
+  assert.equal(new Set(all.map(item => item.id)).size, 47);
+  assert.ok(all.every((item, i) => i === 0 || item.aiReview.relativeScore <= all[i - 1].aiReview.relativeScore));
+  const filtered = await f.service.listApplications(admin, { formId: f.form.id, search: "ROBLOXperson05" }, true);
+  assert.equal(filtered.items.length, 1); assert.equal(filtered.items[0].aiReview.poolSize, 47);
+  await assert.rejects(f.service.listApplications(admin, { formId: f.form.id, sort: "quality", cursor: first.nextCursor }, true), { status: 409 });
+});
+test("Luna transport uses structured Responses, private storage settings, bounded output and safe errors", async () => {
+  let captured, organizationHeader;
+  const provider = createCareerAiProvider({ apiKey: "private-test-key", organizationId: "org-test", fetch: async (url, options) => {
+    organizationHeader = options.headers["OpenAI-Organization"];
+    captured = { url, ...JSON.parse(options.body) };
+    return new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ summary: "Résumé", grades: [] }) }] }], usage: { input_tokens: 15, output_tokens: 10 } }));
+  } });
+  assert.equal((await provider.assess({ questions: [] })).value.summary, "Résumé");
+  assert.equal(organizationHeader, "org-test"); assert.equal(captured.model, "gpt-6-luna"); assert.equal(captured.store, false); assert.equal(captured.text.format.strict, true);
+  assert.equal(JSON.stringify(captured).includes("private-test-key"), false);
+  const broken = createCareerAiProvider({ apiKey: "private-test-key", fetch: async () => new Response("secret provider diagnostic", { status: 429 }) });
+  await assert.rejects(broken.assess({}), error => error.status === 503 && !error.message.includes("secret provider"));
+});
+
+test("concurrent workers cannot assess the same applicant while a lease is active", async () => {
+  let release, calls = 0;
+  const wait = new Promise(resolve => { release = resolve; });
+  const f = await fixture({ provider: { enabled: true, assess: async input => {
+    calls++; await wait;
+    return { value: { summary: "Summary", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score: 3, explanation: "Explanation", evidence: [] })) } };
+  } } });
+  f.add("one", 3);
+  const requested = await Promise.allSettled([f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }), f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision })]);
+  assert.equal(requested.filter(result => result.status === "fulfilled").length, 1);
+  const first = f.service.ai.workNext({ owner: "first" });
+  while (calls === 0) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await f.service.ai.workNext({ owner: "second" }), false);
+  release(); await first;
+  assert.equal(calls, 1);
+});

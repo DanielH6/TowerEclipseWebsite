@@ -173,3 +173,54 @@ test("review history is bounded and private-only changes do not create applicant
   for (let revision = 2; revision < 56; revision++) await f.service.review(a.id, admin, { revision, status: "under_review", feedback: `Update ${revision}`, internalNotes: "Private only" });
   assert.equal((await f.service.application(a.id, user)).application.history.length, 50);
 });
+
+test("styled text is validated independently of plain answer values and HTML stays inert", () => {
+  const input = structuredClone(draft);
+  input.formatting = { title: [{ text: input.title, bold: true, color: "#AABBCC", onclick: "alert(1)" }] };
+  input.questions[2].formatting = { option0: [{ text: "Weekends", italic: true }] };
+  const normalized = normalizeForm(input, true);
+  assert.equal(normalized.formatting.title[0].color, "#aabbcc");
+  assert.equal(normalized.formatting.title[0].onclick, undefined);
+  assert.deepEqual(validateAnswers(normalized, answers), answers);
+  for (const run of [{ text: input.title, href: "javascript:alert(1)" }, { text: input.title, color: "url(https://bad.example)" }, { text: "different text", bold: true }]) {
+    assert.throws(() => normalizeForm({ ...input, formatting: { title: [run] } }));
+  }
+  assert.throws(() => normalizeForm({ ...input, formatting: { unknown: [] } }));
+  assert.equal(normalizeForm({ ...draft, title: "<img onerror=alert(1)>" }).title, "<img onerror=alert(1)>");
+  assert.equal(normalizeForm({ ...input, title: `  ${draft.title}  `, formatting: { title: [{ text: `  ${draft.title}  `, underline: true }] } }).formatting.title[0].text, draft.title);
+});
+
+test("formatted review feedback reaches applicants and history, private formatting does not", async () => {
+  const f = await fixture(), submitted = await f.service.submit(f.form.id, user, f.input);
+  await f.service.review(submitted.id, admin, { revision: 1, status: "under_review", feedback: "Thanks", internalNotes: "Private", feedbackFormatting: { feedback: [{ text: "Thanks", bold: true }] }, notesFormatting: { internalNotes: [{ text: "Private", italic: true }] } });
+  const own = (await f.service.application(submitted.id, user)).application;
+  assert.equal(own.feedbackFormatting.feedback[0].bold, true);
+  assert.equal(own.history.at(-1).feedbackFormatting.feedback[0].bold, true);
+  assert.equal(own.notesFormatting, undefined);
+  const historyLength = own.history.length;
+  await f.service.review(submitted.id, admin, { revision: 2, status: "under_review", feedback: "Thanks", internalNotes: "Private", feedbackFormatting: own.feedbackFormatting, notesFormatting: { internalNotes: [{ text: "Private", underline: true }] } });
+  assert.equal((await f.service.application(submitted.id, user)).application.history.length, historyLength);
+  assert.equal((await f.service.application(submitted.id, admin, true)).application.notesFormatting.internalNotes[0].underline, true);
+});
+
+test("applicant counts include every page, distinct people, categories and openings with QA scope", async () => {
+  const f = await fixture(), submitted = await f.service.submit(f.form.id, user, f.input);
+  const source = f.documents.get(`careerApplications/${submitted.id}`);
+  f.documents.delete(`careerApplications/${submitted.id}`);
+  for (let i = 0; i < 523; i++) f.documents.set(`careerApplications/count${i}`, { ...source, applicantId: `person${i % 100}`, formId: i < 503 ? "qa-opening" : "dev-opening", title: i < 503 ? "Tester" : "Developer", category: i < 503 ? (i % 2 ? "Quality Assurance" : "Quality assurance") : "Development", status: i < 503 ? "submitted" : "accepted" });
+  f.queries.length = 0;
+  const stats = await f.service.applicationStats(admin);
+  assert.equal(stats.applications, 523); assert.equal(stats.applicants, 100);
+  assert.equal(stats.categories.find(group => group.category === "Quality assurance").applications, 503);
+  assert.equal(stats.openings.find(group => group.id === "dev-opening").applicants, 20);
+  assert.equal(f.queries.length, 2); assert.ok(f.queries.every(query => query.maximum === 500 && !query.fields.includes("answers") && !query.fields.includes("applicant")));
+  await f.service.applicationStats(admin); assert.equal(f.queries.length, 2, "counts use a short cache");
+  const qa = await f.service.applicationStats({ id: "qa-lead", role: "leadqa" });
+  assert.equal(qa.applications, 503); assert.equal(qa.categories.length, 1);
+  assert.equal((await f.service.applicationStats(admin, { status: "accepted" })).applications, 20);
+  assert.equal((await f.service.applicationStats(admin, { formId: "qa-opening" })).applications, 503);
+  await assert.rejects(f.service.applicationStats({ id: "member", role: "member" }), { status: 403 });
+  await assert.rejects(f.service.applicationStats(admin, { status: "unknown" }), { status: 400 });
+  await f.service.review("count0", admin, { revision: 1, status: "accepted", feedback: "", internalNotes: "" });
+  assert.equal((await f.service.applicationStats(admin, { status: "accepted" })).applications, 21, "reviews invalidate cached counts");
+});

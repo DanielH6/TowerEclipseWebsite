@@ -560,6 +560,26 @@
           "queryScope": "COLLECTION"
         }
       ]
+    },
+    {
+      "collectionGroup": "careerAiRuns",
+      "fieldPath": "*",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "careerAiRuns",
+      "fieldPath": "state",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "careerAiScores",
+      "fieldPath": "*",
+      "indexes": []
     }
   ]
 }

@@ -35,3 +35,12 @@ test('index setup rejects mistyped, mixed and duplicate scopes before credential
     assert.throws(() => parseIndexSetupArguments(flags));
   }
 });
+
+test('careers AI index setup touches only review job and score definitions', () => {
+  const definitions = { indexes: [{ collectionGroup: 'careerAiRuns' }, { collectionGroup: 'careerApplications' }], fieldOverrides: [{ collectionGroup: 'careerAiScores' }, { collectionGroup: 'updates' }] };
+  const selected = scopedIndexDefinitions(definitions, 'careers-ai');
+  assert.deepEqual(selected.indexes, [definitions.indexes[0]]);
+  assert.deepEqual(selected.fieldOverrides, [definitions.fieldOverrides[0]]);
+  assert.equal(parseIndexSetupArguments(['--only-careers-ai', '--require-ready']).scope, 'careers-ai');
+  assert.throws(() => parseIndexSetupArguments(['--only-careers-ai', '--only-qa-careers']));
+});

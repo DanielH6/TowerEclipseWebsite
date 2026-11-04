@@ -7,6 +7,7 @@ import { fieldIndexConfig, fieldIndexMatches, compositeIndexMatches, scopedIndex
 const { apply, requireReady, scope } = parseIndexSetupArguments(process.argv.slice(2));
 const qaCareersOnly = scope === 'qa-careers';
 const playersOnly = scope === 'players';
+const careersAiOnly = scope === 'careers-ai';
 const project = process.env.FIREBASE_PROJECT_ID?.trim();
 const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
 if (!project || !credentialsPath) throw new Error('Configure FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS first.');
@@ -30,7 +31,7 @@ async function request(url, method = 'GET', body) {
   if (!response.ok) throw new Error(`Index setup failed (${response.status}): ${result.error?.message ?? 'Unknown error'}`);
   return result;
 }
-console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${playersOnly ? ' / Player data only' : qaCareersOnly ? ' / QA Careers only' : ''}`);
+console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${careersAiOnly ? ' / Careers AI only' : playersOnly ? ' / Player data only' : qaCareersOnly ? ' / QA Careers only' : ''}`);
 const byCollection = new Map();
 for (const group of new Set(indexesToCheck.map(index => index.collectionGroup))) {
   let pageToken;

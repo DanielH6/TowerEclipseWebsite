@@ -39,6 +39,7 @@ import {
 import { accounts, createAccountRouter } from "./account-routes.mjs";
 import { createCareersRouter } from "./careers-routes.mjs";
 import { createCareersService } from "./careers-service.mjs";
+import { createCareerAiWorker } from "./careers-ai-worker.mjs";
 import { createAchievementListRouter, createAchievementListService } from "./achievement-list.mjs";
 import { createBugRouter } from "./bug-routes.mjs";
 import {
@@ -456,7 +457,9 @@ app.use("/api/dictionaries", requireFirestoreReady, createDictionaryRouter());
 app.use("/api/admin/dictionaries", requireFirestoreReady, createAdminDictionaryRouter());
 app.use("/api/admin/overview", requireFirestoreReady, createAdminWorkspaceRouter(createAdminWorkspaceService(db, bugQueries)));
 app.use("/api/account", requireFirestoreReady, createAccountRouter());
-app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: createCareersService(db) }));
+const careers = createCareersService(db);
+const careerAiWorker = createCareerAiWorker({ service: careers.ai, ready: () => firestoreReadyPromise, report: message => console.log(message) });
+app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: careers }));
 app.use("/api/list", requireFirestoreReady, createAchievementListRouter({ service: createAchievementListService(db) }));
 app.use("/api/bugs", requireFirestoreReady, createBugRouter());
 app.use("/api/admin/updates", requireFirestoreReady, createAdminUpdateRouter());
@@ -503,6 +506,7 @@ const server = app.listen(config.port, "0.0.0.0", () => {
   console.log(`R2 attachments: ${config.r2 ? `enabled (${config.r2.bucket})` : "disabled"}`);
   console.log(`Register this exact Discord OAuth redirect: ${config.discord.redirectUri}`);
   playerImportWorker.start();
+  careerAiWorker.start();
 });
 
 let shuttingDown = false;
@@ -512,7 +516,7 @@ async function shutdown() {
   const deadline = setTimeout(() => process.exit(1), 20000);
   const closed = new Promise(resolve => server.close(resolve));
   server.closeIdleConnections();
-  await playerImportWorker.stop();
+  await Promise.all([playerImportWorker.stop(), careerAiWorker.stop()]);
   await closed;
   clearTimeout(deadline);
 }

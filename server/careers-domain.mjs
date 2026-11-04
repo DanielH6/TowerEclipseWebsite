@@ -1,3 +1,5 @@
+import { normalizeFormatting } from "./careers-formatting.mjs";
+
 export const QUESTION_TYPES = ["short", "paragraph", "choice", "checkboxes", "ranking", "scale"];
 export const APPLICATION_STATUSES = ["submitted", "under_review", "shortlisted", "accepted", "rejected", "withdrawn"];
 export function fail(message, status = 400) { throw Object.assign(new Error(message), { status }); }
@@ -11,6 +13,7 @@ function text(value, label, max, required = false) {
 }
 export function normalizeForm(input, publishing = false) {
   if (!input || typeof input !== "object") fail("Enter a form.");
+  if (Buffer.byteLength(JSON.stringify(input), "utf8") > 600_000) fail("The form is too large. Reduce the text or formatting.");
   const title = text(input.title, "Title", 100, true);
   const enteredCategory = text(input.category, "Category", 60, true);
   const category = enteredCategory.toLowerCase() === "quality assurance" ? "Quality assurance" : enteredCategory;
@@ -39,9 +42,17 @@ export function normalizeForm(input, publishing = false) {
       if (![0, 1].includes(q.min) || !Number.isInteger(q.max) || q.max < 2 || q.max > 10) fail("Scales start at 0 or 1 and end between 2 and 10.");
       Object.assign(question, { min: q.min, max: q.max, minLabel: text(q.minLabel ?? "", "Low label", 80), maxLabel: text(q.maxLabel ?? "", "High label", 80) });
     }
+    question.formatting = normalizeFormatting(q.formatting, { label: question.label, help: question.help, ...(question.options ? Object.fromEntries(question.options.map((option, i) => [`option${i}`, option])) : {}), ...(q.type === "scale" ? { minLabel: question.minLabel, maxLabel: question.maxLabel } : {}) });
+    if (q.image) question.image = { id: identifier(q.image.id), alt: text(q.image.alt ?? "", "Image description", 200, publishing) };
     return question;
   });
-  return { title, category, description, commitment, confirmation, closesAt, questions };
+  const formatting = normalizeFormatting(input.formatting, { title, category: enteredCategory, description, commitment, confirmation });
+  // Preserve the category's canonical casing used by QA authorization and filters.
+  if (formatting.category && category !== enteredCategory) {
+    let offset = 0;
+    formatting.category = formatting.category.map(run => { const next = { ...run, text: category.slice(offset, offset + run.text.length) }; offset += run.text.length; return next; });
+  }
+  return { title, category, description, commitment, confirmation, closesAt, questions, formatting };
 }
 export function validateAnswers(form, answers) {
   if (!answers || typeof answers !== "object" || Array.isArray(answers) || Buffer.byteLength(JSON.stringify(answers), "utf8") > 64_000) fail("Answers must fit within 64 KB.");
@@ -68,5 +79,6 @@ export function validateAnswers(form, answers) {
 }
 export function reviewInput(input) {
   if (!APPLICATION_STATUSES.includes(input?.status) || input.status === "withdrawn") fail("Choose a review status.");
-  return { status: input.status, feedback: text(input.feedback, "Applicant feedback", 2000), internalNotes: text(input.internalNotes, "Private notes", 6000) };
+  const feedback = text(input.feedback, "Applicant feedback", 2000), internalNotes = text(input.internalNotes, "Private notes", 6000);
+  return { status: input.status, feedback, internalNotes, feedbackFormatting: normalizeFormatting(input.feedbackFormatting, { feedback }), notesFormatting: normalizeFormatting(input.notesFormatting, { internalNotes }) };
 }

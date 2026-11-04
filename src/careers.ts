@@ -1,16 +1,27 @@
 import { useEffect, useState } from "react";
+import type { TextFormatting } from "./Components/CareerRichText";
 
 export type QuestionType = "short" | "paragraph" | "choice" | "checkboxes" | "ranking" | "scale";
-export interface CareerQuestion { id: string; type: QuestionType; label: string; help: string; required: boolean; options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string }
-export interface FormDraft { title: string; category: string; description: string; commitment: string; confirmation: string; closesAt: string | null; questions: CareerQuestion[] }
-export interface CareerForm extends FormDraft { id: string; state: "draft" | "open" | "closed"; revision: number; publishedVersion: string | null; versionId?: string; draft: FormDraft; createdAt: string; updatedAt: string }
+export interface CareerQuestion { id: string; type: QuestionType; label: string; help: string; required: boolean; options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string; formatting?: TextFormatting; image?: { id: string; alt: string } }
+export interface FormDraft { title: string; category: string; description: string; commitment: string; confirmation: string; closesAt: string | null; questions: CareerQuestion[]; formatting?: TextFormatting }
+export interface AiCriterion { id: string; name: string; description: string; weight: number; low: string; middle: string; high: string }
+export interface AiReviewSettings { brief: string; criteria: AiCriterion[]; examples: { question: string; answer: string; score: number; notes: string }[] }
+export interface AiAssessment { relativeScore: number; qualityScore: number; rank: number; poolSize: number; runId: string; reviewedAt: string; criteriaChanged: boolean; summary: string; observations: string; grades: { criterionId: string; name: string; weight: number; score: number; explanation: string; evidence: { questionId: string; question: string; quote: string }[] }[] }
+export interface AiRun { id: string; state: "queued" | "running" | "completed" | "failed" | "cancelled"; total: number; processed: number; createdAt: string; completedAt: string | null; error: string; criteriaRevision: number; model: string; requestedBy: { id: string; displayName: string }; usage: { inputTokens: number; outputTokens: number } }
+export interface AiReviewOverview { configured: boolean; model: string; criteriaRevision: number; hasCriteria: boolean; runs: AiRun[]; completedRun: { id: string; total: number; completedAt: string; criteriaRevision: number } | null }
+export const emptyAiReview = (): AiReviewSettings => ({ brief: "", criteria: [], examples: [] });
+export interface CareerForm extends FormDraft { id: string; state: "draft" | "open" | "closed"; revision: number; publishedVersion: string | null; versionId?: string; draft: FormDraft; aiReview?: AiReviewSettings; aiRevision?: number; createdAt: string; updatedAt: string }
 export type Answers = Record<string, string | string[] | number>;
 export interface ApplicantIdentity { discordId: string; username: string; displayName: string; roblox: { userId: string; username: string } }
 export const applicationStatuses = { submitted: "Submitted", under_review: "Under review", shortlisted: "Shortlisted", accepted: "Accepted", rejected: "Rejected", withdrawn: "Withdrawn" };
 export type ApplicationStatus = keyof typeof applicationStatuses;
-export interface CareerApplication { id: string; formId: string; versionId: string; title: string; category: string; applicantId: string; applicant: ApplicantIdentity; status: ApplicationStatus; createdAt: string; updatedAt: string; revision: number; feedback: string; answers: Answers; history: { at: string; status: ApplicationStatus; feedback: string }[]; internalNotes?: string; reviewer?: { id: string; displayName: string } | null }
+export interface CareerApplication { id: string; formId: string; versionId: string; title: string; category: string; applicantId: string; applicant: ApplicantIdentity; status: ApplicationStatus; createdAt: string; updatedAt: string; revision: number; feedback: string; aiReview?: AiAssessment | null; feedbackFormatting?: TextFormatting; notesFormatting?: TextFormatting; answers: Answers; history: { at: string; status: ApplicationStatus; feedback: string; feedbackFormatting?: TextFormatting }[]; internalNotes?: string; reviewer?: { id: string; displayName: string } | null }
 export interface ApplicationDetail { application: CareerApplication; form: FormDraft }
 export interface CareerPageResult<T> { items: T[]; nextCursor: string | null }
+export interface ApplicationStats { applicants: number; applications: number; categories: { category: string; applicants: number; applications: number }[]; openings: { id: string; title: string; applicants: number; applications: number }[] }
+export function answerWordCount(value: Answers[string] | undefined) { return typeof value === "string" ? (value.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu) ?? []).length : 0; }
+export function applicationWordCount(form: FormDraft, answers: Answers) { return form.questions.reduce((total, q) => total + (["short", "paragraph"].includes(q.type) ? answerWordCount(answers[q.id]) : 0), 0); }
+export const careerImageUrl = (id: string) => `/api/careers/images/${encodeURIComponent(id)}`;
 export async function careerRequest<T>(path: string, options: { method?: string; body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
   const response = await fetch(`/api/careers${path}`, { credentials: "include", method: options.method ?? "GET", signal: options.signal,
     headers: { Accept: "application/json", ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}), ...(options.csrf ? { "X-CSRF-Token": options.csrf } : {}) },
