@@ -6,7 +6,7 @@ const text = (value, label, max, required = false) => {
   return value.trim();
 };
 export const AI_MODEL = "gpt-6-luna";
-export const AI_PROMPT_VERSION = "careers-2026-11-04-v1";
+export const AI_PROMPT_VERSION = "careers-2026-11-04-v2";
 export const emptyAiReview = () => ({ brief: "", criteria: [], examples: [] });
 export function normalizeAiReview(input = emptyAiReview(), ready = false) {
   if (!input || typeof input !== "object" || Array.isArray(input) || Buffer.byteLength(JSON.stringify(input), "utf8") > 100_000) fail("AI review settings must fit within 100 KB.");
@@ -28,26 +28,47 @@ export function normalizeAiReview(input = emptyAiReview(), ready = false) {
   return { brief, criteria, examples };
 }
 export const aiFingerprint = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+// The model selects source IDs instead of copying quotes. Split only to bound
+// displayed excerpts; retain the original spelling, whitespace and punctuation.
+function answerExcerpts(answer) {
+  const excerpts = [];
+  for (const value of Array.isArray(answer) ? answer : answer == null ? [] : [answer]) {
+    let remaining = String(value);
+    while (remaining.length) {
+      let end = Math.min(300, remaining.length);
+      if (end < remaining.length) {
+        const whitespace = [...remaining.slice(0, end).matchAll(/\s+/g)].at(-1);
+        if (whitespace && whitespace.index >= 150) end = whitespace.index + whitespace[0].length;
+        // Never split a UTF-16 surrogate pair in an unbroken word/code sample.
+        if (/[\uDC00-\uDFFF]/u.test(remaining[end])) end--;
+      }
+      const excerpt = remaining.slice(0, end).trim();
+      if (excerpt) excerpts.push(excerpt);
+      remaining = remaining.slice(end);
+    }
+  }
+  return excerpts;
+}
 export function assessmentInput(form, application, settings) {
+  let sourceId = 0;
   return { opening: { title: form.title, category: form.category, description: form.description, commitment: form.commitment }, settings,
     questions: form.questions.map(q => ({ id: q.id, type: q.type, question: q.label, help: q.help, required: q.required,
       ...(q.options ? { options: q.options } : {}), ...(q.type === "scale" ? { min: q.min, max: q.max, minLabel: q.minLabel, maxLabel: q.maxLabel } : {}),
-      ...(q.image ? { imageDescription: q.image.alt } : {}), answer: application.answers[q.id] ?? null })) };
+      ...(q.image ? { imageDescription: q.image.alt } : {}), answerExcerpts: answerExcerpts(application.answers[q.id]).map(text => ({ id: `a${++sourceId}`, text })) })) };
 }
 export function normalizeAssessment(input, settings, form, application) {
   if (!input || !Array.isArray(input.grades) || input.grades.length !== settings.criteria.length) fail("The AI returned an incomplete assessment.");
   const known = new Map(settings.criteria.map(c => [c.id, c])), seen = new Set();
+  const sources = new Map(assessmentInput(form, application, settings).questions.flatMap(q => q.answerExcerpts.map(excerpt => [excerpt.id, { questionId: q.id, question: q.question, quote: excerpt.text }])));
   const grades = input.grades.map(grade => {
     const criterion = known.get(grade.criterionId);
     if (!criterion || seen.has(grade.criterionId) || typeof grade.score !== "number" || !Number.isFinite(grade.score) || grade.score < 0 || grade.score > 5) fail("The AI returned an invalid criterion score.");
     seen.add(grade.criterionId);
     if (!Array.isArray(grade.evidence) || grade.evidence.length > 3) fail("The AI returned invalid supporting evidence.");
-    const evidence = grade.evidence.map(e => {
-      const q = form.questions.find(q => q.id === e.questionId), answer = application.answers[e.questionId];
-      const quote = text(e.quote, "Evidence excerpt", 300, true);
-      const source = Array.isArray(answer) ? answer.join("\n") : answer == null ? "" : String(answer);
-      if (!q || !source.includes(quote)) fail("The AI cited an excerpt that is not in the submitted answer.");
-      return { questionId: q.id, question: q.label, quote };
+    const evidence = [...new Set(grade.evidence)].map(id => {
+      const source = sources.get(id);
+      if (!source) fail("Luna returned an unknown answer reference. No new ranking was applied.");
+      return source;
     });
     return { criterionId: criterion.id, name: criterion.name, weight: criterion.weight, score: grade.score, explanation: text(grade.explanation, "Criterion explanation", 1200, true), evidence };
   });
