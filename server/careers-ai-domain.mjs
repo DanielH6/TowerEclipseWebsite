@@ -20,7 +20,7 @@ export function normalizeAiReview(input = emptyAiReview(), ready = false) {
     return { id: c.id, name: text(c.name, "Criterion name", 80, ready), description: text(c.description ?? "", "Criterion description", 1200, ready), weight: c.weight,
       low: text(c.low ?? "", "Low-score guidance", 500), middle: text(c.middle ?? "", "Mid-score guidance", 500), high: text(c.high ?? "", "High-score guidance", 500) };
   });
-  if (!Array.isArray(input.examples) || input.examples.length > 8) fail("Use up to 8 sample answers.");
+  if (!Array.isArray(input.examples) || input.examples.length > 20) fail("Use up to 20 sample answers.");
   const examples = input.examples.map(e => {
     if (!e || !Number.isInteger(e.score) || e.score < 0 || e.score > 5) fail("Sample answer scores range from 0 to 5.");
     return { question: text(e.question ?? "", "Sample question", 300), answer: text(e.answer ?? "", "Sample answer", 5000, ready), score: e.score, notes: text(e.notes ?? "", "Why this sample receives its score", 1200, ready) };
