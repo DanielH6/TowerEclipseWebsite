@@ -14,7 +14,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import rateLimit from "express-rate-limit";
+import { authTrafficDiagnostics, createAuthRateLimiters } from "./auth-rate-limits.mjs";
 import helmet from "helmet";
 import { config } from "./config.mjs";
 import {
@@ -95,9 +95,7 @@ async function requireFirestoreReady(_request, response, next) {
   next();
 }
 
-if (config.production) {
-  app.set("trust proxy", 1);
-}
+app.set("trust proxy", config.authTraffic.trustProxyHops);
 
 app.disable("x-powered-by");
 
@@ -143,19 +141,7 @@ app.use("/api", (_request, response, next) => {
   next();
 });
 
-const authStartLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 30,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-});
-
-const callbackLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 60,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-});
+const { authStartLimiter, callbackLimiter } = createAuthRateLimiters(config.authTraffic);
 
 function sessionFromRequest(request) {
   const sessionId = readSignedCookie(request, SESSION_COOKIE);
@@ -235,6 +221,8 @@ app.get("/api/health", (_request, response) => {
       : {}),
   });
 });
+
+app.get("/api/admin/auth-traffic", requireAuth, requireRole("dev"), authTrafficDiagnostics(config.authTraffic));
 
 app.get("/api/roblox/stats", async (_request, response) => {
   try {

@@ -14,6 +14,25 @@ Required new field indexes: `websiteAccounts.verifiedRole` ascending, and `updat
 
 Deploy frontend and backend together. Verify as QA, Member and Developer; check the new admin route, a saved filter link, console-link validation, a duplicate relationship, an unpublished versus published release link, and onboarding progress after reload. Do not use real sensitive information in public reports.
 
+## Discord login traffic and proxy configuration
+
+`GET /api/auth/discord` allows 300 sign-in starts per client IP per 15 minutes. `GET /api/auth/discord/callback` has a separate allowance of 600 callbacks per client IP per 15 minutes. These replace the former 30/60 allowances. They do not count page assets, `/api/auth/me`, or visits to the public careers page. Existing account, application-submission and admin-write limits remain separate. IPv6 addresses use express-rate-limit's default /56 grouping.
+
+The host can override the allowances in the backend environment, then restart Node:
+
+```env
+AUTH_LOGIN_REQUESTS_PER_15_MINUTES=300
+AUTH_CALLBACK_REQUESTS_PER_15_MINUTES=600
+```
+
+The default in-memory counters belong to one Node process and reset when it restarts. Blocked responses retain HTTP 429, `Retry-After` and standard `RateLimit`/`RateLimit-Policy` headers, with a specific Discord sign-in message. They indicate throttling rather than an application crash. Do not disable the limiter for a recruitment announcement.
+
+IP accounting depends on the actual ingress chain. `TRUST_PROXY_HOPS` defaults to 1 in production and 0 in development, preserving the existing behavior unless explicitly configured. If Cloudflare, Traefik and/or Caddy leave additional addresses in `X-Forwarded-For`, the old one-hop setting can count a proxy as the client and cause visitors to share a bucket. The number of services alone does not determine the value: some proxies replace or sanitize the forwarded chain.
+
+After deploying, sign in as a Developer and open `/api/admin/auth-traffic`. This authenticated, Developer-only endpoint returns the effective limits, trusted-hop count, resolved client IP, socket peer IP, and the request's forwarded/Cloudflare IP headers. It does not return cookies, OAuth state, authorization headers or server secrets. Compare the resolved IP with the visitor's actual IP and have the host inspect how each ingress appends/overwrites forwarding headers. Set `TRUST_PROXY_HOPS` to the verified number of trusted hops; for a verified two-hop chain, use `TRUST_PROXY_HOPS=2`. The diagnostic is not available anonymously or to ordinary applicants.
+
+Keep Node reachable only through the expected ingress, and ensure every supported ingress path has the configured trust boundary. Never set Express trust to unrestricted `true` or use a raw `CF-Connecting-IP`/leftmost `X-Forwarded-For` header as an unverified rate-limit key. See [Express proxy trust](https://expressjs.com/en/guide/behind-proxies/) and the limiter's [shared-proxy troubleshooting](https://express-rate-limit.mintlify.app/guides/troubleshooting-proxy-issues). Increasing the allowance can relieve a burst; verifying the forwarded client IP prevents a shared proxy from consuming everyone's allowance again. This repository change does not alter the live Cloudflare or ingress settings.
+
 ## Repeatable browser checks
 
 `npm run test:staging` runs the checked-in Playwright suite for Member, QA and Developer using authenticated browser states. It deliberately refuses `towereclipse.com` and has no default target. A separate test site must have its own database and storage bucket.
