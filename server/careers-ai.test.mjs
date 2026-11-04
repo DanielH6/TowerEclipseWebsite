@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createCareersService } from "./careers-service.mjs";
 import { createCareerAiProvider } from "./careers-ai-provider.mjs";
-import { normalizeAiReview, rankAssessments, normalizeAssessment } from "./careers-ai-domain.mjs";
+import { assessmentInput, normalizeAiReview, rankAssessments, normalizeAssessment } from "./careers-ai-domain.mjs";
 import { createMemoryDb } from "./testing/careers-memory-db.mjs";
 
 const admin = { id: "admin", role: "dev", displayName: "Reviewer" };
@@ -13,8 +13,8 @@ async function fixture({ provider: supplied } = {}) {
   let time = Date.parse("2026-11-04T00:00:00Z");
   const provider = supplied ?? { enabled: true, draftCriteria: async () => ({ value: { criteria: settings.criteria } }), assess: async input => {
     calls.push(input);
-    const score = Number(input.questions[0].answer.match(/\d/)[0]);
-    return { value: { summary: "Assessment based on the submitted example.", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "The answer supplies the stated level of detail.", evidence: [{ questionId: "answer", quote: input.questions[0].answer }] })) }, usage: { inputTokens: 100, outputTokens: 40 } };
+    const score = Number(input.questions[0].answerExcerpts[0].text.match(/\d/)[0]);
+    return { value: { summary: "Assessment based on the submitted example.", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "The answer supplies the stated level of detail.", evidence: [input.questions[0].answerExcerpts[0].id] })) }, usage: { inputTokens: 100, outputTokens: 40 } };
   } };
   const service = createCareersService(memory.db, { aiProvider: provider, now: () => time });
   const form = await service.createForm();
@@ -35,15 +35,56 @@ test("normal curve centres on five, stays bounded, preserves ties and does not i
     for (const a of result) for (const b of result.slice(0, 5)) if (a.qualityScore === b.qualityScore) assert.equal(a.relativeScore, b.relativeScore);
   }
 });
-test("criteria are bounded, weighted server-side, and fabricated evidence is rejected", () => {
+test("criteria are bounded, weighted server-side, and unknown evidence references are rejected", () => {
   assert.throws(() => normalizeAiReview({ ...settings, criteria: [{ ...settings.criteria[0], weight: 100 }] }));
   assert.throws(() => normalizeAiReview({ ...settings, criteria: [settings.criteria[0], settings.criteria[0]] }));
   assert.throws(() => normalizeAiReview({ brief: "", criteria: [], examples: [] }, true));
-  const grades = settings.criteria.map((c, i) => ({ criterionId: c.id, score: i === 0 ? 4 : 1, explanation: "Explanation", evidence: [{ questionId: "answer", quote: "practical" }] }));
+  const grades = settings.criteria.map((c, i) => ({ criterionId: c.id, score: i === 0 ? 4 : 1, explanation: "Explanation", evidence: ["a1"] }));
   const result = normalizeAssessment({ grades, summary: "Summary", observations: "" }, settings, draft, { answers: { answer: "practical approach" } });
   assert.equal(result.qualityScore, 6);
-  grades[0].evidence[0].quote = "invented quotation";
-  assert.throws(() => normalizeAssessment({ grades, summary: "Summary" }, settings, draft, { answers: { answer: "practical approach" } }), /not in/);
+  assert.deepEqual(result.grades[0].evidence, [{ questionId: "answer", question: draft.questions[0].label, quote: "practical approach" }]);
+  for (const invalid of ["a999", "answer", "invented quotation", { questionId: "answer", quote: "practical approach" }]) {
+    grades[0].evidence = [invalid];
+    assert.throws(() => normalizeAssessment({ grades, summary: "Summary" }, settings, draft, { answers: { answer: "practical approach" } }), /unknown answer reference/);
+  }
+});
+test("evidence uses the original answer text across punctuation, multiline, lists, scales and missing answers", () => {
+  const questions = [
+    { id: "uuid-written", type: "paragraph", label: "Written question" },
+    { id: "uuid-choice", type: "choice", label: "Pick one", options: ["Tester", "Builder"] },
+    { id: "uuid-checks", type: "checkboxes", label: "Pick several", options: ["Logs", "Video", "Other"] },
+    { id: "uuid-ranking", type: "ranking", label: "Preferences", options: ["UI", "Maps"] },
+    { id: "uuid-scale", type: "scale", label: "Rate this", min: 0, max: 10 },
+    { id: "uuid-missing", type: "short", label: "Unanswered optional question" },
+  ];
+  const form = { ...draft, questions }, application = { answers: {
+    "uuid-written": "I’d check ‘logs’—first.\r\nThen\t reproduce  it. Café 👩🏽‍💻",
+    "uuid-choice": "Tester", "uuid-checks": ["Video", "Logs"], "uuid-ranking": ["Maps", "UI"], "uuid-scale": 0,
+  } };
+  const input = assessmentInput(form, application, settings);
+  assert.deepEqual(input.questions.map(q => q.answerExcerpts.map(e => e.text)), [
+    [application.answers["uuid-written"]], ["Tester"], ["Video", "Logs"], ["Maps", "UI"], ["0"], [],
+  ]);
+  const ids = input.questions.flatMap(q => q.answerExcerpts.map(e => e.id));
+  assert.equal(new Set(ids).size, ids.length);
+  for (const q of input.questions) for (const excerpt of q.answerExcerpts) {
+    const grades = settings.criteria.map(c => ({ criterionId: c.id, score: 3, explanation: "Explanation", evidence: [excerpt.id] }));
+    const result = normalizeAssessment({ grades, summary: "Summary" }, settings, form, application);
+    assert.deepEqual(result.grades[0].evidence, [{ questionId: q.id, question: q.question, quote: excerpt.text }]);
+  }
+  const grades = settings.criteria.map(c => ({ criterionId: c.id, score: 0, explanation: "Missing relevant evidence.", evidence: [] }));
+  assert.deepEqual(normalizeAssessment({ grades, summary: "Summary" }, settings, form, application).grades[0].evidence, []);
+});
+test("long answer passages stay bounded and retain all original non-whitespace including Unicode and code", () => {
+  const answer = `${"First I'd reproduce the issue.\nThen check ‘logs’ and record steps. ".repeat(30)}${"x".repeat(299)}👩${"y".repeat(900)}`;
+  const input = assessmentInput(draft, { answers: { answer } }, settings), excerpts = input.questions[0].answerExcerpts;
+  assert.ok(excerpts.length > 10);
+  assert.equal(excerpts.map(e => e.text).join("").replace(/\s/g, ""), answer.replace(/\s/g, ""));
+  for (const excerpt of excerpts) {
+    assert.ok(excerpt.text.length > 0 && excerpt.text.length <= 300);
+    assert.ok(answer.includes(excerpt.text));
+    assert.equal(excerpt.text.isWellFormed(), true);
+  }
 });
 test("review criteria stay private when drafts are saved, forms published and applications read", async () => {
   const f = await fixture(); f.add("person", 3);
@@ -125,11 +166,22 @@ test("Luna transport uses structured Responses, private storage settings, bounde
     captured = { url, ...JSON.parse(options.body) };
     return new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ summary: "Résumé", grades: [] }) }] }], usage: { input_tokens: 15, output_tokens: 10 } }));
   } });
-  assert.equal((await provider.assess({ questions: [] })).value.summary, "Résumé");
+  const input = assessmentInput(draft, { answers: { answer: "I’d check logs.\nThen reproduce." } }, settings);
+  assert.equal((await provider.assess(input)).value.summary, "Résumé");
   assert.equal(organizationHeader, "org-test"); assert.equal(captured.model, "gpt-6-luna"); assert.equal(captured.store, false); assert.equal(captured.text.format.strict, true);
+  const gradeSchema = captured.text.format.schema.properties.grades;
+  assert.deepEqual(gradeSchema.items.properties.criterionId.enum, settings.criteria.map(c => c.id));
+  assert.deepEqual(gradeSchema.items.properties.evidence.items.enum, ["a1"]);
+  assert.equal(gradeSchema.minItems, settings.criteria.length);
+  assert.equal(gradeSchema.maxItems, settings.criteria.length);
+  assert.deepEqual(JSON.parse(captured.input[0].content[0].text).questions[0].answerExcerpts, [{ id: "a1", text: "I’d check logs.\nThen reproduce." }]);
+  assert.ok(captured.instructions.includes("never question IDs, quoted text, rubric wording or sample answers"));
+  await provider.assess(assessmentInput(draft, { answers: {} }, settings));
+  assert.equal(captured.text.format.schema.properties.grades.items.properties.evidence.maxItems, 0);
+  assert.equal(captured.text.format.schema.properties.grades.items.properties.evidence.items.enum, undefined);
   assert.equal(JSON.stringify(captured).includes("private-test-key"), false);
   const broken = createCareerAiProvider({ apiKey: "private-test-key", fetch: async () => new Response("secret provider diagnostic", { status: 429 }) });
-  await assert.rejects(broken.assess({}), error => error.status === 503 && !error.message.includes("secret provider"));
+  await assert.rejects(broken.assess(input), error => error.status === 503 && !error.message.includes("secret provider"));
 });
 
 test("concurrent workers cannot assess the same applicant while a lease is active", async () => {

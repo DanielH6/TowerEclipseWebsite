@@ -19,8 +19,8 @@ const provider = {
   ] } }; },
   async assess(input) {
     calls.push(input); await new Promise(resolve => setTimeout(resolve, 10));
-    const score = Number(input.questions[0].answer.match(/\d/)[0]);
-    return { value: { summary: "Assessment of practical testing knowledge.", observations: "Consider discussing an example with the applicant.", grades: input.settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "Based on the submitted reproduction steps.", evidence: [{ questionId: "answer", quote: input.questions[0].answer }] })) }, usage: { inputTokens: 100, outputTokens: 50 } };
+    const score = Number(input.questions[0].answerExcerpts[0].text.match(/\d/)[0]);
+    return { value: { summary: "Assessment of practical testing knowledge.", observations: "Consider discussing an example with the applicant.", grades: input.settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "Based on the submitted reproduction steps.", evidence: [input.questions[0].answerExcerpts[0].id] })) }, usage: { inputTokens: 100, outputTokens: 50 } };
   },
 };
 const service = createCareersService(memory.db, { aiProvider: provider });
