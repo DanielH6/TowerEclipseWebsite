@@ -1,5 +1,6 @@
 import { loadBackendEnvironment } from "./backend-environment.mjs";
 import { MAX_IMAGES_PER_UPDATE } from "./update-content.mjs";
+import { readAuthTrafficConfiguration } from "./auth-rate-limits.mjs";
 
 loadBackendEnvironment();
 
@@ -202,6 +203,7 @@ export const config = Object.freeze({
   production,
   port: integer("PORT", 3001, 1, 65535),
   appOrigin,
+  authTraffic: readAuthTrafficConfiguration(),
   discord: Object.freeze({
     clientId: snowflake("DISCORD_CLIENT_ID"),
     clientSecret: privateSecret("DISCORD_CLIENT_SECRET"),
