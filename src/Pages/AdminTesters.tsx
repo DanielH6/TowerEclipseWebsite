@@ -19,8 +19,8 @@ function TesterHistory({ tester }: { tester: Tester }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError("");
-    loadAccountResource<Detail>(`/testers/${tester.discordId}?cursor=${encodeURIComponent(cursor)}`, controller.signal)
-      .then(value => { if (!controller.signal.aborted) setData(value); })
+    loadAccountResource<Detail>(`/testers/${tester.discordId}${cursor ? "/reports" : ""}?cursor=${encodeURIComponent(cursor)}`, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setData(previous => ({ ...previous, ...value })); })
       .catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -59,23 +59,28 @@ export default function AdminTestersPage() {
   const [loading, setLoading] = useState(true);
   const [limited, setLimited] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [pages, setPages] = useState<(string | null)[]>([null]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedSearch, setAppliedSearch] = useState("");
+  useEffect(() => { const timer = setTimeout(() => { setAppliedSearch(search.trim()); setPages([null]); }, 400); return () => clearTimeout(timer); }, [search]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError("");
-    loadAccountResource<{ testers: Tester[]; limited: boolean }>("/testers", controller.signal)
-      .then(value => { if (!controller.signal.aborted) { setTesters(value.testers); setLimited(value.limited); } })
+    loadAccountResource<{ testers: Tester[]; limited: boolean; nextCursor: string | null }>(`/testers?${new URLSearchParams({ ...(role ? { role } : {}), ...(appliedSearch ? { search: appliedSearch } : {}), ...(pages.at(-1) ? { cursor: pages.at(-1)! } : {}) })}`, controller.signal)
+      .then(value => { if (!controller.signal.aborted) { setTesters(value.testers); setLimited(value.limited); setNextCursor(value.nextCursor); } })
       .catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [revision]);
+  }, [revision, role, appliedSearch, pages]);
   const visible = testers.filter(tester => (!role || tester.role === role) && `${tester.displayName} ${tester.username} ${tester.discordId}`.toLowerCase().includes(search.toLowerCase()));
   const tester = testers.find(item => item.discordId === selected);
   return <section className="workspace-page">
     <div className="workspace-header"><div><p className="workspace-kicker">DEVELOPER ADMIN</p><h2>TESTER OVERVIEW</h2><p>Connected website accounts with a last verified QA Tester, PEN Tester or QA Lead rank.</p></div><div className="button-row"><Link className="ghost-link" to="/admin">ADMIN</Link><button className="primary-action" disabled={loading} onClick={() => setRevision(value => value + 1)}>REFRESH</button></div></div>
     <p>Ranks are checked when users sign in or refresh their Discord role. This is not a live Discord member list or online-status tracker. Existing accounts appear after their next sign-in or account refresh.</p>
-    <div className="bug-filters"><label className="filter-field filter-search"><span>Find tester</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, username, Discord ID…" /></label><label className="filter-field"><span>Rank</span><select value={role} onChange={event => setRole(event.target.value)}><option value="">All testers</option><option value="qa">QA Tester</option><option value="pentester">PEN Tester</option><option value="leadqa">QA Lead</option></select></label></div>
+    <div className="bug-filters"><label className="filter-field filter-search"><span>Find tester</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, username, Discord ID…" /></label><label className="filter-field"><span>Rank</span><select value={role} onChange={event => { setRole(event.target.value); setPages([null]); }}><option value="">All testers</option><option value="qa">QA Tester</option><option value="pentester">PEN Tester</option><option value="leadqa">QA Lead</option></select></label></div>
     {loading && <p role="status">Loading testers…</p>}{error && <p className="workspace-error" role="alert">{error}</p>}
     {limited && <p role="status">Showing up to 500 accounts per rank. Directory results are incomplete.</p>}
     {!loading && !error && <><p>{visible.length} tester{visible.length === 1 ? "" : "s"}</p><div className="tester-layout"><div className="tester-list">{visible.map(item => <button className={`tester-select${selected === item.discordId ? " is-selected" : ""}`} aria-pressed={selected === item.discordId} key={item.discordId} onClick={() => setSelected(item.discordId)}><strong>{item.displayName}</strong><span>@{item.username} · {ROLE_LABELS[item.role]}</span><small>Verified {date(item.roleVerifiedAt)}</small></button>)}{!visible.length && <p>No testers match. Accounts appear after a verified sign-in.</p>}</div>{tester ? <TesterHistory tester={tester} key={`${tester.discordId}:${revision}`} /> : <p>Select a tester to view their report history and activity.</p>}</div></>}
+    <nav className="account-pagination" aria-label="Tester directory pages"><button className="secondary-button" disabled={pages.length === 1 || loading} onClick={() => setPages(value => value.slice(0, -1))}>PREVIOUS</button><span>Page {pages.length}</span><button className="secondary-button" disabled={!nextCursor || loading} onClick={() => setPages(value => [...value, nextCursor])}>NEXT</button></nav>
   </section>;
 }

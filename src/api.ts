@@ -112,6 +112,7 @@ export interface BugPagination {
 }
 
 export interface BugListResult {
+  nextCursor?: string | null;
   snapshot: string;
   refreshedAt: string;
   expiresAt: string;
@@ -119,7 +120,7 @@ export interface BugListResult {
   pagination: BugPagination;
 }
 
-export async function loadBugs(filters: BugFilters = {}, page = 1, snapshot?: string | null): Promise<BugListResult> {
+export async function loadBugs(filters: BugFilters = {}, page = 1, snapshot?: string | null, options: { cursor?: string; fresh?: boolean; signal?: AbortSignal } = {}): Promise<BugListResult> {
   const parameters = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (Array.isArray(value)) {
@@ -130,6 +131,8 @@ export async function loadBugs(filters: BugFilters = {}, page = 1, snapshot?: st
   });
   parameters.set("page", String(page));
   if (snapshot) parameters.set("snapshot", snapshot);
+  if (options.cursor) parameters.set("cursor", options.cursor);
+  if (options.fresh) parameters.set("fresh", "1");
   const response = await fetch(`/api/bugs?${parameters.toString()}`, {
     credentials: "include",
     headers: { Accept: "application/json" },
@@ -202,11 +205,16 @@ export async function cancelBugSubmission(
 }
 
 export async function loadBug(reportId: string): Promise<BugDetailsResponse> {
-  const response = await fetch(`/api/bugs/${encodeURIComponent(reportId)}`, {
+  const response = await fetch(`/api/bugs/${encodeURIComponent(reportId)}?lazy=1`, {
     credentials: "include",
     headers: { Accept: "application/json" },
   });
   return readJson<BugDetailsResponse>(response);
+}
+
+export async function loadBugSection<T>(reportId: string, section: string, cursor?: string | null): Promise<{ items: T[]; nextCursor: string | null }> {
+  const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
+  return apiJson(`/api/bugs/${encodeURIComponent(reportId)}/sections/${encodeURIComponent(section)}${query}`);
 }
 
 export async function updateBug(
@@ -448,8 +456,9 @@ export async function loadTournaments(): Promise<TournamentSummary[]> {
   return body.tournaments;
 }
 
-export async function loadTournament(identifier: string): Promise<Tournament> {
+export async function loadTournament(identifier: string, signal?: AbortSignal): Promise<Tournament> {
   const response = await fetch(`/api/tournaments/${encodeURIComponent(identifier)}`, {
+    signal,
     credentials: "include",
     headers: { Accept: "application/json" },
   });
@@ -749,13 +758,13 @@ export function addTournamentAnnouncement(
   return tournamentAction(tournamentId, "log", csrfToken, input);
 }
 
-export async function loadPublishedUpdates(): Promise<GameUpdate[]> {
-  const response = await fetch("/api/updates", {
-    headers: { Accept: "application/json" },
-  });
-  const body = await readJson<{ updates: GameUpdate[] }>(response);
-  return body.updates;
+export interface PublishedUpdatesPage { updates: GameUpdate[]; nextCursor: string | null; total: number; publishedTotal: number; currentVersion: string; latestFullUpdateId: string | null; revision: string }
+export async function loadPublishedUpdatesPage(options: { cursor?: string | null; search?: string; signal?: AbortSignal } = {}): Promise<PublishedUpdatesPage> {
+  const query = new URLSearchParams({ ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.search ? { search: options.search } : {}) });
+  const response = await fetch(`/api/updates?${query}`, { headers: { Accept: "application/json" }, signal: options.signal });
+  return readJson<PublishedUpdatesPage>(response);
 }
+export async function loadPublishedUpdates(): Promise<GameUpdate[]> { return (await loadPublishedUpdatesPage()).updates; }
 
 export async function loadPublishedUpdate(updateId: string): Promise<GameUpdate> {
   const response = await fetch(`/api/updates/${encodeURIComponent(updateId)}`, {

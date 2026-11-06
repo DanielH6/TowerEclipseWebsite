@@ -78,7 +78,7 @@ function ContributionCalendar({ data }: { data: AccountCalendar }) {
       <span aria-live="polite">{selected ? `${selected.date} · ${number(selected.count)} reports` : `${number(total)} reports across ${number(activeDays)} active days`}</span>
       <div className="account-legend" aria-label="Darker cells mean fewer reports; brighter cells mean more."><span>Less</span>{[0, 1, 2, 3, 4].map(level => <i className="account-day" data-level={level} key={level} />)}<span>More</span></div>
     </div>
-    <p className="account-footnote">Past 365 days · UTC · Counts refresh at most every 15 minutes.{data.limited ? ` Showing the latest ${number(data.limit)} report records; some daily totals may be incomplete. The statistics above include all submitted reports.` : ""}</p>
+    <p className="account-footnote">Past 365 days · UTC · Counts use a saved daily summary, updated when submissions change.{data.limited ? ` Showing the latest ${number(data.limit)} report records; some daily totals may be incomplete. The statistics above include all submitted reports.` : ""}</p>
   </>;
 }
 
@@ -113,10 +113,10 @@ export default function Account() {
     url.searchParams.delete("roblox");
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, [linkOutcome]);
-  const stats = useResource<AccountStats>(staff ? "/stats" : null);
-  const calendar = useResource<AccountCalendar>(staff ? "/calendar" : null);
-  const reports = useResource<AccountReports>(staff ? `/reports?${new URLSearchParams({ ...(status ? { status } : {}), ...(pages.at(-1) ? { cursor: pages.at(-1)! } : {}) })}` : null);
-  const activity = useResource<{ events: AccountEvent[] }>(staff ? "/activity" : null);
+  const stats = useResource<AccountStats>(staff && tab === "overview" ? "/stats" : null);
+  const calendar = useResource<AccountCalendar>(staff && tab === "overview" ? "/calendar" : null);
+  const reports = useResource<AccountReports>(staff && ["overview", "reports"].includes(tab) ? `/reports?${new URLSearchParams({ ...(tab === "overview" ? { preview: "1" } : {}), ...(status ? { status } : {}), ...(pages.at(-1) ? { cursor: pages.at(-1)! } : {}) })}` : null);
+  const activity = useResource<{ events: AccountEvent[] }>(staff && ["overview", "activity"].includes(tab) ? "/activity" : null);
   useEffect(() => {
     if (!staff) return;
     let active = true;
@@ -170,7 +170,7 @@ export default function Account() {
         <dl className="account-details"><div><dt>ACCOUNT CREATED</dt><dd>{profile.data ? date(profile.data.profile.firstLoginAt) : "—"}</dd></div>{user.guildNickname && <div><dt>SERVER NICKNAME</dt><dd>{user.guildNickname}</dd></div>}<div><dt>ROBLOX ACCOUNT</dt><dd>{profile.data?.profile.roblox ? <><a className="account-profile-link" href={`https://www.roblox.com/users/${profile.data.profile.roblox.userId}/profile`} target="_blank" rel="noopener noreferrer">@{profile.data.profile.roblox.username} ↗</a><small className="account-roblox-id">ID: {profile.data.profile.roblox.userId}</small></> : <button className="account-text-button" onClick={() => switchTab("connections")}>Link Roblox →</button>}</dd></div><div><dt>SIGN-IN METHOD</dt><dd><span className="account-connected-dot" /> Discord</dd></div></dl>
         <ResourceState {...profile} /><p className="account-footnote">Account dates are recorded from your first sign-in with the new dashboard.</p>
         <div className="account-session-actions"><button className="secondary-button" disabled={!!working} onClick={() => void perform("role", recheck)}>{working === "role" ? "CHECKING…" : "RE-CHECK DISCORD ROLE"}</button><button className="account-text-button account-signout" disabled={!!working} onClick={() => void perform("logout", logout)}>SIGN OUT</button></div>
-      </section><div className="account-sidebar-note"><span className="section-kicker">BUILT TOGETHER</span><p>Every useful report brings Tower Eclipse one step closer to a better experience.</p><Link to="/bugs">Explore the bug tracker ↗</Link></div></aside>
+      </section><div className="account-sidebar-note"><span className="section-kicker">BUILT TOGETHER</span><p>Every useful report brings Tower Eclipse one step closer to a better experience.</p><Link to={staff ? "/bugs" : "/news"}>{staff ? "Explore the bug tracker ↗" : "Explore the latest news ↗"}</Link></div></aside>
       <div className="account-main">
         <div className="account-tabs" role="tablist" aria-label="Account sections">{tabs.map((item, index) => <button id={`account-tab-${item.id}`} key={item.id} role="tab" aria-selected={currentTab === item.id} aria-controls={`account-panel-${item.id}`} tabIndex={currentTab === item.id ? 0 : -1} onClick={() => switchTab(item.id)} onKeyDown={event => {
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -189,7 +189,7 @@ export default function Account() {
               </section>
               <section className="account-card"><div className="account-card-heading"><div><p className="section-kicker">A YEAR OF TESTING</p><h3>Contribution activity</h3></div><span className="account-tag">365 DAYS</span></div><ResourceState {...calendar} />{calendar.data && <ContributionCalendar data={calendar.data} />}</section>
               {reportsPanel(true)}{activityPanel(true)}
-            </> : <section className="account-card account-member-welcome"><p className="section-kicker">WELCOME TO THE COMMUNITY</p><h3>Your home in Tower Eclipse.</h3><p>Keep up with development, explore community reports, and follow the latest news. Testers and developers also get personal report tracking here.</p><div className="button-row"><Link className="primary-button" to="/news">LATEST NEWS</Link><Link className="secondary-button" to="/bugs">BROWSE REPORTS</Link></div></section>}
+            </> : <section className="account-card account-member-welcome"><p className="section-kicker">WELCOME TO THE COMMUNITY</p><h3>Your home in Tower Eclipse.</h3><p>Keep up with development, read the latest news, and follow your team applications.</p><div className="button-row"><Link className="primary-button" to="/news">LATEST NEWS</Link><Link className="secondary-button" to="/careers">EXPLORE CAREERS</Link></div></section>}
             <section className="account-card account-future-inline"><div><span className="account-tag">ON THE HORIZON</span><h3>One account. More of your world.</h3><p>Connect your Roblox identity now. In-game progress is coming in a future update.</p></div><button className="account-text-button" onClick={() => switchTab("connections")}>Explore connections →</button></section>
           </>}
           {currentTab === "onboarding" && staff && <TesterOnboarding />}
@@ -198,7 +198,7 @@ export default function Account() {
           {currentTab === "activity" && activityPanel(false)}
           {currentTab === "connections" && <section className="account-card"><div className="account-card-heading"><div><p className="section-kicker">YOUR CONNECTED WORLD</p><h3>Account connections</h3></div></div><div className="account-connection"><img className="account-connection-symbol" src="/social/discord.png" alt="" /><div><h4>Discord</h4><p>@{user.username}</p><small>Your website identity and community role.</small></div><span className="account-tag is-connected">CONNECTED</span></div><ResourceState {...profile} />{profile.data && <RobloxConnection account={profile.data.profile.roblox ?? null} enabled={profile.data.robloxLinkingEnabled} csrfToken={auth!.csrfToken} onChanged={() => { setLinkOutcome(null); profile.reload(); }} />}<div className="account-game-preview"><p className="section-kicker">IN-GAME PROGRESS</p><h3>Your story beyond the website.</h3><p>A future home for your Tower Eclipse stats, milestones, and achievements. Game data isn’t connected yet.</p></div></section>}
         </div>
-        {staff && <div className="account-refresh"><span>Updates load when you open this page.</span><button className="account-text-button" disabled={reports.loading || activity.loading || stats.loading || calendar.loading} onClick={() => { reports.reload(); activity.reload(); stats.reload(); calendar.reload(); }}>↻ Refresh dashboard</button></div>}
+        {staff && <div className="account-refresh"><span>Updates load when you open this page.</span><button className="account-text-button" disabled={reports.loading || activity.loading || stats.loading || calendar.loading} onClick={() => { if (["overview", "reports"].includes(currentTab)) reports.reload(); if (["overview", "activity"].includes(currentTab)) activity.reload(); if (currentTab === "overview") { stats.reload(); calendar.reload(); } }}>↻ Refresh dashboard</button></div>}
       </div>
     </div>
   </section>;

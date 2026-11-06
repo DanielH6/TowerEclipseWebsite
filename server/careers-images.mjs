@@ -4,6 +4,23 @@ import { attachmentStoragePolicy, normalizeAttachmentInput, createAttachmentUplo
 
 const defaultStorage = { policy: attachmentStoragePolicy, normalize: normalizeAttachmentInput, upload: createAttachmentUploadUrl, download: createAttachmentDownloadUrl, head: headAttachmentObject };
 export function createCareerImageService(db, storage = defaultStorage) {
+  const published = new Map(), pending = new Map();
+  async function metadata(id) {
+    const key = identifier(id), saved = published.get(key);
+    if (saved?.until > Date.now()) return saved.asset;
+    if (pending.has(key)) return pending.get(key);
+    const work = reference(key).get().then(snapshot => {
+      const asset = snapshot.data();
+      // Pending/private uploads are never retained as public metadata.
+      if (asset?.published && asset.state === "ready") {
+        published.delete(key); published.set(key, { asset, until: Date.now() + 60 * 60_000 });
+        while (published.size > 250) published.delete(published.keys().next().value);
+      }
+      return asset;
+    });
+    pending.set(key, work);
+    try { return await work; } finally { if (pending.get(key) === work) pending.delete(key); }
+  }
   const reference = id => db.doc(`careerQuestionImages/${identifier(id)}`);
   const policy = () => ({ ...storage.policy(), maxFilesPerReport: 1, maxFileSizeBytes: Math.min(storage.policy().maxFileSizeBytes, 5 * 1024 * 1024) });
   function requireAdmin(actor) { if (actor?.role !== "dev") fail("Only developers can upload question images.", 403); }
@@ -37,7 +54,7 @@ export function createCareerImageService(db, storage = defaultStorage) {
       return { imageId: id };
     },
     async image(id, actor) {
-      const asset = (await reference(id).get()).data();
+      const asset = await metadata(id);
       if (!asset || asset.state !== "ready" || (!asset.published && actor?.role !== "dev")) fail("Question image not found.", 404);
       return storage.download(asset.objectKey);
     },

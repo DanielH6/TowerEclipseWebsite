@@ -1,31 +1,35 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import { Link, useNavigate } from "../router";
-import { careerDate, careerRequest, useCareerResource, useUnsavedChanges, type Answers, type ApplicantIdentity, type CareerForm, type CareerPageResult } from "../careers";
+import { applicationUnsavedMessage, careerDate, careerRequest, useCareerResource, useUnsavedChanges, type ApplicantFormData, type CareerForm, type CareerPageResult } from "../careers";
 import CareerFields, { CareerPagination, CareerResourceState } from "../Components/CareerFields";
 import { RichText } from "../Components/CareerRichText";
+import { ApplicationDraftNotice, useApplicationDraft } from "../Components/CareerApplicationDraft";
 import "./Careers.css";
 
-function ApplicationForm({ data }: { data: { form: CareerForm; identity: ApplicantIdentity; existingApplicationId: string | null } }) {
+function ApplicationForm({ data }: { data: ApplicantFormData }) {
   const { auth } = useAuth();
   const navigate = useNavigate();
-  const [answers, setAnswers] = useState<Answers>({});
+  const { form, identity } = data;
+  const savedDraft = useApplicationDraft({ initialDraft: data.draft, versionId: form.versionId!, formId: form.id, form });
+  const { answers, setAnswers } = savedDraft;
   const [consent, setConsent] = useState(false);
   const [working, setWorking] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
-  useUnsavedChanges(!submitted && Object.keys(answers).length > 0);
-  const { form, identity } = data;
+  const closed = data.acceptingApplications === false;
+  const busy = working || savedDraft.saving;
+  const clearUnsavedWarning = useUnsavedChanges(!submitted && !closed && !data.existingApplicationId && savedDraft.dirty, applicationUnsavedMessage);
   const answered = form.questions.filter(q => { const v = answers[q.id]; return v !== undefined && v !== "" && (!Array.isArray(v) || v.length > 0); }).length;
   if (data.existingApplicationId) return <div className="career-card career-empty"><span className="career-eyebrow">APPLICATION RECEIVED</span><h3>You’ve already applied for this opening.</h3><p>View your application to edit and resubmit before the deadline, check your status, or read updates.</p><Link className="career-button is-primary" to={`/applications/${data.existingApplicationId}`}>View my application →</Link></div>;
   return <form className="career-form-layout" onSubmit={async e => {
-    e.preventDefault(); if (working || !auth) return;
+    e.preventDefault(); if (busy || closed || !auth) return;
     setWorking(true); setError("");
-    try { const result = await careerRequest<{ id: string }>(`/forms/${form.id}/applications`, { method: "POST", csrf: auth.csrfToken, body: { versionId: form.versionId, answers, consent } }); setSubmitted(true); navigate(`/applications/${result.id}?submitted=1`); }
+    try { const result = await careerRequest<{ id: string }>(`/forms/${form.id}/applications`, { method: "POST", csrf: auth.csrfToken, body: { versionId: form.versionId, answers, consent, draftRevision: savedDraft.draftRevision } }); setSubmitted(true); clearUnsavedWarning(); navigate(`/applications/${result.id}?submitted=1`); }
     catch (reason) { setError((reason as Error).message); setWorking(false); }
   }}>
-    <div><CareerFields questions={form.questions} answers={answers} onChange={setAnswers} disabled={working} />
-      <div className="career-card career-submit"><h3>Ready to send?</h3><p>Review your answers before submitting. You can edit and resubmit this application while the opening is accepting applications, before its deadline.</p><p>Your answers and the identities shown here will be visible to developers reviewing applications. QA Leads can also view Quality Assurance applications but cannot change their status. Administrators may use OpenAI to assist with reviewing your answers against role criteria; people make the final decisions. Account identity fields and private reviewer notes are not sent, but information you put in your answers may be. Do not include passwords, your home address, or sensitive personal information.</p><label className="career-check"><input type="checkbox" required checked={consent} disabled={working} onChange={e => setConsent(e.target.checked)} /><span>I have read the <Link to="/privacy" target="_blank">Privacy Policy</Link> and <Link to="/terms" target="_blank">Terms of Service</Link>, and understand how my application will be reviewed.</span></label>{error && <p className="career-notice is-error" role="alert">{error}</p>}<button className="career-button is-primary" disabled={working} type="submit">{working ? "Submitting…" : "Submit application ↗"}</button><p className="career-help">Your answers stay on this page until submitted. They are not saved if you leave.</p></div>
+    <div>{closed && <div className="career-notice" role="status"><strong>Opening closed.</strong> Your saved draft is available to read. It cannot be saved or submitted after the deadline or while the opening is closed.</div>}<ApplicationDraftNotice draft={savedDraft.draft} versionChanged={savedDraft.versionChanged} /><CareerFields questions={form.questions} answers={answers} onChange={setAnswers} disabled={busy || closed} />
+      <div className="career-card career-submit"><h3>Ready to send?</h3><p>Review your answers before submitting. You can edit and resubmit this application while the opening is accepting applications, before its deadline.</p><p>Your answers and the identities shown here will be visible to developers reviewing applications. QA Leads can also view Quality Assurance applications but cannot change their status. Administrators may use OpenAI to assist with reviewing your answers against role criteria; people make the final decisions. Account identity fields and private reviewer notes are not sent, but information you put in your answers may be. Do not include passwords, your home address, or sensitive personal information.</p><label className="career-check"><input type="checkbox" required checked={consent} disabled={busy || closed} onChange={e => setConsent(e.target.checked)} /><span>I have read the <Link to="/privacy" target="_blank">Privacy Policy</Link> and <Link to="/terms" target="_blank">Terms of Service</Link>, and understand how my application will be reviewed.</span></label>{(error || savedDraft.error) && <p className="career-notice is-error" role="alert">{error || savedDraft.error}</p>}{savedDraft.notice && <p className="career-notice" role="status">{savedDraft.notice}</p>}<div className="career-actions"><button className="career-button" type="button" disabled={busy || closed || !savedDraft.dirty} onClick={() => void savedDraft.saveDraft()}>{savedDraft.saving ? "Saving draft…" : "Save draft"}</button><button className="career-button is-primary" disabled={busy || closed} type="submit">{working ? "Submitting…" : "Submit application ↗"}</button></div><p className="career-help">Save a private draft to continue later from this opening. Only submitted applications reach the team. Unsaved edits are lost when you leave; drafts do not extend the deadline.</p></div>
     </div>
     <aside className="career-card career-form-aside"><span className="career-eyebrow">YOUR APPLICATION</span><h3>A place on the team starts here.</h3><div className="career-progress" role="progressbar" aria-label="Questions answered" aria-valuemin={0} aria-valuemax={form.questions.length} aria-valuenow={answered}><span style={{ width: `${100 * answered / Math.max(1, form.questions.length)}%` }} /></div><p>{answered} of {form.questions.length} answered</p><div className="career-identity"><img src="/social/discord.png" alt="Discord" /><div><strong>@{identity.username}</strong><small>{identity.discordId}</small></div></div><div className="career-identity"><img src="/social/roblox.png" alt="Roblox" /><div><strong>@{identity.roblox.username}</strong><small>{identity.roblox.userId}</small></div></div><p className="career-help">These verified accounts will be attached when you submit.</p><hr /><span className="career-eyebrow">CLOSES</span><p>{careerDate(form.closesAt)}</p><p className="career-help">After submitting, follow review decisions and feedback on Account → Applications.</p></aside>
   </form>;
@@ -35,7 +39,7 @@ export default function Careers({ formId }: { formId?: string }) {
   const { auth, loading: authLoading } = useAuth();
   const [pages, setPages] = useState<(string | null)[]>([null]);
   const resource = useCareerResource<CareerPageResult<CareerForm>>(!formId ? `/forms?${new URLSearchParams({ ...(pages.at(-1) ? { cursor: pages.at(-1)! } : {}) })}` : null);
-  const form = useCareerResource<{ form: CareerForm; identity: ApplicantIdentity; existingApplicationId: string | null }>(formId && auth ? `/forms/${encodeURIComponent(formId)}` : null);
+  const form = useCareerResource<ApplicantFormData>(formId && auth ? `/forms/${encodeURIComponent(formId)}` : null);
   return <section className={`content-band careers-page${formId ? "" : " careers-directory"}`}>
     {formId && <Link className="career-back" to="/careers">← All openings</Link>}
     <header className="career-hero"><div><span className="career-eyebrow">{formId ? "JOIN THE TEAM" : "CAREERS & COMMUNITY"}</span><h2>{formId ? <RichText text={form.data?.form.title ?? "Your next chapter."} runs={form.data?.form.formatting?.title} /> : <>Apply to <em>Join the Team</em></>}</h2><p className="career-intro">{formId ? <RichText text={form.data?.form.description ?? "Sign in and connect your accounts to begin your application."} runs={form.data?.form.formatting?.description} /> : "Help contribute to the development of Tower Eclipse. Bring your ideas and help us create something different."}</p>{form.data && <div className="career-meta"><span><RichText text={form.data.form.category} runs={form.data.form.formatting?.category} /></span><span>{form.data.form.questions.length} questions</span>{form.data.form.commitment && <span><RichText text={form.data.form.commitment} runs={form.data.form.formatting?.commitment} /></span>}</div>}</div>{auth && <div className="career-hero-aside"><div className="career-actions">{auth && <Link className="career-button" to="/login?tab=applications">My applications</Link>}{auth?.user.role === "dev" && <Link className="career-button" to="/admin/careers">Manage openings ↗</Link>}{auth?.user.role === "leadqa" && <Link className="career-button" to="/admin/careers/review">View QA applications ↗</Link>}</div></div>}</header>

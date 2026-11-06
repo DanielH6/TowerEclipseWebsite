@@ -247,3 +247,67 @@ test("concurrent workers cannot assess the same applicant while a lease is activ
   release(); await first;
   assert.equal(calls, 1);
 });
+
+test("a claimed run avoids queue rediscovery per applicant and reuses its immutable form version", async () => {
+  const f = await fixture(), reads = [], originalDoc = f.db.doc;
+  f.db.doc = path => { const reference = originalDoc(path); return { ...reference, get: async () => { reads.push(path); return reference.get(); } }; };
+  for (let i = 0; i < 15; i++) f.add(`person${i}`, i % 6);
+  await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  f.queries.length = 0; reads.length = 0;
+  await finish(f.service);
+  assert.equal(f.calls.length, 15);
+  assert.equal(f.queries.filter(query => query.collection === "careerAiRuns").length, 2, "one discovery and one durable empty fallback after completion");
+  assert.equal(reads.filter(path => path === `careerFormVersions/${f.form.publishedVersion}`).length, 1, "one immutable version read for the cohort");
+});
+test("completed row badges reuse a minimal index while full grades load only on the detail request", async () => {
+  const f = await fixture(), reads = [], originalDoc = f.db.doc;
+  f.db.doc = path => { const reference = originalDoc(path); return { ...reference, get: async () => { reads.push(path); return reference.get(); } }; };
+  for (let i = 0; i < 8; i++) f.add(`person${i}`, i % 6);
+  await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  f.queries.length = 0; reads.length = 0;
+  const rows = (await f.service.listApplications(admin, {}, true)).items;
+  assert.ok(rows.every(row => row.aiReview && !Object.hasOwn(row.aiReview, "grades") && !Object.hasOwn(row.aiReview, "summary")));
+  await f.service.ai.scoreIndex(f.form.id); await f.service.ai.scoreIndex(f.form.id);
+  assert.equal(reads.filter(path => path.includes("/careerAiScores/")).length, 0);
+  assert.equal(f.queries.filter(query => query.collection.includes("careerAiScores")).length, 0, "worker seeded immutable minimal rows");
+  const first = await f.service.application("person1", admin, true), second = await f.service.application("person1", admin, true);
+  assert.equal(first.application.aiReview.grades.length, settings.criteria.length);
+  assert.deepEqual(second.application.aiReview, first.application.aiReview);
+  assert.equal(reads.filter(path => path.endsWith("/careerAiScores/person1")).length, 1, "full completed detail is cached independently");
+});
+test("active status reads one live job, terminal status is cached, and history is explicitly expanded", async () => {
+  const f = await fixture(), reads = [], originalDoc = f.db.doc;
+  f.db.doc = path => { const reference = originalDoc(path); return { ...reference, get: async () => { reads.push(path); return reference.get(); } }; };
+  f.add("one", 3);
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  reads.length = 0;
+  await f.service.ai.runStatus(f.form.id, run.id, admin); await f.service.ai.runStatus(f.form.id, run.id, admin);
+  assert.deepEqual(reads, [`careerAiRuns/${run.id}`, `careerAiRuns/${run.id}`], "progress polling does not read forms or historical jobs");
+  await assert.rejects(f.service.ai.runStatus("other-form", run.id, admin), { status: 404 });
+  await assert.rejects(f.service.ai.runStatus(f.form.id, run.id, { id: "lead", role: "leadqa" }), { status: 403 });
+  await finish(f.service);
+  reads.length = 0;
+  const completed = await f.service.ai.runStatus(f.form.id, run.id, admin); await f.service.ai.runStatus(f.form.id, run.id, admin);
+  assert.equal(completed.completedRun.id, run.id);
+  assert.equal(reads.length, 1);
+  f.advance(1);
+  const next = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  const current = await f.service.ai.overview(f.form.id, admin);
+  assert.equal(current.runs.length, 1); assert.equal(current.runs[0].id, next.id); assert.equal(current.hasHistory, true);
+  assert.equal((await f.service.ai.overview(f.form.id, admin, { history: true })).runs.length, 2);
+});
+test("a cold ordinary list reads badges only for its page rather than scanning the entire completed ranking", async () => {
+  const f = await fixture(), reads = [], originalDoc = f.db.doc;
+  f.db.doc = path => { const reference = originalDoc(path); return { ...reference, get: async () => { reads.push(path); return reference.get(); } }; };
+  for (let i = 0; i < 35; i++) f.add(`person${String(i).padStart(2, "0")}`, i % 6);
+  await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  const restarted = createCareersService(f.db, { aiProvider: { enabled: false } });
+  reads.length = 0; f.queries.length = 0;
+  const first = await restarted.listApplications(admin, {}, true);
+  assert.equal(first.items.length, 20);
+  assert.equal(reads.filter(path => path.includes("/careerAiScores/")).length, 20);
+  assert.equal(f.queries.filter(query => query.collection.includes("careerAiScores")).length, 0);
+  assert.ok(first.items.every(item => item.aiReview && !Object.hasOwn(item.aiReview, "grades")));
+  await restarted.listApplications(admin, {}, true);
+  assert.equal(reads.filter(path => path.includes("/careerAiScores/")).length, 20, "the same visible badges are reused");
+});

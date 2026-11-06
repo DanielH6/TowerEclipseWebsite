@@ -29,6 +29,8 @@ function dailyTime(value: string | null, timeZone: string) {
 
 export default function PlayerImportPanel({ onApplied }: { onApplied: () => void }) {
   const { auth } = useAuth();
+  const [expanded, setExpanded] = useState(false);
+  const [measuredReads, setMeasuredReads] = useState<number | null>(null);
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [mode, setMode] = useState<PlayerMode>("main");
   const [restart, setRestart] = useState(false);
@@ -40,12 +42,12 @@ export default function PlayerImportPanel({ onApplied }: { onApplied: () => void
   const active = useRef<AbortController | null>(null);
   const csrf = auth?.csrfToken;
   useEffect(() => {
-    if (auth?.user.role !== "dev") return;
+    if (auth?.user.role !== "dev" || !expanded) return;
     const controller = new AbortController();
     apiJson<ImportStatus>(`${endpoint}/status`, "GET", undefined, undefined, controller.signal).then(setStatus)
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load import status."); });
     return () => { controller.abort(); active.current?.abort(); };
-  }, [auth?.user.role]);
+  }, [auth?.user.role, expanded]);
   if (auth?.user.role !== "dev") return null;
 
   async function action(kind: "status" | "preview" | "apply") {
@@ -83,9 +85,10 @@ export default function PlayerImportPanel({ onApplied }: { onApplied: () => void
       setStatus(await apiJson<ImportStatus>(`${endpoint}/status`));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not stop this batch. Refresh status."); }
   }
-  return <details className="panel-card player-import-panel">
+  return <details className="panel-card player-import-panel" onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary>IMPORT PLAYER SUMMARIES</summary>
     <p>Preview and apply up to five profiles at a time. Main and Battlefront have separate checkpoints. Progress survives server restarts. A host-enabled daily refresh can continue the same saved progress.</p>
+    <p className="player-muted">Firestore operations for this server process are measured separately from the conservative import budget and Roblox source reads. <button className="ghost-link" disabled={!!working} onClick={async () => { try { const metrics = await apiJson<{ scopes: { scope: string; estimatedReadFloor: number }[] }>("/api/admin/read-metrics", "GET"); setMeasuredReads(metrics.scopes.filter(value => value.scope === "background/player-import" || value.scope.includes("/game-data/imports")).reduce((sum, value) => sum + value.estimatedReadFloor, 0)); } catch (reason) { setError((reason as Error).message); } }}>VIEW MEASURED READS</button>{measuredReads !== null && <span> {measuredReads.toLocaleString()} measured Firestore read operations since this process started; reconcile with Cloud Monitoring for billed usage.</span>}</p>
     <p className="player-muted">Repeat a mode sweep to refresh saved progress and Roblox names. Traversal is not an atomic snapshot, so index coverage remains unknown. Missing or failed reads never delete summaries.</p>
     {error && <p className="player-warning" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}

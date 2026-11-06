@@ -58,10 +58,11 @@ test("a spoofed/stale link with a different ownership claim cannot apply", async
   f.documents.set("websiteRobloxLinks/123", { discordId: "someone-else" });
   await assert.rejects(f.service.submit(f.form.id, user, f.input), { status: 403 });
 });
-test("concurrent duplicate submissions create one record and one write", async () => {
+test("concurrent duplicate submissions create one record and update its opening count once", async () => {
   const f = await fixture(), before = f.writes();
   const [a, b] = await Promise.all([f.service.submit(f.form.id, user, f.input), f.service.submit(f.form.id, user, f.input)]);
-  assert.equal(a.id, b.id); assert.equal(b.alreadySubmitted, true); assert.equal(f.writes() - before, 1);
+  assert.equal(a.id, b.id); assert.equal(b.alreadySubmitted, true); assert.equal(f.writes() - before, 2);
+  assert.equal(f.documents.get(`careerForms/${f.form.id}`).applicationCount, 1);
   const stored = f.documents.get(`careerApplications/${a.id}`);
   assert.deepEqual(stored.applicant.roblox, { userId: "123", username: "Player" });
   assert.equal(stored.status, "submitted"); assert.ok(stored.consentAt);

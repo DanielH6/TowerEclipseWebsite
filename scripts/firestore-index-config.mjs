@@ -26,9 +26,14 @@ export function compositeIndexMatches(current, definition) {
 }
 
 export function scopedIndexDefinitions(definitions, scope = 'all') {
-  if (!['all', 'qa-careers', 'players', 'careers-ai'].includes(scope)) throw new Error('Invalid index scope.');
+  if (!['all', 'qa-careers', 'players', 'careers-ai', 'read-optimizations'].includes(scope)) throw new Error('Invalid index scope.');
   const players = new Set(['tePlayerSummaries', 'tePlayerImportJobs', 'tePlayerImportFailures']);
   const careersAi = new Set(['careerAiRuns', 'careerAiScores']);
+  const readOptimizations = new Set(['bugReports', 'attachments', 'updates', 'careerApplications', 'careerApplicationDrafts', 'websiteAccounts', 'websiteAccountCalendars', 'websiteAccountCalendarMembers', 'tournaments']);
+  if (scope === 'read-optimizations') return {
+    indexes: definitions.indexes.filter(index => readOptimizations.has(index.collectionGroup)),
+    fieldOverrides: definitions.fieldOverrides.filter(field => readOptimizations.has(field.collectionGroup)),
+  };
   return {
     indexes: definitions.indexes.filter(index => scope === 'all' || (scope === 'careers-ai' ? careersAi.has(index.collectionGroup) : scope === 'players' ? players.has(index.collectionGroup)
       : index.collectionGroup === 'careerApplications' && index.fields[0]?.fieldPath === 'category')),
@@ -38,9 +43,9 @@ export function scopedIndexDefinitions(definitions, scope = 'all') {
 
 export function parseIndexSetupArguments(argv) {
   const { values, tokens } = parseArgs({ args: argv, strict: true, allowPositionals: false, tokens: true,
-    options: Object.fromEntries(['apply', 'only-qa-careers', 'only-player-data', 'only-careers-ai', 'require-ready'].map(key => [key, { type: 'boolean' }])) });
+    options: Object.fromEntries(['apply', 'only-qa-careers', 'only-player-data', 'only-careers-ai', 'only-read-optimizations', 'require-ready'].map(key => [key, { type: 'boolean' }])) });
   const flags = tokens.map(token => token.name);
-  if (new Set(flags).size !== flags.length || (['only-qa-careers', 'only-player-data', 'only-careers-ai'].filter(key => values[key]).length > 1)) throw new Error('Choose one index setup scope without duplicate flags.');
+  if (new Set(flags).size !== flags.length || (['only-qa-careers', 'only-player-data', 'only-careers-ai', 'only-read-optimizations'].filter(key => values[key]).length > 1)) throw new Error('Choose one index setup scope without duplicate flags.');
   return { apply: values.apply === true, requireReady: values['require-ready'] === true,
-    scope: values['only-careers-ai'] ? 'careers-ai' : values['only-player-data'] ? 'players' : values['only-qa-careers'] ? 'qa-careers' : 'all' };
+    scope: values['only-read-optimizations'] ? 'read-optimizations' : values['only-careers-ai'] ? 'careers-ai' : values['only-player-data'] ? 'players' : values['only-qa-careers'] ? 'qa-careers' : 'all' };
 }

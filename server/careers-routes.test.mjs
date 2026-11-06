@@ -21,9 +21,10 @@ test("HTTP boundary grants QA Leads read-only application access and reserves ma
   const request = (path, role, method = "GET", extra = {}) => fetch(base + path, { method, headers: { ...(role ? { "X-Test-Role": role } : {}), ...extra } });
   assert.equal((await request("/forms")).status, 200);
   assert.equal((await request("/applications/test/resubmit", undefined, "POST")).status, 401);
-  for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications", "/admin/application-stats", "/images/test", "/admin/review-forms", "/admin/ai-config", "/admin/forms/test/ai-reviews"]) assert.equal((await request(path)).status, 401);
+  assert.equal((await request("/forms/test/draft", undefined, "PUT")).status, 401);
+  for (const path of ["/forms/test", "/applications", "/applications/test", "/admin/forms", "/admin/applications", "/admin/application-stats", "/images/test", "/admin/review-forms", "/admin/ai-config", "/admin/forms/test/ai-reviews", "/admin/forms/test/ai-reviews/run"]) assert.equal((await request(path)).status, 401);
   for (const role of ["member", "qa", "pentester", "leadqa"]) {
-    for (const path of ["/admin/forms", "/admin/forms/test", "/admin/image-config", "/admin/ai-config", "/admin/forms/test/ai-reviews"]) assert.equal((await request(path, role)).status, 403);
+    for (const path of ["/admin/forms", "/admin/forms/test", "/admin/image-config", "/admin/ai-config", "/admin/forms/test/ai-reviews", "/admin/forms/test/ai-reviews/run"]) assert.equal((await request(path, role)).status, 403);
     assert.equal((await request("/admin/forms", role, "POST", { "X-CSRF-Token": "fixture-csrf" })).status, 403);
     for (const path of ["/admin/forms/test/images", "/admin/forms/test/images/test/complete", "/admin/ai-criteria/draft", "/admin/forms/test/ai-reviews", "/admin/forms/test/ai-reviews/run/cancel"]) assert.equal((await request(path, role, "POST", { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).status, 403);
   }
@@ -41,7 +42,7 @@ test("HTTP boundary grants QA Leads read-only application access and reserves ma
   assert.equal((await request("/admin/forms", "dev")).status, 200);
   assert.equal((await request("/admin/ai-config", "dev")).status, 200);
   assert.equal((await request("/admin/review-forms", "leadqa")).status, 200);
-  for (const [path, role, method] of [["/admin/ai-criteria/draft", "dev", "POST"], ["/admin/forms/test/ai-reviews", "dev", "POST"], ["/admin/forms/test/ai-reviews/run/cancel", "dev", "POST"], ["/forms/test/applications", "member", "POST"], ["/applications/test/withdraw", "member", "POST"], ["/applications/test/resubmit", "member", "POST"], ["/admin/forms", "dev", "POST"], ["/admin/forms/test", "dev", "PUT"], ["/admin/applications/test", "dev", "PUT"]]) {
+  for (const [path, role, method] of [["/admin/ai-criteria/draft", "dev", "POST"], ["/admin/forms/test/ai-reviews", "dev", "POST"], ["/admin/forms/test/ai-reviews/run/cancel", "dev", "POST"], ["/forms/test/applications", "member", "POST"], ["/forms/test/draft", "member", "PUT"], ["/applications/test/withdraw", "member", "POST"], ["/applications/test/resubmit", "member", "POST"], ["/admin/forms", "dev", "POST"], ["/admin/forms/test", "dev", "PUT"], ["/admin/applications/test", "dev", "PUT"]]) {
     assert.equal((await request(path, role, method)).status, 403);
     assert.equal((await request(path, role, method, { "X-CSRF-Token": "fixture-csrf", Origin: "https://untrusted.example" })).status, 403);
     assert.ok((await request(path, role, method, { "X-CSRF-Token": "fixture-csrf", Origin: config.appOrigin })).ok);

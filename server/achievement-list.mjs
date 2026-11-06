@@ -1,4 +1,5 @@
 import express from "express";
+import { createReadCache } from "./read-cache.mjs";
 import rateLimit from "express-rate-limit";
 import { optionalAuth, requireAuth, requireCsrf, requireRole } from "./auth-context.mjs";
 import { requireSameOrigin } from "./security.mjs";
@@ -11,12 +12,14 @@ export function createAchievementListService(db, { thumbnailStorage } = {}) {
   // One bounded document makes reordering atomic and needs no composite index.
   const reference = db.doc("achievementLists/main");
   const thumbnails = createListThumbnailService(db, thumbnailStorage);
+  const cache = createReadCache({ name: "achievement-list", ttlMs: 60_000, maxEntries: 100, maxBytes: 4 * 1024 * 1024 });
   return {
     thumbnails,
-    async read() { return publicList((await reference.get()).data()); },
+    async read() { return cache.get("list", async () => publicList((await reference.get()).data())); },
     async history(cursor) {
       if (cursor !== undefined && (typeof cursor !== "string" || !/^\d{16}$/.test(cursor))) throw Object.assign(new Error("Invalid change log cursor."), { status: 400 });
       // Ordering by document ID uses Firestore's built-in index. Revisions are unique and monotonic.
+      return cache.get(`history:${cursor ?? "first"}`, async () => {
       let query = db.collection("achievementListChanges").orderBy("__name__", "desc");
       if (cursor) query = query.startAfter(`achievementListChanges/${cursor}`);
       const result = await query.limit(11).get();
@@ -25,13 +28,14 @@ export function createAchievementListService(db, { thumbnailStorage } = {}) {
         return { id: document.id, revision: data.revision, createdAt: data.createdAt, editorName: data.editorName, note: data.note, changes: data.changes };
       });
       return { publications, nextCursor: result.docs.length > 10 ? publications.at(-1).id : null };
+      });
     },
     async save(input, actor) {
       if (!Number.isSafeInteger(input?.revision) || input.revision < 0) throw Object.assign(new Error("A valid list revision is required."), { status: 400 });
       const entries = validateListEntries(input.entries);
       if (input.note !== undefined && (typeof input.note !== "string" || input.note.trim().length > 500)) throw Object.assign(new Error("Publication note must be 500 characters or fewer."), { status: 400 });
       const note = input.note?.trim() ?? "";
-      return db.runTransaction(async transaction => {
+      const saved = await db.runTransaction(async transaction => {
         const current = publicList((await transaction.get(reference)).data());
         if (current.revision !== input.revision) throw Object.assign(new Error("Another admin updated the list. Reload the published list before applying your changes again."), { status: 409 });
         const changes = achievementChanges(current.entries, entries);
@@ -44,6 +48,7 @@ export function createAchievementListService(db, { thumbnailStorage } = {}) {
         for (const ref of thumbnailReferences) transaction.update(ref, { published: true });
         return publicList(next);
       });
+      cache.clear(); cache.set("list", saved); thumbnails.invalidate?.(); return saved;
     },
   };
 }

@@ -44,3 +44,11 @@ test('careers AI index setup touches only review job and score definitions', () 
   assert.equal(parseIndexSetupArguments(['--only-careers-ai', '--require-ready']).scope, 'careers-ai');
   assert.throws(() => parseIndexSetupArguments(['--only-careers-ai', '--only-qa-careers']));
 });
+test('read optimization scope isolates approved query groups and rejects mixed scopes', () => {
+  const definitions = { indexes: [{ collectionGroup: 'bugReports' }, { collectionGroup: 'tePlayerSummaries' }, { collectionGroup: 'careerApplications' }], fieldOverrides: [{ collectionGroup: 'careerApplicationDrafts' }, { collectionGroup: 'tePlayerImportJobs' }] };
+  const selected = scopedIndexDefinitions(definitions, 'read-optimizations');
+  assert.deepEqual(selected.indexes, [definitions.indexes[0], definitions.indexes[2]]);
+  assert.deepEqual(selected.fieldOverrides, [definitions.fieldOverrides[0]]);
+  assert.deepEqual(parseIndexSetupArguments(['--only-read-optimizations', '--require-ready']), { apply: false, requireReady: true, scope: 'read-optimizations' });
+  assert.throws(() => parseIndexSetupArguments(['--only-read-optimizations', '--only-careers-ai']));
+});

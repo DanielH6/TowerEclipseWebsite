@@ -149,7 +149,9 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export type BugDetailSection = "comments" | "activity" | "attachments" | "developerNotes";
 export interface BugDetailsResponse {
+  sections?: Record<BugDetailSection, { loaded: boolean; nextCursor: string | null }>;
   relatedUpdates?: { id: string; title: string; version: string; summary: string }[];
   report: BugReport;
   comments: BugComment[];

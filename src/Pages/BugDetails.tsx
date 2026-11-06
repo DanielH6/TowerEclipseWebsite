@@ -1,7 +1,7 @@
 import BugExtraFields from "../Components/BugExtraFields";
 import ReportRelationships from "../Components/ReportRelationships";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "../router";
+import { Link, useLocation, useNavigate, useParams } from "../router";
 import {
   addBugComment,
   addDeveloperNote,
@@ -9,6 +9,7 @@ import {
   deleteBug,
   deleteBugAttachment,
   loadBug,
+  loadBugSection,
   loadDictionaries,
   rejectBug,
   updateBug,
@@ -29,6 +30,7 @@ import type {
   ActorSnapshot,
   BugAttachment,
   BugDetailsResponse,
+  BugDetailSection,
   Dictionaries,
   DictionaryEntry,
   DictionaryName,
@@ -106,6 +108,9 @@ function DetailSelect({
 }
 
 export default function BugDetailsPage() {
+  const { search: detailSearch } = useLocation();
+  const requestedReturn = new URLSearchParams(detailSearch).get("returnTo");
+  const returnTo = requestedReturn === "/bugs" || requestedReturn?.startsWith("/bugs?") ? requestedReturn : "/bugs";
   const { reportId } = useParams();
   const { auth, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -128,6 +133,26 @@ export default function BugDetailsPage() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sectionLoading, setSectionLoading] = useState<Partial<Record<BugDetailSection, boolean>>>({});
+  async function readSection(section: BugDetailSection, append = false) {
+    if (!reportId || sectionLoading[section]) return;
+    setSectionLoading(current => ({ ...current, [section]: true }));
+    try {
+      const result = await loadBugSection<{ id: string; createdAt: string }>(reportId, section, append ? details?.sections?.[section]?.nextCursor : null);
+      setDetails(current => {
+        if (!current || current.report.id !== reportId) return current;
+        const rows = [...(append ? current[section] : []), ...result.items];
+        return { ...current, [section]: [...new Map(rows.map(row => [row.id, row])).values()].sort((a, b) => (a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)) * (section === "activity" ? -1 : 1)), sections: { ...current.sections, [section]: { loaded: true, nextCursor: result.nextCursor } } } as BugDetailsResponse;
+      });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not load this report section.'); }
+    finally { setSectionLoading(current => ({ ...current, [section]: false })); }
+  }
+  function sectionToggle(section: BugDetailSection, open: boolean) {
+    if (open && details?.sections?.[section]?.loaded === false) void readSection(section);
+  }
+  function sectionControls(section: BugDetailSection) {
+    return <div className="button-row">{sectionLoading[section] && <p role="status">Loading…</p>}{details?.sections?.[section]?.nextCursor && <button className="ghost-link" disabled={sectionLoading[section]} onClick={() => void readSection(section, true)}>LOAD MORE</button>}<button className="ghost-link" disabled={sectionLoading[section]} onClick={() => void readSection(section)}>REFRESH SECTION</button></div>;
+  }
 
   async function refresh() {
     if (!reportId) return;
@@ -241,9 +266,7 @@ export default function BugDetailsPage() {
       applyResult?.(result);
 
       setWorking(false);
-      void refresh().catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "Could not refresh the report.");
-      });
+
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The operation failed.");
       setWorking(false);
@@ -277,7 +300,7 @@ export default function BugDetailsPage() {
           >
             REFRESH
           </button>
-          <Link className="ghost-link" to="/bugs">BACK TO REPORTS</Link>
+          <Link className="ghost-link" to={returnTo}>BACK TO REPORTS</Link>
         </div>
       </div>
 
@@ -444,7 +467,8 @@ export default function BugDetailsPage() {
         </aside>
       </div>
 
-      <article
+      <details
+        onToggle={event => sectionToggle("attachments", event.currentTarget.open)}
         className="panel-card attachments-panel attachment-paste-zone"
         tabIndex={canEdit && details.attachmentPolicy.enabled ? 0 : -1}
         aria-label="Bug report image attachments. Click this area and paste an image with Control V."
@@ -470,6 +494,7 @@ export default function BugDetailsPage() {
           }
         }}
       >
+        <summary>ATTACHMENTS ({report.attachmentsCount})</summary>
         <div className="attachment-section-heading">
           <div>
             <h3>ATTACHMENTS ({details.attachments.length})</h3>
@@ -626,9 +651,7 @@ export default function BugDetailsPage() {
                   } : current);
                   setWorking(false);
                   setUploadMessage(null);
-                  void refresh().catch((reason: unknown) => {
-                    setError(reason instanceof Error ? reason.message : "Could not refresh attachments.");
-                  });
+
                 } catch (reason) {
                   setError(reason instanceof Error ? reason.message : "Could not upload the images.");
                   setWorking(false);
@@ -642,10 +665,12 @@ export default function BugDetailsPage() {
         )}
 
         {uploadMessage && <div className="upload-status" role="status">{uploadMessage}</div>}
-      </article>
+        {sectionControls("attachments")}
+      </details>
 
       <div className="discussion-grid">
-        <article className="panel-card discussion-panel" id="bug-comments">
+        <details className="panel-card discussion-panel" id="bug-comments" onToggle={event => sectionToggle("comments", event.currentTarget.open)}>
+          <summary>COMMENTS ({report.commentsCount})</summary>
           <h3>COMMENTS ({details.comments.length})</h3>
           <div className="message-list">
             {details.comments.length === 0 && <p className="empty-copy">No comments yet.</p>}
@@ -685,10 +710,12 @@ export default function BugDetailsPage() {
               <button disabled={working}>ADD COMMENT</button>
             </form>
           )}
-        </article>
+          {sectionControls("comments")}
+        </details>
 
         {canSeeDeveloperNotes && (
-          <article className="panel-card discussion-panel developer-notes-panel">
+          <details className="panel-card discussion-panel developer-notes-panel" onToggle={event => sectionToggle("developerNotes", event.currentTarget.open)}>
+            <summary>DEVELOPER NOTES ({report.developerNotesCount})</summary>
             <h3>DEVELOPER NOTES ({details.developerNotes.length})</h3>
             <div className="message-list">
               {details.developerNotes.length === 0 && <p className="empty-copy">No developer notes yet.</p>}
@@ -728,11 +755,13 @@ export default function BugDetailsPage() {
                 <button disabled={working}>ADD DEVELOPER NOTE</button>
               </form>
             )}
-          </article>
+            {sectionControls("developerNotes")}
+          </details>
         )}
       </div>
 
-      <article className="panel-card activity-panel">
+      <details className="panel-card activity-panel" onToggle={event => sectionToggle("activity", event.currentTarget.open)}>
+        <summary>ACTIVITY</summary>
         <h3>ACTIVITY</h3>
         <div className="activity-list">
           {details.activity.map((event) => (
@@ -743,7 +772,8 @@ export default function BugDetailsPage() {
             </div>
           ))}
         </div>
-      </article>
+        {sectionControls("activity")}
+      </details>
 
       {viewerAttachment?.downloadUrl && (
         <div

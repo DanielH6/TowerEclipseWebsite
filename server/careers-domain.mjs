@@ -54,13 +54,36 @@ export function normalizeForm(input, publishing = false) {
   }
   return { title, category, description, commitment, confirmation, closesAt, questions, formatting };
 }
-export function validateAnswers(form, answers) {
+export function validateAnswers(form, answers, { partial = false } = {}) {
   if (!answers || typeof answers !== "object" || Array.isArray(answers) || Buffer.byteLength(JSON.stringify(answers), "utf8") > 64_000) fail("Answers must fit within 64 KB.");
   const known = new Set(form.questions.map(q => q.id));
   if (Object.keys(answers).some(key => !known.has(key))) fail("The form has changed. Reload it before submitting.", 409);
   const clean = {};
   for (const q of form.questions) {
     const value = answers[q.id];
+    if (partial) {
+      if (value == null) continue;
+      if (["short", "paragraph"].includes(q.type)) {
+        if (typeof value !== "string" || value.length > (q.type === "short" ? 500 : 5000)) fail(`${q.label}: enter text within the character limit.`);
+        // Drafts preserve exactly what the applicant is writing, including whitespace.
+        if (value !== "") clean[q.id] = value;
+        continue;
+      }
+      if (q.type === "choice" && value === "") continue;
+      if (["checkboxes", "ranking"].includes(q.type) && Array.isArray(value) && value.length === 0) continue;
+      if (q.type === "scale" && value === "") continue;
+      if (q.type === "choice") {
+        if (!q.options.includes(value)) fail(`Choose a listed option: ${q.label}`);
+        clean[q.id] = value;
+      } else if (q.type === "scale") {
+        if (!Number.isInteger(value) || value < q.min || value > q.max) fail(`Choose a value on the scale: ${q.label}`);
+        clean[q.id] = value;
+      } else {
+        if (!Array.isArray(value) || value.some(option => !q.options.includes(option)) || new Set(value).size !== value.length) fail(`Choose listed options once each: ${q.label}`);
+        clean[q.id] = [...value];
+      }
+      continue;
+    }
     const empty = value == null || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && !value.length);
     if (empty) { if (q.required) fail(`Please answer: ${q.label}`); continue; }
     if (q.type === "short" || q.type === "paragraph") clean[q.id] = text(value, q.label, q.type === "short" ? 500 : 5000, true);

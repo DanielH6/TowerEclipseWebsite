@@ -6,9 +6,13 @@ test('signed-in role sees only its allowed workspace and private resource routes
   const auth = await (await request.get('/api/auth/me')).json();
   expect(auth.authenticated).toBe(true); expect(auth.user.role).toBe(role);
   await page.goto('/bugs');
-  await expect(page.getByRole('button', { name: 'EXPORT DATA', exact: true })).toBeVisible();
-  if (role === 'member') await expect(page.getByRole('link', { name: 'NEW BUG REPORT', exact: true })).toHaveCount(0);
-  else await expect(page.getByRole('link', { name: 'NEW BUG REPORT', exact: true })).toBeVisible();
+  if (role === 'member') {
+    await expect(page.getByRole('button', { name: 'EXPORT DATA', exact: true })).toHaveCount(0);
+    expect((await request.get('/api/bugs')).status()).toBe(403);
+  } else {
+    await expect(page.getByRole('button', { name: 'EXPORT DATA', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'NEW BUG REPORT', exact: true })).toBeVisible();
+  }
   expect((await request.get('/api/admin/overview')).status()).toBe(role === 'dev' ? 200 : 403);
   expect((await request.get('/api/account/testers')).status()).toBe(role === 'dev' ? 200 : 403);
   expect((await request.get('/api/account/onboarding')).status()).toBe(role === 'member' ? 403 : 200);
@@ -17,7 +21,8 @@ test('signed-in role sees only its allowed workspace and private resource routes
   else await expect(page.getByRole('tab', { name: 'Tester resources' })).toHaveCount(0);
 });
 
-test('filtered export contains every matching page from the same snapshot', async ({ request }) => {
+test('filtered export contains every matching page from the same snapshot', async ({ request }, info) => {
+  test.skip(info.project.name === 'member', 'Private reports require a testing or developer role.');
   const first = await (await request.get('/api/bugs?status=approved')).json();
   expect(first.snapshot).toBeTruthy();
   const url = `/api/bugs/export?status=approved&snapshot=${encodeURIComponent(first.snapshot)}`;

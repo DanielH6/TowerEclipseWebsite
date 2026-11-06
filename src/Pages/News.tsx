@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadPublishedUpdates } from "../api";
+import { loadPublishedUpdatesPage } from "../api";
 import { Link } from "../router";
 import type { GameUpdate } from "../types";
 import "./Updates.css";
@@ -37,36 +37,22 @@ export default function News() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  const [search, setSearch] = useState("");
+  const [pages, setPages] = useState<(string | null)[]>([null]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState(0), [publishedTotal, setPublishedTotal] = useState(0);
+  const [currentVersion, setCurrentVersion] = useState("—");
+  const [latestFullUpdateId, setLatestFullUpdateId] = useState<string | null>(null);
+  useEffect(() => { const timer = setTimeout(() => { setSearch(query.trim()); setPages([null]); }, 350); return () => clearTimeout(timer); }, [query]);
   useEffect(() => {
-    let active = true;
-    loadPublishedUpdates()
-      .then((result) => {
-        if (active) setUpdates(result);
-      })
-      .catch((reason) => {
-        if (active) setError(reason instanceof Error ? reason.message : "Could not load updates.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const visibleUpdates = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return updates
-      .filter((update) => !normalizedQuery || [update.title, update.version, update.author.displayName]
-        .some((value) => value.toLowerCase().includes(normalizedQuery)))
-      .sort((left, right) => displayPublishTime(right) - displayPublishTime(left));
-  }, [query, updates]);
-  const displayOrderedUpdates = useMemo(
-    () => [...updates].sort((left, right) => displayPublishTime(right) - displayPublishTime(left)),
-    [updates],
-  );
-  const currentVersion = displayOrderedUpdates.find((update) => update.contentType === "game_update" && update.version)?.version ?? "—";
-  const latestFullUpdateId = displayOrderedUpdates.find((update) => update.contentType === "game_update" && !update.isMinor)?.id;
+    const controller = new AbortController(); setLoading(true); setError(null);
+    loadPublishedUpdatesPage({ cursor: pages.at(-1), search, signal: controller.signal }).then(result => {
+      if (controller.signal.aborted) return;
+      setUpdates(result.updates); setNextCursor(result.nextCursor); setTotal(result.total); setPublishedTotal(result.publishedTotal); setCurrentVersion(result.currentVersion); setLatestFullUpdateId(result.latestFullUpdateId);
+    }).catch(reason => { if (!controller.signal.aborted) setError(reason.message ?? "Could not load updates."); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [pages, search]);
+  const visibleUpdates = updates;
 
   return (
     <section className="content-band news-page">
@@ -77,21 +63,21 @@ export default function News() {
             <p>Game updates, balancing notes, fixes, and development commentary.</p>
           </div>
           <dl className="news-summary" aria-label="Published update archive summary">
-            <div><dt>Published posts</dt><dd>{loading ? "—" : updates.length}</dd></div>
+            <div><dt>Published posts</dt><dd>{loading ? "—" : publishedTotal}</dd></div>
             <div><dt>Current version</dt><dd>{loading ? "—" : currentVersion}</dd></div>
           </dl>
         </header>
 
         {loading && <div className="news-message">Loading updates…</div>}
         {error && <div className="workspace-error news-message" role="alert">{error}</div>}
-        {!loading && !error && updates.length === 0 && (
+        {!loading && !error && publishedTotal === 0 && (
           <div className="news-message">No updates have been published yet.</div>
         )}
 
-        {!loading && !error && updates.length > 0 && (
+        {!loading && !error && publishedTotal > 0 && (
           <div className="news-archive-tools">
             <div>
-              <span>{visibleUpdates.length} of {updates.length} posts</span>
+              <span>{total} matching posts · Page {pages.length}</span>
             </div>
             <label>
               <span>Search updates</span>
@@ -105,10 +91,11 @@ export default function News() {
           </div>
         )}
 
-        {!loading && !error && updates.length > 0 && visibleUpdates.length === 0 && (
+        {!loading && !error && publishedTotal > 0 && visibleUpdates.length === 0 && (
           <div className="news-message">No published update matches “{query.trim()}”.</div>
         )}
 
+        {error && <button className="secondary-button" onClick={() => setPages([null])}>RETURN TO FIRST PAGE</button>}
         <div className="news-card-grid">
           {visibleUpdates.map((update) => {
             const changes = entryCount(update);
@@ -144,6 +131,7 @@ export default function News() {
             );
           })}
         </div>
+        <nav className="account-pagination" aria-label="News archive pages"><button className="secondary-button" disabled={pages.length === 1 || loading} onClick={() => setPages(value => value.slice(0, -1))}>PREVIOUS</button><span>Page {pages.length}</span><button className="secondary-button" disabled={!nextCursor || loading} onClick={() => setPages(value => [...value, nextCursor])}>NEXT</button></nav>
       </div>
     </section>
   );

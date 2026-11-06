@@ -7,7 +7,6 @@ import { createBugQueryService, createSnapshotCodec } from "./bug-query.mjs";
 import { config } from "./config.mjs";
 import {
   actorSnapshot,
-  optionalAuth,
   requireAuth,
   requireCsrf,
   requireExactRole,
@@ -68,6 +67,7 @@ function cleanText(value, field, { min = 1, max = 5000 } = {}) {
 }
 
 function serialize(value) {
+  if (value instanceof Date) return value.toISOString();
   if (value instanceof Timestamp) return value.toDate().toISOString();
   if (Array.isArray(value)) return value.map(serialize);
   if (value && typeof value === "object") {
@@ -202,7 +202,7 @@ function serializeAttachmentDocument(document) {
   return {
     ...publicValue,
     downloadUrl: storage.enabled && value.status === "ready"
-      ? createAttachmentDownloadUrl(objectKey)
+      ? `/api/bugs/${encodeURIComponent(document.ref?.path.split("/")[1] ?? value.reportId ?? "")}/attachments/${encodeURIComponent(value.id)}/download`
       : null,
   };
 }
@@ -256,6 +256,11 @@ async function addActivity(transactionOrBatch, reportReference, action, actor, d
     details,
     createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+async function observeContribution(request, before, after) {
+  try { await request.bugObservers?.onContribution?.(before, after); }
+  catch { console.warn('Report contribution summary needs reconciliation.'); }
 }
 
 async function createReport(request, response, next) {
@@ -315,6 +320,8 @@ async function createReport(request, response, next) {
     });
 
     const created = await reportReference.get();
+    request.bugOwner = created.data().reporter?.discordId;
+    await observeContribution(request, null, { ...created.data(), id: created.id });
 
     response.status(201).json({ report: await serializeReportDocument(created) });
   } catch (error) {
@@ -329,54 +336,61 @@ async function exportReports(request, response, next) {
   try { response.json(await bugQueries.exportData(request.query, serializeAttachmentDocument)); } catch (error) { next(error); }
 }
 
+const detailCursors = createSnapshotCodec(config.cookieSecret);
+const detailSections = { comments: { collection: 'comments', direction: 'asc' }, activity: { collection: 'activity', direction: 'desc' }, attachments: { collection: 'attachments', direction: 'asc' }, developerNotes: { collection: 'developerNotes', direction: 'asc' } };
+async function visibleReport(request) {
+  if (!/^[\w-]{1,150}$/.test(request.params.reportId)) throw httpError(404, 'Bug report not found.');
+  const reference = db.doc(`bugReports/${request.params.reportId}`), report = await reference.get();
+  if (!report.exists) throw httpError(404, 'Bug report not found.');
+  const data = report.data(), session = request.authSession;
+  if (!reportIsSubmitted(data) && session.role !== 'dev' && data.reporter?.discordId !== session.discordUser.id) throw httpError(404, 'Bug report not found.');
+  return { reference, report };
+}
+async function sectionPage(reference, section, session, cursor) {
+  const definition = detailSections[section];
+  if (!definition) throw httpError(404, 'Report section not found.');
+  if (section === 'developerNotes' && !['dev', 'leadqa'].includes(session.role)) throw httpError(403, 'Private notes are available only to reviewers.');
+  let point = detailCursors.create(), after;
+  if (cursor) {
+    const value = detailCursors.readCursor(cursor); point = detailCursors.read(cursor);
+    if (value.reportId !== reference.id || value.section !== section || typeof value.value !== 'string' || !Number.isFinite(Date.parse(value.value)) || !/^[\w-]+$/.test(value.id)) throw httpError(400, 'Invalid report section cursor.');
+    after = [new Timestamp(value.value), `${reference.path}/${definition.collection}/${value.id}`];
+  }
+  let query = reference.collection(definition.collection).orderBy('createdAt', definition.direction).orderBy('__name__', definition.direction).atReadTime(point.at).limit(51);
+  if (section === 'attachments') query = query.where('status', '==', 'ready');
+  if (after) query = query.startAfter(...after);
+  const result = await query.get(), shown = result.docs.slice(0, 50), last = shown.at(-1);
+  return { items: shown.filter(doc => section !== 'activity' || ['dev', 'leadqa'].includes(session.role) || doc.data().action !== 'developer_note_added').map(section === 'attachments' ? serializeAttachmentDocument : serializeDocument), nextCursor: result.docs.length > 50 ? detailCursors.cursor({ at: point.at, reportId: reference.id, section, value: serialize(last.data().createdAt), id: last.id }) : null };
+}
+async function getReportSection(request, response, next) {
+  try {
+    if (request.params.section === 'developerNotes' && !['dev', 'leadqa'].includes(request.authSession.role)) throw httpError(403, 'Private notes are available only to reviewers.');
+    const { reference } = await visibleReport(request);
+    response.json(await sectionPage(reference, request.params.section, request.authSession, request.query.cursor));
+  } catch (error) { next(error); }
+}
+async function downloadAttachment(request, response, next) {
+  try {
+    const { reference } = await visibleReport(request);
+    if (!/^[\w-]{1,150}$/.test(request.params.attachmentId)) throw httpError(404, 'Attachment not found.');
+    const attachment = await reference.collection('attachments').doc(request.params.attachmentId).get();
+    if (!attachment.exists || attachment.data().status !== 'ready') throw httpError(404, 'Attachment not found.');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.redirect(createAttachmentDownloadUrl(attachment.data().objectKey));
+  } catch (error) { next(error); }
+}
 async function getReport(request, response, next) {
   try {
-    const reference = db.doc(`bugReports/${request.params.reportId}`);
-    const [report, comments, activity, attachmentSnapshot] = await Promise.all([
-      reference.get(),
-      reference.collection("comments").orderBy("createdAt", "asc").limit(300).get(),
-      reference.collection("activity").orderBy("createdAt", "desc").limit(300).get(),
-      reference.collection("attachments").orderBy("createdAt", "asc").limit(100).get(),
-    ]);
-
-    if (!report.exists) {
-      response.status(404).json({ error: "Bug report not found." });
-      return;
-    }
-
-    const reportData = report.data();
-    const viewerSession = request.authSession ?? null;
-    const canViewDraft = viewerSession?.role === "dev"
-      || reportData.reporter?.discordId === viewerSession?.discordUser?.id;
-
-    if (!reportIsSubmitted(reportData) && !canViewDraft) {
-      response.status(404).json({ error: "Bug report not found." });
-      return;
-    }
-
-
-    let developerNotes = [];
-    if (viewerSession?.role === "dev" || viewerSession?.role === "leadqa") {
-      const notes = await reference.collection("developerNotes").orderBy("createdAt", "asc").limit(300).get();
-      developerNotes = notes.docs.map(serializeDocument);
-    }
-
-    const attachments = attachmentSnapshot.docs
-      .filter((document) => document.data().status === "ready")
-      .map(serializeAttachmentDocument);
-
-    response.json({
-      relatedUpdates: (await db.collection("updates").where("linkedReportIds", "array-contains", report.id).get()).docs.filter(doc => doc.data().status === "published").map(doc => ({ id: doc.id, title: doc.data().title, version: doc.data().version, summary: doc.data().linkedReports?.find(item => item.id === report.id)?.summary ?? "" })),
-      report: await serializeReportDocument(report),
-      comments: comments.docs.map(serializeDocument),
-      developerNotes,
-      attachments,
-      attachmentPolicy: attachmentStoragePolicy(),
-      activity: activity.docs.map(serializeDocument),
-    });
-  } catch (error) {
-    next(error);
-  }
+    const { reference, report } = await visibleReport(request);
+    const sections = {}, values = {};
+    await Promise.all(Object.keys(detailSections).map(async section => {
+      const allowed = section !== 'developerNotes' || ['dev', 'leadqa'].includes(request.authSession.role);
+      const data = allowed && request.query.lazy !== '1' ? await sectionPage(reference, section, request.authSession) : { items: [], nextCursor: null };
+      values[section] = data.items; sections[section] = { loaded: allowed && request.query.lazy !== '1', nextCursor: data.nextCursor };
+    }));
+    const updates = await db.collection('updates').where('linkedReportIds', 'array-contains', report.id).where('status', '==', 'published').select('title', 'version', 'linkedReports').get();
+    response.json({ relatedUpdates: updates.docs.map(doc => ({ id: doc.id, title: doc.data().title, version: doc.data().version, summary: doc.data().linkedReports?.find(item => item.id === report.id)?.summary ?? '' })), report: await serializeReportDocument(report), ...values, sections, attachmentPolicy: attachmentStoragePolicy() });
+  } catch (error) { next(error); }
 }
 
 async function patchReport(request, response, next) {
@@ -389,6 +403,8 @@ async function patchReport(request, response, next) {
     }
 
     const current = existing.data();
+    request.bugBefore = { ...current, id: existing.id };
+    request.bugOwner = current.reporter?.discordId;
     requireSubmittedReport(current);
     const body = request.body ?? {};
     const session = request.authSession;
@@ -481,6 +497,8 @@ async function approveReport(request, response, next) {
     }
 
     const current = existing.data();
+    request.bugBefore = { ...current, id: existing.id };
+    request.bugOwner = current.reporter?.discordId;
     requireSubmittedReport(current);
     if (request.authSession.role === "leadqa" && await statusIsTerminal(current.status)) {
       throw httpError(
@@ -528,6 +546,8 @@ async function rejectReport(request, response, next) {
     }
 
     const current = existing.data();
+    request.bugBefore = { ...current, id: existing.id };
+    request.bugOwner = current.reporter?.discordId;
     requireSubmittedReport(current);
     if (request.authSession.role === "leadqa" && await statusIsTerminal(current.status)) {
       throw httpError(
@@ -573,6 +593,7 @@ async function addComment(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+    request.bugOwner = report.data().reporter?.discordId;
     requireSubmittedReport(report.data());
 
     const body = cleanText(request.body?.body, "body", { min: 1, max: 5000 });
@@ -605,6 +626,7 @@ async function addDeveloperNote(request, response, next) {
       response.status(404).json({ error: "Bug report not found." });
       return;
     }
+    request.bugOwner = report.data().reporter?.discordId;
     requireSubmittedReport(report.data());
 
     const body = cleanText(request.body?.body, "body", { min: 1, max: 10000 });
@@ -650,6 +672,8 @@ async function finalizeReportSubmission(request, response, next) {
 
     if (!reportSnapshot.exists) throw httpError(404, "Bug report not found.");
     const report = reportSnapshot.data();
+    request.bugBefore = { ...report, id: reportSnapshot.id };
+    request.bugOwner = report.reporter?.discordId;
     const isOwner = report.reporter?.discordId === request.authSession.discordUser.id;
     if (!isOwner && request.authSession.role !== "dev") {
       throw httpError(403, "Only the reporter can finish this bug report submission.");
@@ -683,6 +707,7 @@ async function finalizeReportSubmission(request, response, next) {
     await batch.commit();
 
     const updated = await reference.get();
+    await observeContribution(request, { ...report, id: reference.id }, { ...updated.data(), id: reference.id });
 
     response.json({ report: await serializeReportDocument(updated) });
   } catch (error) {
@@ -700,6 +725,7 @@ async function cancelReportSubmission(request, response, next) {
     }
 
     const report = snapshot.data();
+    request.bugOwner = report.reporter?.discordId;
     const isOwner = report.reporter?.discordId === request.authSession.discordUser.id;
     if (!isOwner && request.authSession.role !== "dev") {
       throw httpError(403, "Only the reporter can cancel this bug report submission.");
@@ -734,6 +760,8 @@ async function beginAttachmentUpload(request, response, next) {
     }
 
     const report = reportSnapshot.data();
+    request.bugBefore = { ...report, id: reportSnapshot.id };
+    request.bugOwner = report.reporter?.discordId;
     await requireAttachmentAccess(request.authSession, report);
 
     const attachmentSnapshot = await reportReference
@@ -812,6 +840,8 @@ async function completeAttachmentUpload(request, response, next) {
     if (!attachmentSnapshot.exists) throw httpError(404, "Attachment upload not found.");
 
     const report = reportSnapshot.data();
+    request.bugBefore = { ...report, id: reportSnapshot.id };
+    request.bugOwner = report.reporter?.discordId;
     const attachment = attachmentSnapshot.data();
     await requireAttachmentAccess(request.authSession, report);
 
@@ -905,6 +935,8 @@ async function deleteAttachment(request, response, next) {
     if (!attachmentSnapshot.exists) throw httpError(404, "Attachment not found.");
 
     const report = reportSnapshot.data();
+    request.bugBefore = { ...report, id: reportSnapshot.id };
+    request.bugOwner = report.reporter?.discordId;
     const attachment = attachmentSnapshot.data();
     await requireAttachmentAccess(request.authSession, report);
 
@@ -946,6 +978,9 @@ async function deleteReport(request, response, next) {
     if (report.data().duplicateOf || report.data().duplicateCount > 0) throw httpError(409, "Unlink duplicate relationships before deleting this report.");
     if ((await db.collection("updates").where("linkedReportIds", "array-contains", report.id).limit(1).get()).docs.length) throw httpError(409, "Unlink this report from its release notes before deleting it.");
     await removeReportAndStoredAttachments(reference);
+    request.bugOwner = report.data().reporter?.discordId;
+    request.bugBefore = { ...report.data(), id: report.id }; request.bugDeleted = true;
+    await observeContribution(request, request.bugBefore, null);
 
     response.sendStatus(204);
   } catch (error) {
@@ -953,9 +988,27 @@ async function deleteReport(request, response, next) {
   }
 }
 
-export function createBugRouter() {
+export function createBugRouter({ onContribution, onChange } = {}) {
   const router = express.Router();
   const requireBugStaff = requireRole("qa", "pentester", "leadqa", "dev");
+  router.use(requireAuth, requireBugStaff);
+  for (const parameter of ['reportId', 'attachmentId']) router.param(parameter, (_req, res, next, value) => {
+    if (typeof value !== 'string' || !/^[\w-]{1,150}$/.test(value)) { res.status(404).json({ error: 'Bug report resource not found.' }); return; }
+    next();
+  });
+  router.use(rateLimit({ windowMs: 60_000, limit: 240, standardHeaders: "draft-8", legacyHeaders: false, keyGenerator: req => req.authUser.id, skip: req => !["GET", "HEAD"].includes(req.method) }));
+  router.use((_request, response, next) => { response.setHeader('Cache-Control', 'private, no-store'); next(); });
+  router.use((request, response, next) => {
+    request.bugObservers = { onContribution, onChange };
+    const send = response.json.bind(response);
+    response.json = body => { if (body?.report) request.bugAfter = body.report; return send(body); };
+    if (!['GET', 'HEAD'].includes(request.method)) response.on('finish', () => {
+      if (response.statusCode < 400) {
+        if (request.bugAfter || request.bugDeleted) bugQueries.notifyMutation(request.bugBefore ?? null, request.bugDeleted ? null : request.bugAfter);
+        bugQueries.invalidate(); if (request.bugOwner) Promise.resolve(onChange?.(request.bugOwner)).catch(() => console.warn('Report summary cache invalidation failed.')); }
+    });
+    next();
+  });
 
   router.get("/", listReports);
   router.put("/:reportId/duplicate", requireAuth, requireRole("leadqa", "dev"), requireCsrf, async (request, response) => response.json(await createDuplicateService(db, undefined, statusIsTerminal)(request.params.reportId, request.body?.targetId ?? null, actorSnapshot(request.authSession))));
@@ -998,7 +1051,9 @@ export function createBugRouter() {
     requireCsrf,
     deleteAttachment,
   );
-  router.get("/:reportId", optionalAuth, getReport);
+  router.get('/:reportId/sections/:section', getReportSection);
+  router.get('/:reportId/attachments/:attachmentId/download', downloadAttachment);
+  router.get("/:reportId", getReport);
   router.patch("/:reportId", requireAuth, requireBugStaff, requireCsrf, patchReport);
   router.delete(
     "/:reportId",
