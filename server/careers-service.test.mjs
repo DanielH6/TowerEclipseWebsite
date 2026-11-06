@@ -137,14 +137,115 @@ test("QA Lead can read every Quality Assurance application but no other category
   await assert.rejects(f.service.application("qa1", { id: "member", role: "member" }, true), { status: 403 });
   await assert.rejects(f.service.review("qa1", lead, { revision: 1, status: "accepted", feedback: "", internalNotes: "" }), { status: 403 });
 });
-test("withdrawal is final, retains history, and prevents another submission to that opening", async () => {
+test("applicants cannot undo withdrawal or create a second application, while administrators can restore it", async () => {
   const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input);
   await f.service.review(a.id, user, { revision: 1 }, true);
   const own = await f.service.application(a.id, user);
   assert.equal(own.application.status, "withdrawn"); assert.equal(own.application.history.at(-1).status, "withdrawn");
   assert.equal((await f.service.submit(f.form.id, user, f.input)).alreadySubmitted, true);
-  await assert.rejects(f.service.review(a.id, admin, { revision: 2, status: "accepted", feedback: "", internalNotes: "" }), { status: 409 });
+  assert.equal(own.canResubmit, false);
+  await assert.rejects(f.service.resubmit(a.id, user, { revision: 2, answers, consent: true }), { status: 409 });
+  await assert.rejects(f.service.review(a.id, user, { revision: 2, status: "accepted", feedback: "", internalNotes: "" }), { status: 403 });
+  await assert.rejects(f.service.review(a.id, { id: "lead", role: "leadqa" }, { revision: 2, status: "accepted", feedback: "", internalNotes: "" }), { status: 403 });
+  await f.service.review(a.id, admin, { revision: 2, status: "under_review", feedback: "Restored for review", internalNotes: "Restoration reason" });
+  const restored = await f.service.application(a.id, user);
+  assert.equal(restored.application.status, "under_review");
+  assert.equal(restored.canResubmit, true);
+  assert.deepEqual(restored.application.history.map(event => event.status), ["submitted", "withdrawn", "under_review"]);
+  await f.service.resubmit(a.id, user, { revision: 3, answers: { ...answers, long: "Updated after restoration" }, consent: true });
+  assert.equal((await f.service.application(a.id, user)).application.status, "submitted");
 });
+for (const status of ["submitted", "under_review", "shortlisted", "accepted", "rejected"]) {
+  test(`administrators can restore a withdrawn application to ${status}, even after closing`, async () => {
+    const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input);
+    await f.service.review(a.id, user, { revision: 1 }, true);
+    await f.service.saveForm(f.form.id, { action: "close", revision: f.form.revision });
+    await f.service.review(a.id, admin, { revision: 2, status, feedback: "Restored", internalNotes: "Reviewed restoration" });
+    const own = await f.service.application(a.id, user);
+    assert.equal(own.application.status, status);
+    assert.equal(own.application.history.at(-1).status, status);
+    assert.equal(own.canResubmit, false, "restoration does not bypass a closed opening");
+  });
+}
+test("resubmission updates the existing application, resets its decision and retains original identity, notes and history", async () => {
+  const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input);
+  const original = f.documents.get(`careerApplications/${a.id}`);
+  await f.service.review(a.id, admin, { revision: 1, status: "accepted", feedback: "Original decision", internalNotes: "Private assessment", feedbackFormatting: { feedback: [{ text: "Original decision", bold: true }] }, notesFormatting: { internalNotes: [{ text: "Private assessment", italic: true }] } });
+  f.documents.delete("websiteAccounts/discord1");
+  f.advance(1000);
+  const before = f.writes();
+  const changed = await f.service.resubmit(a.id, { ...user, username: "new-name" }, { revision: 2, answers: { ...answers, short: "  Updated time zone  " }, consent: true, status: "accepted", internalNotes: "Injected" });
+  assert.deepEqual(changed, { id: a.id, revision: 3 });
+  const stored = f.documents.get(`careerApplications/${a.id}`);
+  assert.equal(f.writes() - before, 2, "application and form edit counter update together");
+  assert.equal([...f.documents.keys()].filter(path => path.startsWith("careerApplications/")).length, 1);
+  assert.deepEqual(stored.applicant, original.applicant);
+  assert.equal(stored.createdAt, original.createdAt);
+  assert.equal(stored.versionId, original.versionId);
+  assert.equal(stored.answers.short, "Updated time zone");
+  assert.equal(stored.status, "submitted");
+  assert.equal(stored.feedback, "");
+  assert.deepEqual(stored.feedbackFormatting, {});
+  assert.equal(stored.reviewer, null);
+  assert.equal(stored.internalNotes, "Private assessment");
+  assert.equal(stored.notesFormatting.internalNotes[0].italic, true);
+  assert.equal(stored.submissionRevision, 2);
+  assert.equal(stored.resubmittedAt, stored.updatedAt);
+  assert.equal(stored.consentAt, stored.updatedAt);
+  assert.deepEqual(stored.history.map(event => event.status), ["submitted", "accepted", "submitted"]);
+  assert.match(stored.history.at(-1).feedback, /edited and resubmitted/);
+  assert.equal(f.documents.get(`careerForms/${f.form.id}`).applicationEditRevision, 1);
+  const own = await f.service.application(a.id, user);
+  assert.equal(own.canResubmit, true);
+  assert.equal(JSON.stringify(own).includes("Private assessment"), false);
+});
+test("resubmissions require ownership, consent, valid answers and an unchanged revision without partial writes", async () => {
+  const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input), before = f.writes();
+  const input = { revision: 1, answers: { ...answers, long: "Edited" }, consent: true };
+  await assert.rejects(f.service.resubmit(a.id, null, input), { status: 401 });
+  for (const stranger of [{ id: "other" }, admin, { id: "qa-lead", role: "leadqa" }]) await assert.rejects(f.service.resubmit(a.id, stranger, input), { status: 404 });
+  await assert.rejects(f.service.resubmit(a.id, user, { ...input, consent: false }), { status: 400 });
+  await assert.rejects(f.service.resubmit(a.id, user, { ...input, answers: {} }), { status: 400 });
+  await assert.rejects(f.service.resubmit(a.id, user, { ...input, answers: { ...answers, choice: "Unknown" } }), { status: 400 });
+  await assert.rejects(f.service.resubmit(a.id, user, { ...input, revision: 0 }), { status: 409 });
+  assert.equal(f.writes(), before);
+  const concurrent = await Promise.allSettled([f.service.resubmit(a.id, user, input), f.service.resubmit(a.id, user, { ...input, answers: { ...answers, long: "Other tab" } })]);
+  assert.equal(concurrent.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(concurrent.find(result => result.status === "rejected").reason.status, 409);
+  assert.equal(f.documents.get(`careerApplications/${a.id}`).revision, 2);
+  await assert.rejects(f.service.review(a.id, admin, { revision: 1, status: "accepted", feedback: "", internalNotes: "" }), { status: 409 });
+});
+test("resubmission uses the original question version and current published deadline, including the exact boundary", async () => {
+  const f = await fixture();
+  const published = await f.service.saveForm(f.form.id, { action: "publish", revision: f.form.revision, draft: { ...draft, closesAt: "2026-09-14T01:01:00Z" } });
+  const a = await f.service.submit(f.form.id, user, { ...f.input, versionId: published.publishedVersion });
+  const next = await f.service.saveForm(f.form.id, { action: "publish", revision: published.revision, draft: { ...draft, closesAt: "2026-09-14T01:02:00Z", questions: [{ ...draft.questions[0], id: "new-question" }] } });
+  f.advance(60_000);
+  const open = await f.service.application(a.id, user);
+  assert.equal(open.closesAt, "2026-09-14T01:02:00.000Z");
+  assert.equal(open.canResubmit, true);
+  assert.equal(open.form.questions.length, 6);
+  await assert.rejects(f.service.resubmit(a.id, user, { revision: 1, consent: true, answers: { "new-question": "New version answer" } }), { status: 409 });
+  await f.service.resubmit(a.id, user, { revision: 1, consent: true, answers });
+  f.advance(60_000);
+  assert.equal((await f.service.application(a.id, user)).canResubmit, false);
+  await assert.rejects(f.service.resubmit(a.id, user, { revision: 2, consent: true, answers }), { status: 409 });
+  const reopened = await f.service.saveForm(f.form.id, { action: "publish", revision: next.revision, draft });
+  assert.equal((await f.service.application(a.id, user)).canResubmit, true, "no deadline permits edits until closed");
+  await f.service.saveForm(f.form.id, { action: "close", revision: reopened.revision });
+  assert.equal((await f.service.application(a.id, user)).canResubmit, false);
+  await assert.rejects(f.service.resubmit(a.id, user, { revision: 2, consent: true, answers }), { status: 409 });
+});
+for (const status of ["submitted", "under_review", "shortlisted", "accepted", "rejected"]) {
+  test(`applicants can resubmit from ${status} before closing and counts refresh`, async () => {
+    const f = await fixture(), a = await f.service.submit(f.form.id, user, f.input);
+    await f.service.review(a.id, admin, { revision: 1, status, feedback: "Previous update", internalNotes: "" });
+    assert.equal((await f.service.applicationStats(admin, { status: "submitted" })).applications, status === "submitted" ? 1 : 0);
+    await f.service.resubmit(a.id, user, { revision: 2, answers, consent: true });
+    assert.equal((await f.service.application(a.id, user)).application.status, "submitted");
+    assert.equal((await f.service.applicationStats(admin, { status: "submitted" })).applications, 1);
+  });
+}
 test("public listing is cached and invalidated by closing; applicant data is never public", async () => {
   const f = await fixture();
   const first = await f.service.listForms(), count = f.queries.length;

@@ -220,7 +220,7 @@ Read [Careers setup and operating guide](docs/careers.md) before launch. It incl
 ### Connected QA workflow
 
 - `/admin` is the manager overview; dictionary editing moved to `/admin/dictionaries`. Counts link to triage, needs-information, retest, draft, application and tester views. Staff can save up to 20 personal filter queues and share filter URLs.
-- Report forms keep reproduction steps and expected/actual behavior in the existing description. Optional frequency and validated HTTPS Pastebin console links are shown on report details, without widening the table. Suggestions search all submitted reports, preserving older matches.
+- Report forms keep reproduction steps and expected/actual behavior in the existing description. Optional frequency and validated HTTPS pastes.dev console links are shown on report details, without widening the table. Older Pastebin evidence links remain supported. Suggestions search all submitted reports, preserving older matches.
 - QA leads/developers can link duplicates. Self-links, chains and linking a canonical report with dependents are rejected transactionally. Original submissions and reporter credit are untouched. Unlink relationships before deleting referenced reports.
 - News drafts can link reports with independently editable public wording. Only published updates appear on report details. Linking does not alter a report status or publish an update.
 - Account → Tester resources contains the staff-only handbook, links, Testmode/console instructions, and a six-step checklist. Progress is stored per authenticated account and version; admins see self-reported progress in the tester viewer.

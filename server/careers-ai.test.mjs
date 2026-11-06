@@ -159,6 +159,53 @@ test("ranked sorting covers all pages and search/status filters do not recurve t
   assert.equal(filtered.items.length, 1); assert.equal(filtered.items[0].aiReview.poolSize, 47);
   await assert.rejects(f.service.listApplications(admin, { formId: f.form.id, sort: "quality", cursor: first.nextCursor }, true), { status: 409 });
 });
+test("resubmission hides previous assessments and ranking until a fresh review uses the edited answers", async () => {
+  const f = await fixture(); f.add("strong", 5); f.add("weak", 3);
+  const first = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  // Completed reviews saved before submission revisions were introduced remain readable.
+  delete f.documents.get(`careerAiRuns/${first.id}/careerAiScores/strong`).submissionRevision;
+  assert.equal((await f.service.application("strong", admin, true)).application.aiReview.qualityScore, 10);
+  await f.service.resubmit("strong", { id: "strong" }, { revision: 1, consent: true, answers: { answer: "I explain 1 practical step." } });
+  assert.equal((await f.service.application("strong", admin, true)).application.aiReview, null);
+  const ranked = await f.service.listApplications(admin, { formId: f.form.id, sort: "ai_rank" }, true);
+  assert.deepEqual(ranked.items.map(item => item.id), ["weak", "strong"]);
+  assert.equal(ranked.items[1].aiReview, null);
+  assert.equal((await f.service.listApplications(admin, {}, true)).items.find(item => item.id === "strong").aiReview, null);
+  const next = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision }); await finish(f.service);
+  const reviewed = (await f.service.application("strong", admin, true)).application.aiReview;
+  assert.equal(reviewed.runId, next.id); assert.equal(reviewed.qualityScore, 2); assert.equal(reviewed.submissionRevision, 2);
+  assert.ok(f.calls.some(call => call.questions[0].answerExcerpts[0].text === "I explain 1 practical step."));
+});
+test("an answer resubmitted during an AI request cannot receive the in-flight assessment", async () => {
+  let release, started;
+  const waiting = new Promise(resolve => { release = resolve; }), assessing = new Promise(resolve => { started = resolve; });
+  const f = await fixture({ provider: { enabled: true, assess: async () => {
+    started(); await waiting;
+    return { value: { summary: "Assessment", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score: 5, explanation: "Explanation", evidence: [] })) } };
+  } } });
+  f.add("one", 5);
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  const working = f.service.ai.workNext({ owner: "worker" });
+  await assessing;
+  try { await f.service.resubmit("one", { id: "one" }, { revision: 1, consent: true, answers: { answer: "I explain 1 revised step." } }); }
+  finally { release(); }
+  await working;
+  assert.equal(f.documents.get(`careerAiRuns/${run.id}`).state, "failed");
+  assert.match(f.documents.get(`careerAiRuns/${run.id}`).error, /resubmitted/);
+  assert.equal(f.documents.has(`careerAiRuns/${run.id}/careerAiScores/one`), false);
+  assert.equal((await f.service.application("one", admin, true)).application.aiReview, null);
+});
+test("resubmission after assessment and before publication prevents publishing the changed pool", async () => {
+  const f = await fixture(); f.add("one", 5);
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  await f.service.ai.workNext({ owner: "worker" });
+  assert.equal(f.documents.get(`careerAiRuns/${run.id}`).processed, 1);
+  await f.service.resubmit("one", { id: "one" }, { revision: 1, consent: true, answers: { answer: "I explain 1 revised step." } });
+  await finish(f.service);
+  assert.equal(f.documents.get(`careerAiRuns/${run.id}`).state, "failed");
+  assert.equal(f.documents.get(`careerForms/${f.form.id}`).aiCompletedRun, undefined);
+  assert.equal(f.calls.length, 1, "changing a pool never silently starts another paid request");
+});
 test("Luna transport uses structured Responses, private storage settings, bounded output and safe errors", async () => {
   let captured, organizationHeader;
   const provider = createCareerAiProvider({ apiKey: "private-test-key", organizationId: "org-test", fetch: async (url, options) => {
