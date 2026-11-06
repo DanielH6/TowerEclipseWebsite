@@ -64,7 +64,7 @@
 .career-card hr { border: 0; border-top: 1px solid #25384d; margin: 25px 0; }
 .career-progress { height: 5px; border-radius: 5px; background: #24384f; overflow: hidden; margin-top: 25px; }
 .career-progress span { display: block; height: 100%; background: #76bdff; transition: width .2s; }
-.career-questions, .career-detail-main, .career-detail-sidebar { display: grid; gap: 23px; }
+.career-questions, .career-detail-main, .career-detail-sidebar, .career-application-editor { display: grid; gap: 23px; }
 .career-question { margin: 0; padding-top: 18px; }
 .career-question legend { float: left; width: 100%; line-height: 1.7; font-size: .92rem; font-weight: 650; margin-bottom: 5px; overflow-wrap: anywhere; }
 .career-question legend + p { clear: both; }

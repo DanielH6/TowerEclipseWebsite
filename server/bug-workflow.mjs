@@ -7,9 +7,10 @@ export function reportExtras(input, partial = false) {
   }
   if (!partial || input.serverConsoleUrl !== undefined) {
     const raw = input.serverConsoleUrl ?? '';
-    if (typeof raw !== 'string' || raw.length > 200) fail('Enter a valid Pastebin link.');
+    if (typeof raw !== 'string' || raw.length > 200) fail('Enter a valid pastes.dev link.');
     const value = raw.trim();
-    if (value && !/^https:\/\/pastebin\.com\/(?:raw\/)?[A-Za-z0-9]+\/?$/.test(value)) fail('Server console must be an https://pastebin.com/ link to a paste.');
+    // Keep historical Pastebin evidence editable while using pastes.dev for new console copies.
+    if (value && !/^https:\/\/(?:pastes\.dev\/|pastebin\.com\/(?:raw\/)?)[A-Za-z0-9]+\/?$/.test(value)) fail('Server console must be an https://pastes.dev/ link to a paste.');
     result.serverConsoleUrl = value || null;
   }
   return result;

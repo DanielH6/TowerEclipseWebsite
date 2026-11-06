@@ -2,7 +2,7 @@
 
 ## What was checked locally
 
-The automated suite covers complete lists past 1,000 reports, tied pagination boundaries, snapshot reuse after edits/deletion, tampering and expiry, Pastebin validation, duplicate graph constraints, editable release-link input, private saved queues/onboarding, and HTTP role/CSRF boundaries. Attachment checks use signed URLs against an in-memory object transport and compare downloaded bytes. Backup tests serialize and restore nested documents, timestamp precision, relationships, and binary objects, then verify hashes.
+The automated suite covers complete lists past 1,000 reports, tied pagination boundaries, snapshot reuse after edits/deletion, tampering and expiry, pastes.dev console-link validation with legacy Pastebin compatibility, duplicate graph constraints, editable release-link input, private saved queues/onboarding, and HTTP role/CSRF boundaries. Attachment checks use signed URLs against an in-memory object transport and compare downloaded bytes. Backup tests serialize and restore nested documents, timestamp precision, relationships, and binary objects, then verify hashes.
 
 These checks do not prove live Discord OAuth, deployed Firestore indexes, real R2 permissions/CORS, or restoration into another cloud project. No separate test website/database was available during implementation, so no live restore or real-account upload experiment was performed.
 

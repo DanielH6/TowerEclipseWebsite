@@ -14,6 +14,7 @@ export function createCareersRouter({ service, auth = requireAuth, csrf = requir
   router.post("/forms/:id/applications", ...writes, rateLimit({ windowMs: 15 * 60_000, limit: 10, keyGenerator: req => req.authUser.id, standardHeaders: "draft-8", legacyHeaders: false }), async (req, res) => res.status(201).json(await service.submit(req.params.id, req.authUser, req.body)));
   router.get("/applications", async (req, res) => res.json(await service.listApplications(req.authUser, req.query)));
   router.get("/applications/:id", async (req, res) => res.json(await service.application(req.params.id, req.authUser)));
+  router.post("/applications/:id/resubmit", ...writes, async (req, res) => res.json(await service.resubmit(req.params.id, req.authUser, req.body)));
   router.post("/applications/:id/withdraw", ...writes, async (req, res) => res.json(await service.review(req.params.id, req.authUser, req.body, true)));
   router.get("/admin/review-forms", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.reviewForms(req.authUser)));
   router.get("/admin/applications", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.listApplications(req.authUser, req.query, true)));

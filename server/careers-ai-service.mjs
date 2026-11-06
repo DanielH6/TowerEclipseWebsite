@@ -33,6 +33,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
   async function checkOwner(tx, reference, owner) {
     const run = (await tx.get(reference)).data();
     if (!run || run.state !== "running" || run.owner !== owner || run.leaseUntil <= now()) throw Object.assign(new Error("AI review lease changed."), { code: "AI_LEASE_LOST" });
+    const form = (await tx.get(formRef(run.formId))).data();
+    if (!form || (form.applicationEditRevision ?? 0) !== (run.applicationEditRevision ?? 0)) fail("An application was resubmitted during this review. No new ranking was applied. Start a fresh review to use the current answers.", 409);
     return run;
   }
   return {
@@ -61,8 +63,9 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
         const latest = (await tx.get(formRef(formId))).data();
         const previous = latest?.aiActiveRunId ? (await tx.get(runRef(latest.aiActiveRunId))).data() : null;
         if (!latest || (latest.aiRevision ?? 0) !== (form.aiRevision ?? 0)) fail("The scoring guide changed. Reload before starting a review.", 409);
+        if ((latest.applicationEditRevision ?? 0) !== (form.applicationEditRevision ?? 0)) fail("Applications changed. Reload before starting a review.", 409);
         if (previous && activeStates.includes(previous.state)) fail("A review is already queued or running for this opening.", 409);
-        tx.set(runRef(id), { formId, settings, members, processed: 0, state: "queued", createdAt, criteriaRevision: form.aiRevision ?? 0,
+        tx.set(runRef(id), { formId, settings, members, processed: 0, state: "queued", createdAt, criteriaRevision: form.aiRevision ?? 0, applicationEditRevision: form.applicationEditRevision ?? 0,
           model: AI_MODEL, promptVersion: AI_PROMPT_VERSION, requestedBy: { id: user.id, displayName: user.displayName ?? user.username ?? "Administrator" },
           owner: null, leaseUntil: 0, activeItem: null, usage: { inputTokens: 0, outputTokens: 0 } });
         tx.update(formRef(formId), { aiActiveRunId: id, aiRunIds: [id, ...(latest.aiRunIds ?? (latest.aiActiveRunId ? [latest.aiActiveRunId] : []))].slice(0, 10) });
@@ -95,7 +98,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
         const form = forms.get(item.formId), completed = form.aiCompletedRun;
         if (!completed || item.status === "withdrawn") return { ...item, aiReview: null };
         const result = (await scoreRef(completed.id, item.id).get()).data();
-        return { ...item, aiReview: result ? { ...result, runId: completed.id, reviewedAt: completed.completedAt, criteriaChanged: completed.criteriaRevision !== (form.aiRevision ?? 0) } : null };
+        const current = result && (result.submissionRevision ?? 1) === (item.submissionRevision ?? 1);
+        return { ...item, aiReview: current ? { ...result, runId: completed.id, reviewedAt: completed.completedAt, criteriaChanged: completed.criteriaRevision !== (form.aiRevision ?? 0) } : null };
       }));
     },
     async scoreIndex(formId) {
@@ -103,7 +107,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
       if (!form.aiCompletedRun) return { runId: null, scores };
       let cursor;
       while (true) {
-        let query = db.collection(`careerAiRuns/${form.aiCompletedRun.id}/careerAiScores`).orderBy("__name__", "asc").select("qualityScore", "relativeScore", "rank").limit(500);
+        let query = db.collection(`careerAiRuns/${form.aiCompletedRun.id}/careerAiScores`).orderBy("__name__", "asc").select("qualityScore", "relativeScore", "rank", "submissionRevision").limit(500);
         if (cursor) query = query.startAfter(cursor);
         const result = await query.get();
         for (const doc of result.docs) scores.set(doc.id, doc.data());
@@ -147,7 +151,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
           const assessment = normalizeAssessment(response.value, claimed.settings, form, application);
           await db.runTransaction(async tx => {
             const run = await checkOwner(tx, reference, owner);
-            tx.set(scoreRef(candidate.id, applicationId), { ...assessment, inputFingerprint: aiFingerprint(input), criteriaRevision: run.criteriaRevision });
+            tx.set(scoreRef(candidate.id, applicationId), { ...assessment, inputFingerprint: aiFingerprint(input), criteriaRevision: run.criteriaRevision, submissionRevision: application.submissionRevision ?? 1 });
             tx.update(reference, { processed: run.processed + 1, activeItem: null, leaseUntil: now() + LEASE_MS,
               usage: { inputTokens: run.usage.inputTokens + (response.usage?.inputTokens ?? 0), outputTokens: run.usage.outputTokens + (response.usage?.outputTokens ?? 0) } });
           });

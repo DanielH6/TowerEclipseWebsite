@@ -6,7 +6,7 @@ import { createCareerAiProvider, readCareerAiConfiguration } from "./careers-ai-
 import { createCareerAiService } from "./careers-ai-service.mjs";
 
 const PAGE_SIZE = 20;
-const SUMMARY = ["formId", "versionId", "title", "category", "applicantId", "applicant", "status", "createdAt", "updatedAt", "revision", "feedback"];
+const SUMMARY = ["formId", "versionId", "title", "category", "applicantId", "applicant", "status", "createdAt", "updatedAt", "revision", "submissionRevision", "resubmittedAt", "feedback"];
 const FORM_SUMMARY = ["title", "category", "description", "commitment", "formatting", "closesAt", "state", "publishedVersion", "revision", "createdAt", "updatedAt"];
 const QA_CATEGORIES = ["Quality assurance", "Quality Assurance", "quality assurance", "QUALITY ASSURANCE"];
 const isQaApplication = category => typeof category === "string" && category.trim().toLowerCase() === "quality assurance";
@@ -17,6 +17,7 @@ function expectRevision(data, revision) { if (!Number.isInteger(revision) || dat
 function checkOpen(form, now) {
   if (form.state !== "open" || !form.publishedVersion || (form.closesAt && Date.parse(form.closesAt) <= now)) fail("This opening is closed to new applications.", 409);
 }
+const acceptsResubmissions = (form, status, now) => status !== "withdrawn" && form?.state === "open" && Boolean(form.publishedVersion) && (!form.closesAt || Date.parse(form.closesAt) > now);
 
 export function createCareersService(db, { now = Date.now, imageStorage, aiProvider = createCareerAiProvider(readCareerAiConfiguration()) } = {}) {
   let publicCache = new Map();
@@ -63,8 +64,9 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
     if (admin && user.role === "leadqa" && !isQaApplication(data.category)) fail("This application could not be found.", 404);
     if (!admin && data.applicantId !== user.id) fail("This application could not be found.", 404);
     const form = snapshotData(await ref("careerFormVersions", data.versionId).get());
+    const opening = (await ref("careerForms", data.formId).get()).data();
     const visible = { ...pick(data, [...SUMMARY, "id", "answers", "history", "feedbackFormatting"]), ...(admin ? pick(data, ["internalNotes", "reviewer", "notesFormatting"]) : {}) };
-    return { application: admin ? (await ai.decorate([visible]))[0] : visible, form };
+    return { application: admin ? (await ai.decorate([visible]))[0] : visible, form, canResubmit: !admin && acceptsResubmissions(opening, data.status, now()), closesAt: opening?.closesAt ?? null };
   }
   function applicationQuery(user, options, admin) {
     if (admin && !["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view applications.", 403);
@@ -145,10 +147,34 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         const answers = validateAnswers(version, input.answers);
         const createdAt = stamp();
         tx.set(target, { formId: id, versionId: form.publishedVersion, title: version.title, category: version.category,
-          applicantId: user.id, applicant: identity, answers, status: "submitted", createdAt, updatedAt: createdAt, revision: 1,
+          applicantId: user.id, applicant: identity, answers, status: "submitted", createdAt, updatedAt: createdAt, revision: 1, submissionRevision: 1,
           feedback: "", internalNotes: "", reviewer: null, consentAt: createdAt, privacyNoticeVersion: "careers-2026-11-04",
           history: [{ status: "submitted", at: createdAt, feedback: "Application received." }] });
         return { id: target.path.split("/").at(-1), alreadySubmitted: false };
+      });
+      statsCache.clear();
+      return result;
+    },
+    async resubmit(id, user, input) {
+      if (!user?.id) fail("Sign in with Discord to edit your application.", 401);
+      if (input?.consent !== true) fail("Confirm that you have read the application privacy notice.");
+      const result = await db.runTransaction(async tx => {
+        const target = ref("careerApplications", id);
+        const data = snapshotData(await tx.get(target));
+        if (data.applicantId !== user.id) fail("This application could not be found.", 404);
+        expectRevision(data, input.revision);
+        const openingRef = ref("careerForms", data.formId);
+        const opening = (await tx.get(openingRef)).data();
+        if (!acceptsResubmissions(opening, data.status, now())) fail(data.status === "withdrawn" ? "An administrator must restore this withdrawn application before you can edit it." : "This opening is closed to edits and resubmissions.", 409);
+        const version = snapshotData(await tx.get(ref("careerFormVersions", data.versionId)));
+        const answers = validateAnswers(version, input.answers);
+        const updatedAt = stamp();
+        tx.update(target, { answers, status: "submitted", updatedAt, resubmittedAt: updatedAt, revision: data.revision + 1,
+          submissionRevision: (data.submissionRevision ?? 1) + 1, feedback: "", feedbackFormatting: {}, reviewer: null,
+          consentAt: updatedAt, privacyNoticeVersion: "careers-2026-11-04",
+          history: [...(data.history ?? []), { status: "submitted", at: updatedAt, feedback: "Application edited and resubmitted." }].slice(-50) });
+        tx.update(openingRef, { applicationEditRevision: (opening.applicationEditRevision ?? 0) + 1 });
+        return { id, revision: data.revision + 1 };
       });
       statsCache.clear();
       return result;
@@ -175,7 +201,10 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         all.sort((a, b) => {
           if (["ai_rank", "quality"].includes(sort)) {
             const key = sort === "quality" ? "qualityScore" : "relativeScore";
-            const score = item => item.status === "withdrawn" ? -1 : index.scores.get(item.id)?.[key] ?? -1;
+            const score = item => {
+              const saved = index.scores.get(item.id);
+              return item.status === "withdrawn" || (saved?.submissionRevision ?? 1) !== (item.submissionRevision ?? 1) ? -1 : saved?.[key] ?? -1;
+            };
             if (score(a) !== score(b)) return score(b) - score(a);
           }
           return (a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)) * (sort === "oldest" ? 1 : -1);
@@ -250,7 +279,7 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         const data = snapshotData(await tx.get(target));
         if (withdraw && data.applicantId !== user.id) fail("This application could not be found.", 404);
         expectRevision(data, input.revision);
-        if (data.status === "withdrawn" || (withdraw && ["accepted", "rejected"].includes(data.status))) fail("This application cannot be changed in its current status.", 409);
+        if (withdraw && ["withdrawn", "accepted", "rejected"].includes(data.status)) fail("This application cannot be changed in its current status.", 409);
         const updatedAt = stamp();
         const history = [...(data.history ?? [])];
         if (data.status !== changes.status || (!withdraw && (data.feedback !== changes.feedback || JSON.stringify(data.feedbackFormatting ?? {}) !== JSON.stringify(changes.feedbackFormatting)))) history.push({ status: changes.status, at: updatedAt, feedback: withdraw ? "Withdrawn by applicant." : changes.feedback, ...(!withdraw ? { feedbackFormatting: changes.feedbackFormatting } : {}) });

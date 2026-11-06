@@ -27,10 +27,12 @@ test('related suggestions include historical matches and hide unfinished drafts'
   const service = createBugQueryService({ db: fixture.db, snapshots: createSnapshotCodec('secret', () => now) });
   assert.deepEqual((await service.related({ search: 'Freeze tower firing' })).reports.map(item => item.id), ['a']);
 });
-test('Pastebin links and optional frequency are validated without accepting lookalike hosts or schemes', () => {
+test('pastes.dev console links and optional frequency are validated while preserving legacy evidence', () => {
   assert.deepEqual(reportExtras({}), { frequency: null, serverConsoleUrl: null });
-  assert.equal(reportExtras({ serverConsoleUrl: 'https://pastebin.com/Ab123', frequency: 'high' }).frequency, 'high');
-  for (const serverConsoleUrl of ['javascript:alert(1)', 'https://pastebin.com.evil.test/abc', 'https://evil.test/pastebin.com/a', 'https://pastebin.com/user/name']) assert.throws(() => reportExtras({ serverConsoleUrl }));
+  assert.deepEqual(reportExtras({ serverConsoleUrl: '  https://pastes.dev/Ab123xYz90  ', frequency: 'high' }), { serverConsoleUrl: 'https://pastes.dev/Ab123xYz90', frequency: 'high' });
+  for (const serverConsoleUrl of ['https://pastes.dev/Ab123/', 'https://pastebin.com/Ab123', 'https://pastebin.com/raw/Ab123']) assert.equal(reportExtras({ serverConsoleUrl }, true).serverConsoleUrl, serverConsoleUrl);
+  for (const serverConsoleUrl of ['javascript:alert(1)', 'http://pastes.dev/Ab123', 'https://pastes.dev/', 'https://pastes.dev.evil.test/abc', 'https://evil.test/pastes.dev/a', 'https://pastes.dev@evil.test/a', 'https://pastes.dev/user/name', 'https://pastebin.com.evil.test/abc', 'https://evil.test/pastebin.com/a', 'https://pastebin.com/user/name', `https://pastes.dev/${'a'.repeat(200)}`, 123]) assert.throws(() => reportExtras({ serverConsoleUrl }), /pastes\.dev/);
+  for (const serverConsoleUrl of ['', '  ', null]) assert.deepEqual(reportExtras({ serverConsoleUrl }, true), { serverConsoleUrl: null });
   assert.throws(() => reportExtras({ frequency: 'critical' }));
   assert.deepEqual(reportExtras({}, true), {});
 });
