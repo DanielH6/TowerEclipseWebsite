@@ -7,9 +7,32 @@ import { useAuth } from "../AuthContext";
 import RoleBadge from "../Components/RoleBadge";
 import UserAvatar from "../Components/UserAvatar";
 import { isBugStaff } from "../roles";
-import type { BugFilters, BugPagination } from "../api";
+import type { BugFilters, BugPagination, BugListResult } from "../api";
 import type { BugReport, Dictionaries, DictionaryName, DictionarySnapshot } from "../types";
 import "./Bugs.css";
+
+// In-memory only, qualified by the signed-in account. A snapshot survives
+// filter changes and back navigation, but never outlives its server expiry.
+const listViews = new Map<string, { snapshot: string; expires: number; pages: Map<string, number> }>();
+const listResponses = new Map<string, { value: BugListResult; bytes: number }>();
+const listPending = new Map<string, Promise<BugListResult>>();
+let responseBytes = 0;
+async function readList(userId: string, filters: BugFilters, page: number, snapshot: string | null, fresh: boolean) {
+  const filter = filtersToSearch(filters), key = JSON.stringify([userId, snapshot, filter, page]);
+  const cached = listResponses.get(key);
+  if (!fresh && cached && Date.parse(cached.value.expiresAt) > Date.now()) return cached.value;
+  if (!fresh && listPending.has(key)) return listPending.get(key)!;
+  const previous = listResponses.get(JSON.stringify([userId, snapshot, filter, page - 1]));
+  const work = loadBugs(filters, page, snapshot, { ...(previous?.value.nextCursor ? { cursor: previous.value.nextCursor } : {}), fresh }).then(value => {
+    const savedKey = JSON.stringify([userId, value.snapshot, filter, page]);
+    const bytes = JSON.stringify(value).length * 2;
+    const old = listResponses.get(savedKey); if (old) { responseBytes -= old.bytes; listResponses.delete(savedKey); }
+    while (listResponses.size && (listResponses.size >= 100 || responseBytes + bytes > 8 * 1024 * 1024)) { const first = listResponses.keys().next().value!; responseBytes -= listResponses.get(first)!.bytes; listResponses.delete(first); }
+    if (bytes <= 8 * 1024 * 1024) { listResponses.set(savedKey, { value, bytes }); responseBytes += bytes; }
+    return value;
+  }).finally(() => { if (listPending.get(key) === work) listPending.delete(key); });
+  listPending.set(key, work); return work;
+}
 
 const emptyFilters: BugFilters = {
   search: "",
@@ -193,12 +216,20 @@ export default function BugsPage() {
     finally { setExporting(false); }
   }
 
-  async function refresh(nextFilters = filters, nextPage = pagination.page, nextSnapshot: string | null = snapshot) {
+  async function refresh(nextFilters = filters, nextPage = pagination.page, nextSnapshot: string | null = snapshot, fresh = false) {
+    if (!auth || !isBugStaff(auth.user.role)) return;
+    const savedView = listViews.get(auth.user.id);
+    const selectedSnapshot = fresh ? null : nextSnapshot ?? (savedView && savedView.expires > Date.now() ? savedView.snapshot : null);
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      const result = await loadBugs(nextFilters, nextPage, nextSnapshot);
+      const result = await readList(auth.user.id, nextFilters, nextPage, selectedSnapshot, fresh);
+      const view = listViews.get(auth.user.id);
+      const pages = view?.snapshot === result.snapshot ? view.pages : new Map<string, number>();
+      pages.set(filtersToSearch(nextFilters), nextPage);
+      if (listViews.size >= 10 && !listViews.has(auth.user.id)) listViews.delete(listViews.keys().next().value!);
+      listViews.set(auth.user.id, { snapshot: result.snapshot, expires: Date.parse(result.expiresAt), pages });
       if (sequence !== requestSequence.current) return;
       setSnapshot(result.snapshot);
       setRefreshedAt(result.refreshedAt);
@@ -215,14 +246,16 @@ export default function BugsPage() {
   useEffect(() => {
     const next = filtersFromSearch(locationSearch);
     setFilters(next);
-    void refresh(next, 1, null);
-  }, [locationSearch]);
+    const view = auth ? listViews.get(auth.user.id) : null;
+    void refresh(next, view?.pages.get(filtersToSearch(next)) ?? 1);
+  }, [locationSearch, auth?.user.id]);
 
   useEffect(() => { loadDictionaries().then(setDictionaries).catch(() => undefined); }, []);
 
   function apply(next: BugFilters) {
     const search = filtersToSearch(next);
-    if (search === locationSearch.replace(/^\?/, "")) void refresh(next, 1, null);
+    if (auth) listViews.get(auth.user.id)?.pages.set(search, 1);
+    if (search === locationSearch.replace(/^\?/, "")) void refresh(next, 1);
     else navigate(`/bugs${search ? `?${search}` : ""}`);
   }
 
@@ -298,7 +331,7 @@ export default function BugsPage() {
         </div>
       </form>
 
-      <div className="snapshot-controls"><p>{refreshedAt ? `Data refreshed ${new Date(refreshedAt).toLocaleString()}.` : "Loading snapshot…"} Pages and exports use the same snapshot for up to 45 minutes.</p><button type="button" className="ghost-link" disabled={loading || exporting} onClick={() => void refresh(appliedFilters, 1, null)}>REFRESH DATA</button></div>
+      <div className="snapshot-controls"><p>{refreshedAt ? `Data refreshed ${new Date(refreshedAt).toLocaleString()}.` : "Loading snapshot…"} Pages and exports use the same snapshot for up to 45 minutes.</p><button type="button" className="ghost-link" disabled={loading || exporting} onClick={() => void refresh(appliedFilters, 1, null, true)}>REFRESH DATA</button></div>
       {canCreateReports && <SavedQueues filters={appliedFilters} />}
       <p>Export includes all matching reports across every page, public comments, and attachment links.</p>
       {exportMessage && <p role="status">{exportMessage}</p>}
@@ -351,11 +384,11 @@ export default function BugsPage() {
                 const report = savedReport;
                 return (
                 <tr key={report.id}>
-                  <td><Link className="report-id-link" to={`/bugs/${report.id}`}>{report.displayId}</Link></td>
+                  <td><Link className="report-id-link" to={`/bugs/${report.id}?returnTo=${encodeURIComponent(`/bugs${locationSearch}`)}`}>{report.displayId}</Link></td>
                   <td><Badge value={report.status} /></td>
                   <td>{report.version.label}</td>
                   <td><Badge value={report.priority} /></td>
-                  <td className="description-cell"><Link to={`/bugs/${report.id}`}>{report.description}</Link></td>
+                  <td className="description-cell"><Link to={`/bugs/${report.id}?returnTo=${encodeURIComponent(`/bugs${locationSearch}`)}`}>{report.description}</Link></td>
                   <td>{report.category.label}</td>
                   <td>{report.type.label}</td>
                   <td>

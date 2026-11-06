@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fail, identifier, normalizeForm } from "./careers-domain.mjs";
 import { AI_MODEL, AI_PROMPT_VERSION, assessmentInput, aiFingerprint, normalizeAiReview, normalizeAssessment, rankAssessments } from "./careers-ai-domain.mjs";
+import { createReadCache } from "./read-cache.mjs";
 
 const MAX_APPLICANTS = 5000, LEASE_MS = 120_000;
 const activeStates = ["queued", "running"];
@@ -8,16 +9,64 @@ const requireAdmin = user => { if (user?.role !== "dev") fail("Only administrato
 const summary = (id, data) => data ? { id, state: data.state, total: data.members.length, processed: data.processed, createdAt: data.createdAt,
   completedAt: data.completedAt ?? null, error: data.error ?? "", requestedBy: data.requestedBy, criteriaRevision: data.criteriaRevision, model: data.model, usage: data.usage } : null;
 
-export function createCareerAiService(db, { provider, images, now = Date.now } = {}) {
+// Completed scores and published versions never change. Mutable form pointers have
+// a short bound and are invalidated by local writes; authority checks bypass them.
+function memo({ name, maximum = 200, ttl = 30_000, now }) {
+  const cache = createReadCache({ name, maxEntries: maximum, maxBytes: 8 * 1024 * 1024, ttlMs: ttl, now });
+  return { ...cache, async set(key, value) { cache.invalidate(key); await cache.get(key, async () => value); } };
+}
+
+export function createCareerAiService(db, { provider, images, now = Date.now, readVersion } = {}) {
   const formRef = id => db.doc(`careerForms/${identifier(id)}`);
   const runRef = id => db.doc(`careerAiRuns/${identifier(id)}`);
   const scoreRef = (runId, id) => db.doc(`careerAiRuns/${identifier(runId)}/careerAiScores/${identifier(id)}`);
   const stamp = () => new Date(now()).toISOString();
+  const forms = memo({ name: "careers-ai-forms", now, maximum: 200, ttl: 15_000 }), versions = memo({ name: "careers-ai-versions", now, maximum: 200, ttl: 60 * 60_000 });
+  const indexes = memo({ name: "careers-ai-rankings", now, maximum: 12, ttl: 10 * 60_000 }), details = memo({ name: "careers-ai-details", now, maximum: 200, ttl: 10 * 60_000 }), jobs = memo({ name: "careers-ai-jobs", now, maximum: 200, ttl: 10 * 60_000 });
+  const badges = memo({ name: "careers-ai-badges", now, maximum: 4000, ttl: 10 * 60_000 });
+  const claimedRuns = new Map();
   let notify = () => {};
-  async function readForm(id) {
+  async function freshForm(id) {
     const snapshot = await formRef(id).get();
     if (!snapshot.exists) fail("Opening not found.", 404);
     return snapshot.data();
+  }
+  const readForm = id => forms.get(identifier(id), () => freshForm(id));
+  const version = id => readVersion ? readVersion(id) : versions.get(identifier(id), async () => (await db.doc(`careerFormVersions/${identifier(id)}`).get()).data());
+  async function readJob(id) {
+    // Only terminal summaries are retained; progress/cancellation stays live.
+    return jobs.get(identifier(id), async () => {
+      const data = (await runRef(id).get()).data();
+      if (data && activeStates.includes(data.state)) queueMicrotask(() => jobs.invalidate(id));
+      return data;
+    });
+  }
+  async function completedIndex(completed) {
+    const entries = await indexes.get(completed.id, async () => {
+      const scores = new Map();
+      let cursor;
+      while (true) {
+        let query = db.collection(`careerAiRuns/${completed.id}/careerAiScores`).orderBy("__name__", "asc").select("qualityScore", "relativeScore", "rank", "poolSize", "submissionRevision").limit(500);
+        if (cursor) query = query.startAfter(cursor);
+        const result = await query.get();
+        for (const doc of result.docs) scores.set(doc.id, doc.data());
+        if (scores.size > MAX_APPLICANTS) fail("This ranking exceeds the supported application limit.");
+        if (result.docs.length < 500) break;
+        cursor = result.docs.at(-1).ref.path;
+      }
+      return [...scores];
+    });
+    return new Map(entries);
+  }
+  async function rowBadge(completed, id) {
+    const cachedIndex = indexes.peek(completed.id);
+    if (cachedIndex) return new Map(cachedIndex).get(id);
+    const key = `${completed.id}/${id}`;
+    return badges.get(key, async () => {
+      const result = details.peek(key) ?? (await scoreRef(completed.id, id).get()).data();
+      if (!result) return null;
+      return Object.fromEntries(["qualityScore", "relativeScore", "rank", "poolSize", "submissionRevision"].filter(field => result[field] !== undefined).map(field => [field, result[field]]));
+    });
   }
   async function scan(query, fields, maximum = MAX_APPLICANTS) {
     const base = query.orderBy("createdAt", "desc").orderBy("__name__", "desc").select(...fields), items = [];
@@ -39,6 +88,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
   }
   return {
     configuration() { return { configured: provider.enabled, model: AI_MODEL, maxApplicants: MAX_APPLICANTS }; },
+    invalidateForm(id) { forms.invalidate(identifier(id)); },
     setNotifier(callback) { notify = callback; },
     async draftCriteria(user, input, { signal } = {}) {
       requireAdmin(user);
@@ -52,7 +102,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
     async start(formId, user, input) {
       requireAdmin(user);
       if (!provider.enabled) fail("Luna is not connected. Configure the server's OPENAI_API_KEY first.", 503);
-      const form = await readForm(formId), settings = normalizeAiReview(form.aiReview, true);
+      const form = await freshForm(formId), settings = normalizeAiReview(form.aiReview, true);
       if (input?.revision !== (form.aiRevision ?? 0)) fail("The scoring guide changed. Reload before starting a review.", 409);
       const createdAt = stamp();
       const candidates = await scan(db.collection("careerApplications").where("formId", "==", formId).where("createdAt", "<=", createdAt), ["versionId", "status", "createdAt"]);
@@ -67,19 +117,27 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
         if (previous && activeStates.includes(previous.state)) fail("A review is already queued or running for this opening.", 409);
         tx.set(runRef(id), { formId, settings, members, processed: 0, state: "queued", createdAt, criteriaRevision: form.aiRevision ?? 0, applicationEditRevision: form.applicationEditRevision ?? 0,
           model: AI_MODEL, promptVersion: AI_PROMPT_VERSION, requestedBy: { id: user.id, displayName: user.displayName ?? user.username ?? "Administrator" },
-          owner: null, leaseUntil: 0, activeItem: null, usage: { inputTokens: 0, outputTokens: 0 } });
+          owner: null, leaseUntil: 0, activeItem: null, previousCompletedRun: latest.aiCompletedRun ?? null, usage: { inputTokens: 0, outputTokens: 0 } });
         tx.update(formRef(formId), { aiActiveRunId: id, aiRunIds: [id, ...(latest.aiRunIds ?? (latest.aiActiveRunId ? [latest.aiActiveRunId] : []))].slice(0, 10) });
       });
+      forms.invalidate(formId);
       notify();
       return { id, state: "queued", total: members.length };
     },
-    async overview(formId, user) {
+    async overview(formId, user, { history = false } = {}) {
       requireAdmin(user);
       const form = await readForm(formId);
       const historyIds = form.aiRunIds ?? (form.aiActiveRunId ? [form.aiActiveRunId] : []);
-      const history = await Promise.all(historyIds.slice(0, 10).map(id => runRef(id).get()));
+      const selected = historyIds.slice(0, history ? 10 : 1);
+      const runs = await Promise.all(selected.map(async id => summary(id, await readJob(id))));
       return { ...this.configuration(), criteriaRevision: form.aiRevision ?? 0, hasCriteria: Boolean(form.aiReview?.brief && form.aiReview?.criteria.length),
-        runs: history.filter(doc => doc.exists).map(doc => summary(doc.id, doc.data())), completedRun: form.aiCompletedRun ?? null };
+        runs: runs.filter(Boolean), hasHistory: historyIds.length > 1, completedRun: form.aiCompletedRun ?? null };
+    },
+    async runStatus(formId, runId, user) {
+      requireAdmin(user);
+      const run = await readJob(runId);
+      if (!run || run.formId !== identifier(formId)) fail("Review run not found.", 404);
+      return { run: summary(runId, run), completedRun: run.state === "completed" ? { id: runId, total: run.members.length, completedAt: run.completedAt, criteriaRevision: run.criteriaRevision } : run.previousCompletedRun ?? null };
     },
     async cancel(formId, runId, user) {
       requireAdmin(user);
@@ -89,38 +147,33 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
         if (!activeStates.includes(run.state)) fail("This review has already finished.", 409);
         tx.update(reference, { state: "cancelled", activeItem: null, leaseUntil: 0, completedAt: stamp(), error: "Cancelled by an administrator. An in-flight request may still be billed." });
       });
+      jobs.invalidate(runId);
+      forms.invalidate(formId);
       return { cancelled: true };
     },
-    async decorate(items) {
-      const forms = new Map();
-      await Promise.all([...new Set(items.map(item => item.formId))].map(async id => forms.set(id, (await formRef(id).get()).data() ?? {})));
+    async decorate(items, { full = false } = {}) {
+      const openingForms = new Map();
+      await Promise.all([...new Set(items.map(item => item.formId))].map(async id => openingForms.set(id, await readForm(id))));
       return Promise.all(items.map(async item => {
-        const form = forms.get(item.formId), completed = form.aiCompletedRun;
+        const form = openingForms.get(item.formId), completed = form.aiCompletedRun;
         if (!completed || item.status === "withdrawn") return { ...item, aiReview: null };
-        const result = (await scoreRef(completed.id, item.id).get()).data();
+        const result = full ? await details.get(`${completed.id}/${item.id}`, async () => (await scoreRef(completed.id, item.id).get()).data()) : await rowBadge(completed, item.id);
         const current = result && (result.submissionRevision ?? 1) === (item.submissionRevision ?? 1);
         return { ...item, aiReview: current ? { ...result, runId: completed.id, reviewedAt: completed.completedAt, criteriaChanged: completed.criteriaRevision !== (form.aiRevision ?? 0) } : null };
       }));
     },
     async scoreIndex(formId) {
-      const form = await readForm(formId), scores = new Map();
-      if (!form.aiCompletedRun) return { runId: null, scores };
-      let cursor;
-      while (true) {
-        let query = db.collection(`careerAiRuns/${form.aiCompletedRun.id}/careerAiScores`).orderBy("__name__", "asc").select("qualityScore", "relativeScore", "rank", "submissionRevision").limit(500);
-        if (cursor) query = query.startAfter(cursor);
-        const result = await query.get();
-        for (const doc of result.docs) scores.set(doc.id, doc.data());
-        if (result.docs.length < 500) break;
-        cursor = result.docs.at(-1).ref.path;
-      }
-      return { runId: form.aiCompletedRun.id, scores };
+      const form = await readForm(formId);
+      return { runId: form.aiCompletedRun?.id ?? null, scores: form.aiCompletedRun ? await completedIndex(form.aiCompletedRun) : new Map() };
     },
     async workNext({ owner, signal } = {}) {
       if (!provider.enabled || signal?.aborted) return false;
-      const available = await db.collection("careerAiRuns").where("state", "in", activeStates).limit(100).get();
-      const candidate = available.docs.filter(doc => { const run = doc.data(); return run.state === "queued" || run.owner === owner || run.leaseUntil <= now(); })
-        .sort((a, b) => a.data().createdAt.localeCompare(b.data().createdAt))[0];
+      let candidate = claimedRuns.has(owner) ? { id: claimedRuns.get(owner) } : null;
+      if (!candidate) {
+        const available = await db.collection("careerAiRuns").where("state", "in", activeStates).limit(100).get();
+        candidate = available.docs.filter(doc => { const run = doc.data(); return run.state === "queued" || run.owner === owner || run.leaseUntil <= now(); })
+          .sort((a, b) => a.data().createdAt.localeCompare(b.data().createdAt))[0];
+      }
       if (!candidate) return false;
       const reference = runRef(candidate.id);
       const claimed = await db.runTransaction(async tx => {
@@ -135,14 +188,15 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
         tx.update(reference, { state: "running", owner, leaseUntil: now() + LEASE_MS });
         return run;
       });
-      if (!claimed) return true;
+      if (!claimed) { claimedRuns.delete(owner); return true; }
+      claimedRuns.set(owner, candidate.id);
       try {
         const applicationId = claimed.members[claimed.processed];
         if (applicationId) {
           if (signal?.aborted) return false;
           const application = (await db.doc(`careerApplications/${applicationId}`).get()).data();
           if (!application || application.status === "withdrawn" || application.formId !== claimed.formId) throw new Error("The applicant pool changed during the review. Start a fresh review to use the current applications.");
-          const form = (await db.doc(`careerFormVersions/${application.versionId}`).get()).data();
+          const form = await version(application.versionId);
           if (!form || form.formId !== claimed.formId) throw new Error("The original form version could not be loaded. No new ranking was applied.");
           const input = assessmentInput(form, application, claimed.settings), imageInputs = [];
           for (const q of form.questions) if (q.image) imageInputs.push({ questionId: q.id, url: await images.image(q.image.id, { role: "dev" }) });
@@ -155,6 +209,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
             tx.update(reference, { processed: run.processed + 1, activeItem: null, leaseUntil: now() + LEASE_MS,
               usage: { inputTokens: run.usage.inputTokens + (response.usage?.inputTokens ?? 0), outputTokens: run.usage.outputTokens + (response.usage?.outputTokens ?? 0) } });
           });
+          jobs.invalidate(candidate.id);
           return true;
         }
         const results = [];
@@ -185,8 +240,14 @@ export function createCareerAiService(db, { provider, images, now = Date.now } =
           tx.update(reference, { state: "completed", completedAt, leaseUntil: 0 });
           tx.update(formRef(run.formId), { aiCompletedRun: { id: candidate.id, criteriaRevision: run.criteriaRevision, completedAt, total: run.members.length } });
         });
+        await indexes.set(candidate.id, ranked.map(({ id, qualityScore, relativeScore, rank, poolSize, submissionRevision }) => [id, { qualityScore, relativeScore, rank, poolSize, submissionRevision }]));
+        forms.invalidate(claimed.formId);
+        jobs.invalidate(candidate.id);
+        claimedRuns.delete(owner);
         return true;
       } catch (error) {
+        claimedRuns.delete(owner);
+        jobs.invalidate(candidate.id);
         if (error.code === "AI_LEASE_LOST") return true;
         await db.runTransaction(async tx => {
           const run = (await tx.get(reference)).data();

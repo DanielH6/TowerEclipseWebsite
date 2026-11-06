@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "../AuthContext";
+import { isBugStaff } from "../roles";
 import { loadPublishedUpdate } from "../api";
 import { Link, useParams } from "../router";
 import type { GameUpdate, UpdateEntry, UpdateEntryImage, UpdateImage } from "../types";
@@ -70,6 +72,7 @@ function UpdateEntryView({ entry, onOpen }: { entry: UpdateEntry; onOpen: (image
 }
 
 export default function UpdateDetailsPage() {
+  const { auth } = useAuth();
   const { updateId = "" } = useParams<{ updateId: string }>();
   const [update, setUpdate] = useState<GameUpdate | null>(null);
   const [viewer, setViewer] = useState<UpdateImage | null>(null);
@@ -210,7 +213,7 @@ export default function UpdateDetailsPage() {
         </div>}
       </article>
 
-      {!!update.linkedReports?.length && <section className="panel-card workflow-panel"><h3>RELATED BUG REPORTS</h3><ul>{update.linkedReports.map(link => <li key={link.id}><p>{link.summary}</p><Link to={`/bugs/${link.id}`}>{link.displayId ?? "View original report"} →</Link></li>)}</ul></section>}
+      {!!update.linkedReports?.length && <section className="panel-card workflow-panel"><h3>RELATED BUG REPORTS</h3><ul>{update.linkedReports.map(link => <li key={link.id}><p>{link.summary}</p>{isBugStaff(auth?.user.role) && <Link to={`/bugs/${link.id}`}>{link.displayId ?? "View original report"} →</Link>}</li>)}</ul></section>}
 
       {viewer?.downloadUrl && (
         <div className="update-image-viewer-backdrop" role="presentation" onMouseDown={(event) => {

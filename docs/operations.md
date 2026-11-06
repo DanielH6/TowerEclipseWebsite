@@ -72,3 +72,9 @@ Firestore’s read-time reads are limited to the recent retention window; this t
 - Production build and 97 automated tests passed. Disposable local browser checks covered QA onboarding persistence, saved queues, related suggestions, an older report among 1,205 submissions, the admin overview/editor, and member access restrictions.
 - The read-only live index check found `websiteAccounts.verifiedRole` and `updates.linkedReportIds` overrides missing. Applying additions failed with HTTP 403 because the configured service account cannot manage indexes. No index addition succeeded. Run `npm run db:indexes -- --apply` using an identity authorized to manage database indexes, then `npm run db:indexes -- --require-ready` before release.
 - No separate staging environment exists. Live staging role/upload tests and a real cloud restore have not run; attachment and restore tests used disposable local fixtures. No website deployment was performed.
+
+## Firestore read reduction rollout
+
+Use [the 44-item implementation register](firestore-read-implementation.md) for source coverage, validation, cache/consistency limits and the additive `--only-read-optimizations` index procedure. Reports, console evidence, exports and history are now staff-only at the server boundary. Public news uses reviewed summaries and cannot serve raw private report descriptions automatically.
+
+A Developer can open **Admin → Database read usage** without a Firestore query; metrics are local estimates since process startup. Operational logs emit aggregate read/cache/retry statistics every 15 minutes. Reconcile these with complete Cloud Monitoring/billing windows across every running process before claiming a daily quota target. Shared public artifact invalidation requires the same persistent `LOCAL_CACHE_DIR` across sibling workers; distinct hosts use bounded TTL revalidation.

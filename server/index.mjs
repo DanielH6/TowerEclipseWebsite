@@ -61,8 +61,11 @@ import {
   createTournamentPublicRouter,
 } from "./tournament-routes.mjs";
 import { createAdminUpdateRouter, createPublicUpdateRouter } from "./updates.mjs";
+import { readMetricsMiddleware, readMetricsSnapshot, startReadMetricsReporting } from "./read-metrics.mjs";
+import { publicReadPolicy, createPublicReadLimiter } from "./public-read-policy.mjs";
 
 const app = express();
+startReadMetricsReporting();
 const robloxStats = createRobloxStatsService(config.roblox);
 
 let firestoreState = "initializing";
@@ -136,10 +139,7 @@ app.use(
 
 app.use(express.json({ limit: "768kb" }));
 
-app.use("/api", (_request, response, next) => {
-  response.setHeader("Cache-Control", "no-store");
-  next();
-});
+app.use("/api", readMetricsMiddleware, publicReadPolicy, createPublicReadLimiter());
 
 const { authStartLimiter, callbackLimiter } = createAuthRateLimiters(config.authTraffic);
 
@@ -223,6 +223,7 @@ app.get("/api/health", (_request, response) => {
 });
 
 app.get("/api/admin/auth-traffic", requireAuth, requireRole("dev"), authTrafficDiagnostics(config.authTraffic));
+app.get("/api/admin/read-metrics", requireAuth, requireRole("dev"), (_request, response) => response.json(readMetricsSnapshot()));
 
 app.get("/api/roblox/stats", async (_request, response) => {
   try {
@@ -449,7 +450,7 @@ const careers = createCareersService(db);
 const careerAiWorker = createCareerAiWorker({ service: careers.ai, ready: () => firestoreReadyPromise, report: message => console.log(message) });
 app.use("/api/careers", requireFirestoreReady, createCareersRouter({ service: careers }));
 app.use("/api/list", requireFirestoreReady, createAchievementListRouter({ service: createAchievementListService(db) }));
-app.use("/api/bugs", requireFirestoreReady, createBugRouter());
+app.use("/api/bugs", requireFirestoreReady, createBugRouter({ onContribution: (before, after) => accounts.recordReportContribution(before, after), onChange: change => accounts.invalidateReports(change) }));
 app.use("/api/admin/updates", requireFirestoreReady, createAdminUpdateRouter());
 app.use("/api/updates", requireFirestoreReady, createPublicUpdateRouter());
 app.use("/api/tournaments", requireFirestoreReady, createTournamentPublicRouter());

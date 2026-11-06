@@ -94,14 +94,14 @@ The existing R2 credentials and CORS policy are reused for update images.
 
 ## Firestore read protection
 
-Dictionaries are cached persistently on the backend machine. Bug lists now read the complete collection in bounded Firestore pages at a signed snapshot timestamp; they do not use the old disk report cache.
+Dictionaries are cached persistently on the backend machine. Bug reports are staff-only. Ordinary lists use 51-row Firestore cursor pages at a signed snapshot timestamp; complex filters, complete search and exports reuse a bounded compressed corpus without a historical result cap. Read metrics and all 44 approved changes are described in [the implementation register](docs/firestore-read-implementation.md).
 
 - `dictionaries.json` contains all dynamic dictionary entries;
 - legacy `bug-reports.json` files are ignored; `/api/bugs` has no 1,000-report ceiling;
 - dictionary mutations update the local dictionary cache; fresh bug snapshots read current database data;
 - list/export dictionary labels are read at the same snapshot time as reports; detail pages use the current dictionary catalog;
-- public update lists/details remain cached in memory for 60 seconds;
-- live tournament polling is once per minute and public tournament responses are cached for 90 seconds;
+- public news uses a complete durable manifest with cursor/search pagination, publication invalidation and bounded TTLs;
+- live tournament polling pauses in hidden tabs and stops when the event finishes; public responses and slug/negative lookups are cached;
 - normal server startup performs one read-only Firestore connectivity check.
 
 By default the files are written under:
@@ -149,7 +149,7 @@ The persistent dictionary/bug cache is designed for one active Node backend. If 
 
 Public Roblox launch instructions, production environment values, and policy review details are in [Roblox public launch](docs/roblox-public-launch.md). The public operator/contact details are in `src/content/legalContent.tsx`; the prepared policies use Eclipse Development Studio, Australia, and contact@towereclipse.com.
 
-`/login` remains the Account navigation destination. Discord sign-in now returns to this account home instead of redirecting to the public bug list. All Discord members receive a profile and Connections section; QA Testers, PEN Testers, QA Leads, and Developers (including the existing Discord Admin mapping) also receive personal reports, activity, statistics, and a contribution calendar.
+`/login` remains the Account navigation destination. Discord sign-in now returns to this account home instead of redirecting to the staff bug list. All Discord members receive a profile and Connections section; QA Testers, PEN Testers, QA Leads, and Developers (including the existing Discord Admin mapping) also receive personal reports, activity, statistics, and a contribution calendar.
 
 The dashboard uses the existing website Firestore project. It does not read or write the Tower Eclipse player-data mirror. Roblox identity linking uses Roblox OAuth with `openid profile`; see [Roblox linking setup](docs/roblox-account-linking.md) to register the app and enable the flow. Personal game statistics remain a future feature.
 
@@ -212,8 +212,8 @@ Read [Careers setup and operating guide](docs/careers.md) before launch. It incl
 ### Bug export and tester overview (September 2026)
 
 - **Bug Reports → Export Data** exports all applied-filter matches across pages as formatted JSON, with copy, select-text, and download options. It uses the same hydrated dictionary values and public filter function as the table. Unfinished uploads are excluded. Public comments and ready attachment metadata/links are included; internal developer notes are not. No data is sent to an AI provider. Attachment URLs may expire and file binaries are not bundled.
-- The list and export now cover all submitted reports. Pages, dictionaries, comments and attachment metadata use a signed Firestore read-time snapshot valid for 45 minutes. Refresh Data creates a new snapshot. Exports are limited to three requests per minute per IP and fail rather than returning a partial file. This public export is not a full private database backup.
-- **Admin → Tester Overview** lists connected profiles last verified as QA Tester, PEN Tester or QA Lead, searchable by identity and rank. Each account has a viewer for all-time paginated report history, rolling submission totals, and the most recent 30 updates on its reports. Directory output is capped at 500 per rank with an explicit incomplete-results notice.
+- The list and export now cover all submitted reports. Pages, dictionaries, comments and attachment metadata use a signed Firestore read-time snapshot valid for 45 minutes. Refresh Data creates a new snapshot. Exports are limited to three requests per minute per IP and fail rather than returning a partial file. This staff-only export is not a full private database backup.
+- **Admin → Tester Overview** lists connected profiles last verified as QA Tester, PEN Tester or QA Lead, searchable by identity and rank. Each account has a viewer for all-time paginated report history, rolling submission totals, and the most recent 30 updates on its reports. Directory browsing uses 50-row cursors, while complete name/username/ID search uses a bounded cached index; report pages load independently from the tester header.
 - The roster is a last-verified snapshot, not a live Discord membership or online-status list. Existing profiles populate after login, auth refresh, or opening Account. A newer verified rank supersedes the stored rank; an older session cannot roll it back. No OAuth credentials, Roblox connections, or notification-read markers are returned in directory rows.
 - Deploy the checked-in `websiteAccounts.verifiedRole` field index before using the directory and `updates.linkedReportIds` array index (`npm run db:indexes -- --apply`, then `npm run db:indexes -- --require-ready` until ready). Existing report/activity indexes are reused. No report-data migration or Discord bot permission is required.
 
@@ -240,3 +240,9 @@ Read [Careers setup and operating guide](docs/careers.md) before launch. It incl
 - Edits are unpublished until **Publish List**. **Reload Published** discards local edits after confirmation. Concurrent publications return a conflict instead of overwriting another admin’s work. The editor warns before closing or following navigation links with unpublished changes; drafts are not stored on the server.
 - Each publication automatically records added/removed achievements, all field edits, and every rank shift, with before/after values, timestamp, admin display name, and an optional public explanation (500 characters). The log is append-only through the API, stored in `achievementListChanges` in the same transaction as the rankings. No-op saves do not create revisions or logs. History begins with publications made after this feature is installed; old edits are not reconstructed. The public history API (`GET /api/list/history?before=<cursor>`) returns 10 publications at a time, ordered using Firestore’s built-in document ID index.
 - The server stores the complete ordered list, stable achievement IDs, revision, and last editor in `achievementLists/main`. Publication uses a Firestore transaction; public responses exclude the last editor. No additional composite indexes, migration, or seeded rankings are needed. Deploy `shared/` alongside `server/` and the frontend build. Player completions, points, and leaderboards are not part of this version.
+
+### Read reduction rollout
+
+The approved implementation includes report privacy, application drafts, bounded shared caches, query pagination, maintained contribution summaries, reduced AI polling, and read diagnostics. Apply and verify the new index families with `npm run db:indexes -- --only-read-optimizations --apply` followed by `npm run db:indexes -- --only-read-optimizations --require-ready`. Keep `LOCAL_CACHE_DIR` writable and persistent; sibling workers need the same volume to share artifact generation markers. Private APIs remain no-store. Only successful anonymous allowlisted public content receives short HTTP caching.
+
+Developer metrics are available from **Admin → Database read usage** and `/api/admin/read-metrics`, with aggregate process logging every 15 minutes. These estimates reset per process and do not replace project-wide billing/monitoring. See [the full implementation and validation register](docs/firestore-read-implementation.md) for cold-read costs, cache consistency boundaries, and rollout checks.

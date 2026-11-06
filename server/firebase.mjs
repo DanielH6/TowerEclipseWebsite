@@ -1,6 +1,7 @@
 import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Timestamp } from "./firestore-timestamp.mjs";
+import { recordReadMetric } from "./read-metrics.mjs";
 export { Timestamp } from "./firestore-timestamp.mjs";
 
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
@@ -101,7 +102,7 @@ async function apiRequest(url, { method = "GET", body, allowNotFound = false, si
     ...(signal ? { signal } : {}),
   });
 
-  if (allowNotFound && response.status === 404) return null;
+  if (allowNotFound && response.status === 404) { recordReadMetric({ lookups: 1, missingDocuments: 1, estimatedReadFloor: 1 }); return null; }
   if (!response.ok) {
     const text = await response.text();
     let parsed;
@@ -113,7 +114,15 @@ async function apiRequest(url, { method = "GET", body, allowNotFound = false, si
   }
   if (response.status === 204) return null;
   const text = await response.text();
-  return text ? JSON.parse(text) : null;
+  const result = text ? JSON.parse(text) : null;
+  const pathname = new URL(url).pathname;
+  if (allowNotFound && method === "GET") recordReadMetric({ lookups: 1, documents: result ? 1 : 0, estimatedReadFloor: 1 });
+  else if (pathname.endsWith(":runAggregationQuery")) recordReadMetric({ aggregations: 1, estimatedReadFloor: 1 });
+  else if (pathname.endsWith(":runQuery") || Array.isArray(result?.documents)) {
+    const count = Array.isArray(result) ? result.filter(item => item.document).length : result.documents.length;
+    recordReadMetric({ queries: 1, documents: count, emptyQueries: count ? 0 : 1, estimatedReadFloor: Math.max(1, count) });
+  } else if (pathname.endsWith(":listCollectionIds")) recordReadMetric({ queries: 1, estimatedReadFloor: 1 });
+  return result;
 }
 
 function encodePath(path) {
@@ -304,9 +313,11 @@ class DocumentReference {
     return new CollectionReference(`${this.path}/${name}`);
   }
 
-  async get({ signal, budget } = {}) {
+  async get({ signal, budget, readTime } = {}) {
     budget?.read();
-    const document = await apiRequest(documentUrl(this.path), { allowNotFound: true, signal, budget });
+    const url = new URL(documentUrl(this.path));
+    if (readTime) url.searchParams.set("readTime", readTime);
+    const document = await apiRequest(url.toString(), { allowNotFound: true, signal, budget });
     return new DocumentSnapshot(this, document);
   }
 
@@ -582,8 +593,9 @@ export const db = {
       } catch (error) {
         lastError = error;
         await rollbackTransaction(id);
-        const retryable = error?.status === 409 || error?.code === "ABORTED";
+        const retryable = error?.code === "ABORTED" || (error instanceof FirestoreRestError && error.status === 409);
         if (!retryable || attempt === 4) throw error;
+        recordReadMetric({ retries: 1 });
         await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** attempt));
       }
     }

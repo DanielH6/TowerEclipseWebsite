@@ -22,7 +22,7 @@ function fixture(initial = {}) {
       async get() {
         calls.reads++;
         let rows = [...records.entries()].filter(([path, data]) => (group ? path.split("/").at(-2) === collection : path.split("/").slice(0, -1).join("/") === collection)
-          && filters.every(([key, op, value]) => { const actual = field(data, key); return op === "==" ? actual === value : op === ">=" ? actual >= value : actual <= value; }));
+          && filters.every(([key, op, value]) => { const actual = field(data, key); return op === "in" ? value.includes(actual) : op === "==" ? actual === value : op === ">=" ? actual >= value : actual <= value; }));
         rows.sort((a, b) => {
           for (const [key, direction] of orders) { const av = key === "__name__" ? a[0] : field(a[1], key); const bv = key === "__name__" ? b[0] : field(b[1], key); const diff = av < bv ? -1 : av > bv ? 1 : 0; if (diff) return direction === "desc" ? -diff : diff; } return 0;
         });

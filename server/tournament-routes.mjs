@@ -1,4 +1,6 @@
+import { signedPublicCacheTtlMs } from "./public-cache-lifetime.mjs";
 import crypto from "node:crypto";
+import { createTournamentReadModel } from "./tournament-read-model.mjs";
 import express from "express";
 import { db } from "./firebase.mjs";
 import {
@@ -38,15 +40,8 @@ const tournamentPublicCacheTtlMs = Math.max(
   5_000,
   Number(process.env.FIRESTORE_TOURNAMENT_CACHE_TTL_SECONDS ?? 90) * 1000,
 );
-let publicTournamentListCache = null;
-let publicTournamentListCacheExpiresAt = 0;
-const publicTournamentDetailCache = new Map();
-
-function invalidatePublicTournamentCache() {
-  publicTournamentListCache = null;
-  publicTournamentListCacheExpiresAt = 0;
-  publicTournamentDetailCache.clear();
-}
+const publicTournaments = createTournamentReadModel({ db, presentSummary: presentTournamentSummary, presentDetail: presentPublicTournament, ttlMs: signedPublicCacheTtlMs(tournamentPublicCacheTtlMs, attachmentStoragePolicy().downloadUrlTtlSeconds) });
+function invalidatePublicTournamentCache() { publicTournaments.invalidate(); }
 
 function forwardError(error, next) {
   if (error instanceof TournamentError) {
@@ -60,12 +55,7 @@ function tournamentFromSnapshot(snapshot) {
   return { ...snapshot.data(), id: snapshot.id };
 }
 
-async function findTournament(identifier) {
-  const direct = await db.doc(`tournaments/${identifier}`).get();
-  if (direct.exists) return direct;
-  const slugMatches = await db.collection("tournaments").where("slug", "==", identifier).limit(1).get();
-  return slugMatches.docs[0] ?? null;
-}
+async function findTournament(identifier) { return publicTournaments.find(identifier); }
 
 async function ensureSlugAvailable(slug, exceptId = null) {
   const matches = await db.collection("tournaments").where("slug", "==", slug).limit(2).get();
@@ -124,58 +114,24 @@ async function mutateTournament(tournamentId, transform) {
 
 export function createTournamentPublicRouter() {
   const router = express.Router();
-
   router.get("/", async (_request, response, next) => {
-    try {
-      if (publicTournamentListCache && Date.now() < publicTournamentListCacheExpiresAt) {
-        response.json({ tournaments: publicTournamentListCache });
-        return;
-      }
-
-      const tournaments = (await loadAllTournaments())
-        .filter((tournament) => tournament.published && tournament.status !== "archived")
-        .map(presentTournamentSummary);
-      publicTournamentListCache = tournaments;
-      publicTournamentListCacheExpiresAt = Date.now() + tournamentPublicCacheTtlMs;
-      response.json({ tournaments });
-    } catch (error) {
-      forwardError(error, next);
-    }
+    try { if (attachmentStoragePolicy().downloadUrlTtlSeconds > 0 && attachmentStoragePolicy().downloadUrlTtlSeconds < 120) response.setHeader("Cache-Control", "no-store"); response.json({ tournaments: await publicTournaments.list() }); }
+    catch (error) { forwardError(error, next); }
   });
-
   router.get("/:identifier", optionalAuth, async (request, response, next) => {
     try {
-      const developerPreview = request.authSession?.role === "dev";
-      if (!developerPreview) {
-        const cached = publicTournamentDetailCache.get(request.params.identifier);
-        if (cached && Date.now() < cached.expiresAt) {
-          response.json({ tournament: cached.tournament });
-          return;
-        }
+      if (request.authSession?.role === "dev") {
+        response.setHeader("Cache-Control", "private, no-store");
+        const doc = await findTournament(request.params.identifier), value = doc ? tournamentFromSnapshot(doc) : null;
+        if (!value) return response.status(404).json({ error: "Tournament not found." });
+        return response.json({ tournament: presentAdminTournament(value) });
       }
-
-      const snapshot = await findTournament(request.params.identifier);
-      const tournament = snapshot ? tournamentFromSnapshot(snapshot) : null;
-      if (!tournament || ((!tournament.published || tournament.status === "archived") && !developerPreview)) {
-        response.status(404).json({ error: "Tournament not found." });
-        return;
-      }
-
-      const presented = developerPreview
-        ? presentAdminTournament(tournament)
-        : presentPublicTournament(tournament);
-      if (!developerPreview) {
-        publicTournamentDetailCache.set(request.params.identifier, {
-          tournament: presented,
-          expiresAt: Date.now() + tournamentPublicCacheTtlMs,
-        });
-      }
-      response.json({ tournament: presented });
-    } catch (error) {
-      forwardError(error, next);
-    }
+      if (attachmentStoragePolicy().downloadUrlTtlSeconds > 0 && attachmentStoragePolicy().downloadUrlTtlSeconds < 120) response.setHeader("Cache-Control", "no-store");
+      const tournament = await publicTournaments.detail(request.params.identifier);
+      if (!tournament) return response.status(404).json({ error: "Tournament not found." });
+      response.json({ tournament });
+    } catch (error) { forwardError(error, next); }
   });
-
   return router;
 }
 

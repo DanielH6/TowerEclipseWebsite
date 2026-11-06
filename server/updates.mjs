@@ -1,5 +1,8 @@
+import { signedPublicCacheTtlMs } from "./public-cache-lifetime.mjs";
 import { normalizeReportLinks } from "./bug-workflow.mjs";
 import { randomUUID } from "node:crypto";
+import { createDurableReadCache } from "./durable-read-cache.mjs";
+import { createNewsReadModel, publicNewsFields } from "./news-read-model.mjs";
 import express from "express";
 import { FieldValue, Timestamp, db } from "./firebase.mjs";
 import {
@@ -33,15 +36,19 @@ const publicUpdateCacheTtlMs = Math.max(
   5_000,
   Number(process.env.FIRESTORE_PUBLIC_UPDATE_CACHE_TTL_SECONDS ?? 60) * 1000,
 );
-let publicUpdateListCache = null;
-let publicUpdateListCacheExpiresAt = 0;
-const publicUpdateDetailCache = new Map();
-
-function invalidatePublicUpdateCache(updateId = null) {
-  publicUpdateListCache = null;
-  publicUpdateListCacheExpiresAt = 0;
-  if (updateId) publicUpdateDetailCache.delete(updateId);
-  else publicUpdateDetailCache.clear();
+const publicImageMetadata = createDurableReadCache({ name: "published-news-image-metadata-v2", ttlMs: 24 * 60 * 60_000, maxEntries: 2000, maxBytes: 8 * 1024 * 1024 });
+const newsArtifactTtlMs = signedPublicCacheTtlMs(300_000, updateImageStoragePolicy().downloadUrlTtlSeconds);
+const publicUpdates = createNewsReadModel({ db, cache: createDurableReadCache({ name: "public-news-v3", ttlMs: newsArtifactTtlMs, maxBytes: 16 * 1024 * 1024, maxEntries: 150 }), detailTtlMs: Math.min(60_000, newsArtifactTtlMs), hydrateSummary: document => hydrateUpdateSummary(document), hydrateDetail: document => hydrateUpdate(document) });
+function invalidatePublicUpdateCache() { publicUpdates.invalidate(); publicImageMetadata.invalidate(); }
+async function publicImage(reference, id, materialized = null) {
+  if (!id) return null;
+  const value = materialized?.id === id ? materialized : await publicImageMetadata.get(`${reference.id}:${id}`, async () => {
+    const doc = await reference.collection("images").doc(id).get();
+    if (!doc.exists || doc.data().status !== "ready") return null;
+    const data = serializeDocument(doc);
+    return { id: doc.id, objectKey: data.objectKey, originalName: data.originalName, contentType: data.contentType, size: data.size, status: "ready", createdAt: data.createdAt, uploadedAt: data.uploadedAt ?? null };
+  });
+  return value ? { id: value.id, ref: { path: `${reference.path}/images/${value.id}` }, data: () => value } : null;
 }
 
 const SECTION_DEFINITIONS = Object.freeze([
@@ -232,8 +239,9 @@ async function readyImages(reference, imageIds = null) {
   );
 }
 
-function serializeImageDocument(document) {
-  const value = serializeDocument(document);
+function serializeImageDocument(document, includePrivate = true) {
+  const stored = serializeDocument(document);
+  const value = includePrivate ? stored : { id: stored.id, objectKey: stored.objectKey, originalName: stored.originalName, contentType: stored.contentType, size: stored.size, status: "ready", createdAt: stored.createdAt, uploadedAt: stored.uploadedAt ?? null };
   const { objectKey, ...publicValue } = value;
   const policy = updateImageStoragePolicy();
   return {
@@ -245,15 +253,16 @@ function serializeImageDocument(document) {
 }
 
 async function hydrateUpdate(document, { includeDraft = false } = {}) {
-  const value = serializeDocument(document);
-  if (!includeDraft && value.status !== "published") return null;
-  const images = await readyImages(document.ref, collectImageIds(value));
+  const stored = serializeDocument(document);
+  if (!includeDraft && stored.status !== "published") return null;
+  const value = includeDraft ? stored : publicNewsFields(stored, document.id);
+  const images = includeDraft ? await readyImages(document.ref, collectImageIds(value)) : new Map((await Promise.all([...collectImageIds(value)].map(async id => [id, await publicImage(document.ref, id, stored.publicCover)]))).filter(([, image]) => image));
   let figureNumber = 0;
 
   const hydrateImage = (imageId) => {
     if (!imageId) return null;
     const image = images.get(imageId);
-    return image ? serializeImageDocument(image) : null;
+    return image ? serializeImageDocument(image, includeDraft) : null;
   };
 
   const sections = (value.sections ?? defaultSections()).map((section) => ({
@@ -299,22 +308,15 @@ async function hydrateUpdate(document, { includeDraft = false } = {}) {
 }
 
 async function hydrateUpdateSummary(document, { includeDraft = false } = {}) {
-  const value = serializeDocument(document);
-  if (!includeDraft && value.status !== "published") return null;
-
+  const stored = serializeDocument(document);
+  if (!includeDraft && stored.status !== "published") return null;
+  const value = includeDraft ? stored : publicNewsFields(stored, document.id, { summary: true });
   let coverImage = null;
   if (value.coverImageId) {
-    const snapshot = await document.ref.collection("images").doc(value.coverImageId).get();
-    if (snapshot.exists && snapshot.data().status === "ready") {
-      coverImage = serializeImageDocument(snapshot);
-    }
+    if (includeDraft) { const image = await document.ref.collection("images").doc(value.coverImageId).get(); if (image.exists && image.data().status === "ready") coverImage = serializeImageDocument(image); }
+    else { const image = await publicImage(document.ref, value.coverImageId, stored.publicCover); if (image) coverImage = serializeImageDocument(image, false); }
   }
-
-  return {
-    ...value,
-    coverImage,
-    imagePolicy: updateImageStoragePolicy(),
-  };
+  return { ...value, coverImage, imagePolicy: updateImageStoragePolicy() };
 }
 
 async function validateReferencedImages(reference, update) {
@@ -425,48 +427,13 @@ function archiveTime(update) {
   return new Date(value).getTime();
 }
 
-async function listPublishedUpdates(_request, response, next) {
-  try {
-    const now = Date.now();
-    if (publicUpdateListCache && now < publicUpdateListCacheExpiresAt) {
-      response.json({ updates: publicUpdateListCache });
-      return;
-    }
-
-    const snapshot = await db.collection("updates").where("status", "==", "published").limit(100).get();
-    const updates = (await Promise.all(snapshot.docs.map((document) => hydrateUpdateSummary(document))))
-      .filter(Boolean)
-      .sort((left, right) => archiveTime(right) - archiveTime(left));
-    publicUpdateListCache = updates;
-    publicUpdateListCacheExpiresAt = Date.now() + publicUpdateCacheTtlMs;
-    response.json({ updates });
-  } catch (error) {
-    next(error);
-  }
+async function listPublishedUpdates(request, response, next) {
+  try { if (updateImageStoragePolicy().downloadUrlTtlSeconds > 0 && updateImageStoragePolicy().downloadUrlTtlSeconds < 120) response.setHeader("Cache-Control", "no-store"); response.json(await publicUpdates.list(request.query)); }
+  catch (error) { next(error); }
 }
-
 async function getPublishedUpdate(request, response, next) {
-  try {
-    const cached = publicUpdateDetailCache.get(request.params.updateId);
-    if (cached && Date.now() < cached.expiresAt) {
-      response.json({ update: cached.update });
-      return;
-    }
-
-    const reference = db.doc(`updates/${request.params.updateId}`);
-    const snapshot = await reference.get();
-    if (!snapshot.exists || snapshot.data().status !== "published") {
-      throw httpError(404, "Update not found.");
-    }
-    const update = await hydrateUpdate(snapshot);
-    publicUpdateDetailCache.set(request.params.updateId, {
-      update,
-      expiresAt: Date.now() + publicUpdateCacheTtlMs,
-    });
-    response.json({ update });
-  } catch (error) {
-    next(error);
-  }
+  try { if (updateImageStoragePolicy().downloadUrlTtlSeconds > 0 && updateImageStoragePolicy().downloadUrlTtlSeconds < 120) response.setHeader("Cache-Control", "no-store"); response.json({ update: await publicUpdates.detail(request.params.updateId) }); }
+  catch (error) { next(error); }
 }
 
 async function listAdminUpdates(_request, response, next) {
@@ -537,6 +504,11 @@ async function saveUpdate(request, response, next) {
       return { ...item, displayId: report.data().displayId };
     }));
     normalized.linkedReportIds = links.map(item => item.id);
+    if (normalized.coverImageId) {
+      const cover = await reference.collection("images").doc(normalized.coverImageId).get();
+      const value = serializeDocument(cover);
+      normalized.publicCover = { id: value.id, objectKey: value.objectKey, originalName: value.originalName, contentType: value.contentType, size: value.size, status: "ready", createdAt: value.createdAt, uploadedAt: value.uploadedAt ?? null };
+    } else normalized.publicCover = null;
 
     const publishingNow = normalized.status === "published" && current.status !== "published" && !current.publishedAt;
     await reference.update({

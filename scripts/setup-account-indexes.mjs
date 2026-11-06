@@ -31,7 +31,7 @@ async function request(url, method = 'GET', body) {
   if (!response.ok) throw new Error(`Index setup failed (${response.status}): ${result.error?.message ?? 'Unknown error'}`);
   return result;
 }
-console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${careersAiOnly ? ' / Careers AI only' : playersOnly ? ' / Player data only' : qaCareersOnly ? ' / QA Careers only' : ''}`);
+console.log(`Website indexes: ${project} / (default) / ${apply ? 'apply additions' : 'read-only check'}${scope === 'read-optimizations' ? ' / Read optimizations only' : careersAiOnly ? ' / Careers AI only' : playersOnly ? ' / Player data only' : qaCareersOnly ? ' / QA Careers only' : ''}`);
 const byCollection = new Map();
 for (const group of new Set(indexesToCheck.map(index => index.collectionGroup))) {
   let pageToken;

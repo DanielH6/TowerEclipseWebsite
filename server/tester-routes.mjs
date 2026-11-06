@@ -4,7 +4,8 @@ import express from "express";
 export function createTesterRouter(service, requireDeveloper) {
   const router = express.Router();
   router.use(requireDeveloper);
-  router.get("/", async (_request, response) => response.json(await service.testers()));
+  router.get("/", async (request, response) => response.json(await service.testers(request.query)));
+  router.get("/:userId/reports", async (request, response) => response.json(await service.testerReports(request.params.userId, request.query)));
   router.get("/:userId", async (request, response) => response.json(await service.tester(request.params.userId, request.query)));
   return router;
 }

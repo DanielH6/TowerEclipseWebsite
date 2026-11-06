@@ -113,6 +113,46 @@ test('PEN Tester has QA bug permissions without approval, private-note or develo
     });
   }
 
+  for (const path of ['/', '/export', '/related?search=private+issue', '/own', '/own?lazy=1', '/own/sections/comments', '/own/sections/developerNotes', '/own/attachments/proof/download']) {
+    for (const role of [undefined, 'member']) {
+      const before = memory.calls.length;
+      assert.equal((await request(path, role)).status, role ? 403 : 401, `Staff-only ${path}`);
+      assert.equal(memory.calls.length, before, 'Denied report reads never reach the database');
+    }
+  }
+  for (const [path, method] of [
+    ['/privacy%2Fcomments', 'GET'], ['/privacy%2Fcomments', 'PATCH'],
+    ['/privacy%2Fcomments/attachments', 'POST'], ['/privacy/attachments/proof%2Fprivate/download', 'GET'],
+    ['/privacy/attachments/proof%2Fprivate', 'DELETE'],
+  ]) {
+    const before = memory.calls.length;
+    assert.equal((await request(path, 'qa', method, method === 'PATCH' ? { description: 'Blocked traversal' } : undefined)).status, 404);
+    assert.equal(memory.calls.length, before, 'Invalid decoded resource IDs are rejected before any database lookup');
+  }
+  memory.documents.set('bugReports/privacy', report('user-qa'));
+  for (let n = 0; n < 125; n++) memory.documents.set(`bugReports/privacy/comments/c${String(n).padStart(3, '0')}`, { body: `Comment ${n}`, createdAt: new Date('2026-11-07T00:00:00Z') });
+  const beforeLazy = memory.calls.length;
+  const lazy = await (await request('/privacy?lazy=1', 'qa')).json();
+  assert.deepEqual(lazy.comments, []); assert.equal(lazy.sections.comments.loaded, false);
+  assert.equal(memory.calls.slice(beforeLazy).some(call => call.path.startsWith('bugReports/privacy/')), false, 'Collapsed sections cost no child reads');
+  const noteReads = memory.calls.length;
+  assert.equal((await request('/privacy/sections/developerNotes', 'qa')).status, 403);
+  assert.equal(memory.calls.length, noteReads, 'Private-note denial happens before report lookup');
+  const missingReads = memory.calls.length;
+  assert.equal((await request('/missing?lazy=1', 'qa')).status, 404);
+  assert.equal(memory.calls.length - missingReads, 1, 'Missing report reads no child collections');
+  const commentIds = new Set(); let commentCursor;
+  do {
+    const result = await (await request(`/privacy/sections/comments${commentCursor ? `?cursor=${encodeURIComponent(commentCursor)}` : ''}`, 'qa')).json();
+    assert.ok(Array.isArray(result.items), JSON.stringify(result));
+    for (const item of result.items) { assert.ok(!commentIds.has(item.id)); commentIds.add(item.id); }
+    commentCursor = result.nextCursor;
+  } while (commentCursor);
+  assert.equal(commentIds.size, 125, 'All tied-date comments remain accessible through section cursors');
+  memory.documents.set('bugReports/privacy/attachments/proof', { status: 'ready', objectKey: 'private/proof', createdAt: new Date() });
+  const proxy = await nativeFetch(base + '/bugs/privacy/attachments/proof/download', { headers: { Cookie: `${SESSION_COOKIE}=${signCookieValue('session-qa')}` }, redirect: 'manual' });
+  assert.equal(proxy.status, 302); assert.equal(proxy.headers.get('location'), 'https://fixture.invalid/private/proof');
+
   assert.equal((await request('/storage-config')).status, 401);
   assert.equal((await request('/storage-config', 'member')).status, 403);
 

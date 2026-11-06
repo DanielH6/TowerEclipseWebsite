@@ -1,3 +1,4 @@
+import { createReadCache } from "./read-cache.mjs";
 import { randomUUID } from "node:crypto";
 import { attachmentStoragePolicy, normalizeAttachmentInput, createAttachmentUploadUrl, createAttachmentDownloadUrl, headAttachmentObject, deleteAttachmentObject } from "./r2.mjs";
 
@@ -6,6 +7,8 @@ const fail = (status, message) => { throw Object.assign(new Error(message), { st
 const validId = value => typeof value === "string" && /^[\w-]{1,64}$/.test(value);
 
 export function createListThumbnailService(db, storage = defaultStorage) {
+  const published = createReadCache({ name: "published-achievement-thumbnails", ttlMs: 60 * 60_000, maxEntries: 1000, maxBytes: 2 * 1024 * 1024 });
+  const pending = new Map();
   const reference = id => {
     if (!validId(id)) fail(400, "Invalid thumbnail ID.");
     return db.doc(`achievementListThumbnails/${id}`);
@@ -16,7 +19,7 @@ export function createListThumbnailService(db, storage = defaultStorage) {
     if (asset.ownerId !== actor?.id) fail(403, "Only the uploading admin can manage this draft thumbnail.");
   };
   return {
-    policy,
+    policy, invalidate() { published.clear(); },
     async begin(input, actor) {
       if (!policy().enabled) fail(503, "Thumbnail uploads are unavailable because image storage is not configured.");
       if (!validId(input?.entryId)) fail(400, "A valid achievement ID is required.");
@@ -57,7 +60,16 @@ export function createListThumbnailService(db, storage = defaultStorage) {
       if (key) await storage.remove(key, { ignoreMissing: true });
     },
     async image(id, actor) {
-      const asset = (await reference(id).get()).data();
+      reference(id);
+      let asset = published.peek(id);
+      if (!asset) {
+        if (!pending.has(id)) {
+          if (pending.size >= 100) fail(503, "Thumbnail requests are busy. Try again shortly.");
+          const work = reference(id).get().then(document => document.data()).finally(() => { if (pending.get(id) === work) pending.delete(id); }); pending.set(id, work);
+        }
+        asset = await pending.get(id);
+        if (asset?.published && asset.state === "ready") published.set(id, { state: asset.state, published: true, objectKey: asset.objectKey });
+      }
       if (!asset || asset.state !== "ready" || (!asset.published && (actor?.role !== "dev" || asset.ownerId !== actor.id))) fail(404, "Thumbnail not found.");
       return storage.download(asset.objectKey);
     },

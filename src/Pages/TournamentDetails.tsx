@@ -24,28 +24,22 @@ export default function TournamentDetailsPage() {
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    let controller: AbortController | undefined;
+    function stopTimer() { if (timer !== undefined) window.clearTimeout(timer); timer = undefined; }
     async function refresh(background = false) {
+      stopTimer();
+      if (document.hidden) return;
       if (!background) setLoading(true);
+      controller?.abort(); controller = new AbortController();
       try {
-        const result = await loadTournament(tournamentSlug ?? "");
-        if (active) {
-          setTournament(result);
-          setError(null);
-          if (result.status === "live" && timer === undefined) {
-            timer = window.setInterval(() => void refresh(true), 60_000);
-          }
-        }
-      } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Could not load this tournament.");
-      } finally {
-        if (active && !background) setLoading(false);
-      }
+        const result = await loadTournament(tournamentSlug ?? "", controller.signal);
+        if (active) { setTournament(result); setError(null); if (result.status === "live") timer = window.setTimeout(() => void refresh(true), 60_000); }
+      } catch (reason) { if (active && !controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load this tournament."); }
+      finally { if (active && !background) setLoading(false); }
     }
-    void refresh();
-    return () => {
-      active = false;
-      if (timer !== undefined) window.clearInterval(timer);
-    };
+    const visible = () => { if (document.hidden) { stopTimer(); controller?.abort(); } else void refresh(true); };
+    document.addEventListener("visibilitychange", visible); void refresh();
+    return () => { active = false; stopTimer(); controller?.abort(); document.removeEventListener("visibilitychange", visible); };
   }, [tournamentSlug]);
 
   const champion = useMemo(

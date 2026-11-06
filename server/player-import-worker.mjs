@@ -1,3 +1,4 @@
+import { withReadMetrics } from "./read-metrics.mjs";
 import { boundedOperation } from "./player-summary-import.mjs";
 import { createImportRunBudget } from "./player-import-budget.mjs";
 import { planDailyImport } from "./player-import-schedule.mjs";
@@ -66,7 +67,7 @@ export function createPlayerImportWorker({ enabled = false, store, loadResources
 
   async function tick() {
     if (!enabled || stopped || active) return;
-    active = work();
+    active = withReadMetrics("background/player-import", work);
     let delay = 60000;
     try {
       delay = await active;

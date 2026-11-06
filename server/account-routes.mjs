@@ -24,6 +24,7 @@ export function createAccountRouter() {
     if (!request.authSession) { response.redirect(303, linkResultUrl("expired")); return; }
     try {
       await robloxLinks.finish(request.authSession, request.query);
+      accounts.invalidateProfile();
       response.redirect(303, linkResultUrl("linked"));
     } catch (error) {
       const allowed = new Set(["cancelled", "expired", "changed", "already_linked", "not_configured"]);
@@ -39,6 +40,7 @@ export function createAccountRouter() {
   router.post("/roblox/start", requireSameOrigin, requireCsrf, async (request, response) => response.json(await robloxLinks.start(request.authSession)));
   router.delete("/roblox", requireSameOrigin, requireCsrf, async (request, response) => {
     await robloxLinks.unlink(request.authSession, request.body?.userId);
+    accounts.invalidateProfile();
     response.sendStatus(204);
   });
   router.use("/testers", createTesterRouter(accounts, requireRole("dev")));

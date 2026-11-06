@@ -11,14 +11,14 @@ test('complete pagination finds old matches beyond 1000 and retains tied timesta
   const fixture = createWorkflowMemoryDb(records); const service = createBugQueryService({ db: fixture.db, snapshots: createSnapshotCodec('test-secret', () => now), batchSize: 200 });
   const old = await service.list({ search: 'old unique' }); assert.equal(old.pagination.total, 1); assert.equal(old.reports[0].id, 'r1204');
   const ids = new Set(); for (let page = 1; page <= 25; page++) { const result = await service.list({ page, snapshot: old.snapshot }); for (const item of result.reports) { assert.ok(!ids.has(item.id)); ids.add(item.id); } }
-  assert.equal(ids.size, 1205); assert.ok(fixture.calls.filter(call => call.path === 'bugReports').every(call => call.maximum === 200));
+  assert.equal(ids.size, 1205); assert.ok(fixture.calls.filter(call => call.path === 'bugReports' && !call.aggregate).every(call => call.maximum <= 200));
 });
 test('snapshot freezes report data across edits, new submissions and deletions and rejects tampering/expiry', async () => {
   let clock = now; const fixture = createWorkflowMemoryDb({ 'bugReports/old': report(10) });
   const codec = createSnapshotCodec('test-secret', () => clock); const service = createBugQueryService({ db: fixture.db, snapshots: codec });
   const first = await service.list({}); fixture.documents.delete('bugReports/old'); fixture.documents.set('bugReports/new', report(0));
   assert.deepEqual((await service.list({ snapshot: first.snapshot })).reports, first.reports);
-  clock += 2000; assert.equal((await service.list({})).reports[0].id, 'new');
+  clock += 2000; assert.equal((await service.list({ fresh: '1' })).reports[0].id, 'new');
   assert.throws(() => codec.read(first.snapshot + 'tamper'), /expired or is invalid/);
   clock += SNAPSHOT_TTL_MS; assert.throws(() => codec.read(first.snapshot), /expired/);
 });

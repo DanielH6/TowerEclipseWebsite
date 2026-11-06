@@ -112,11 +112,19 @@ try {
   assert.equal(stored.internalNotes, "Private assessment remains private");
   assert.match(stored.history.at(-1).feedback, /resubmitt/i);
   assert.equal([...memory.documents.keys()].filter(key => key.startsWith("careerApplications/")).length, 1);
-  assert.deepEqual(resubmissions[0], { revision: original.revision, answers: editedAnswers, consent: true });
+  assert.deepEqual(resubmissions[0], { revision: original.revision, answers: editedAnswers, consent: true, draftRevision: null });
   const applicantDetail = await service.application(submitted.id, member);
   assert.equal(JSON.stringify(applicantDetail).includes("Private assessment remains private"), false);
 
-  await service.review(submitted.id, member, { revision: stored.revision }, true);
+  await page.getByRole("button", { name: "Withdraw application", exact: true }).click();
+  await expect(page.locator(".career-withdraw-confirm")).toContainText("cannot apply again to this same opening");
+  await expect(page.locator(".career-withdraw-confirm")).toContainText("edit and resubmit before the deadline");
+  await page.getByRole("button", { name: "Keep application", exact: true }).click();
+  assert.equal(memory.documents.get(`careerApplications/${submitted.id}`).status, "submitted");
+  await page.getByRole("button", { name: "Withdraw application", exact: true }).click();
+  const withdrawal = page.waitForResponse(response => response.url().endsWith(`/applications/${submitted.id}/withdraw`) && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Confirm withdrawal", exact: true }).click();
+  assert.equal((await withdrawal).status(), 200);
   await page.goto(ownUrl);
   await expect(page.locator(".career-detail-header .career-status")).toHaveText("Withdrawn");
   await expect(editButton()).toHaveCount(0);

@@ -91,6 +91,20 @@ test("Firestore REST adapter encodes scoped range counts, projections, cursors, 
     assert.equal(query.startAt.before, false);
     assert.equal(query.startAt.values[1].referenceValue, "projects/fixture-project/databases/(default)/documents/bugReports/report-a");
     assert.deepEqual(query.select.fields, [{ fieldPath: "displayId" }, { fieldPath: "createdAt" }]);
+    await ownerRef.get({ readTime: "2026-09-14T12:00:00.123Z" });
+    assert.equal(new URL(calls.at(-1).url).searchParams.get("readTime"), "2026-09-14T12:00:00.123Z");
+    let rejectedAttempts = 0;
+    await assert.rejects(db.runTransaction(async transaction => {
+      rejectedAttempts++; await transaction.get(ownerRef);
+      throw Object.assign(new Error("Stale application revision"), { status: 409 });
+    }), /Stale application revision/);
+    assert.equal(rejectedAttempts, 1, "intentional domain conflicts must never repeat reads");
+    let abortedAttempts = 0;
+    await db.runTransaction(async transaction => {
+      abortedAttempts++; await transaction.get(ownerRef);
+      if (abortedAttempts === 1) throw Object.assign(new Error("Firestore contention"), { code: "ABORTED", status: 409 });
+    });
+    assert.equal(abortedAttempts, 2, "genuine transaction contention still retries");
     await db.collection("bugReports").orderBy("createdAt", "desc").startAfter(new Timestamp("2026-09-14T12:00:00.123456Z")).get();
     assert.equal(calls.at(-1).body.structuredQuery.startAt.values[0].timestampValue, "2026-09-14T12:00:00.123456Z");
     await db.collection("bugReports").atReadTime("2026-09-23T12:00:00.123Z").limit(500).get();

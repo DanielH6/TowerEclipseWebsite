@@ -17,7 +17,7 @@ import AdminPage from "./Pages/Admin";
 import AdminUpdatesPage from "./Pages/AdminUpdates";
 import UpdateEditorPage from "./Pages/UpdateEditor";
 import UpdateDetailsPage from "./Pages/UpdateDetails";
-import { BUG_STAFF_ROLES } from "./roles";
+import { BUG_STAFF_ROLES, isBugStaff } from "./roles";
 import "./App.css";
 
 const EsportsPage = lazy(() => import("./Pages/Esports"));
@@ -40,7 +40,7 @@ function Navigation() {
     { to: "/esports", label: "ESPORTS" },
     { to: "/list", label: "LIST" },
     { to: "/careers", label: "CAREERS" },
-    { to: "/bugs", label: "BUGS" },
+    ...(isBugStaff(auth?.user.role) ? [{ to: "/bugs", label: "BUGS" }] : []),
   ];
 
   return (
@@ -268,9 +268,9 @@ function AppRoutes() {
   else if (/^\/admin\/careers\/forms\/[^/]+$/.test(pathname)) element = <ProtectedRoute role="dev"><AdminCareersPage key={pathname} formId={pathname.split("/")[4]} /></ProtectedRoute>;
   else if (/^\/admin\/careers\/review\/[^/]+$/.test(pathname)) element = <ProtectedRoute roles={["leadqa", "dev"]}><ApplicationsPage key={pathname} admin applicationId={pathname.split("/")[4]!} /></ProtectedRoute>;
   else if (/^\/applications\/[^/]+$/.test(pathname)) element = <ProtectedRoute><ApplicationsPage key={pathname} applicationId={pathname.split("/")[2]!} /></ProtectedRoute>;
-  else if (pathname === "/bugs") element = <BugsPage />;
+  else if (pathname === "/bugs") element = <ProtectedRoute roles={BUG_STAFF_ROLES} fallbackTo="/login"><BugsPage /></ProtectedRoute>;
   else if (pathname === "/bugs/new") {
-    element = <ProtectedRoute roles={BUG_STAFF_ROLES}><NewBugPage /></ProtectedRoute>;
+    element = <ProtectedRoute roles={BUG_STAFF_ROLES} fallbackTo="/login"><NewBugPage /></ProtectedRoute>;
   }
   else if (pathname === "/admin/players") element = <ProtectedRoute role="dev"><AdminPlayersPage /></ProtectedRoute>;
   else if (pathname === "/admin/testers") element = <ProtectedRoute role="dev"><AdminTestersPage /></ProtectedRoute>;
@@ -306,7 +306,7 @@ function AppRoutes() {
         const reportId = bugMatch?.[1];
         if (reportId) {
           params = { reportId: decodeURIComponent(reportId) };
-          element = <BugDetailsPage />;
+          element = <ProtectedRoute roles={BUG_STAFF_ROLES} fallbackTo="/login"><BugDetailsPage /></ProtectedRoute>;
         } else {
           element = <Navigate to="/" replace />;
         }

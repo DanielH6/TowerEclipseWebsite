@@ -1,4 +1,6 @@
 import { Timestamp } from "./firestore-timestamp.mjs";
+import { createReadCache } from "./read-cache.mjs";
+import { createAccountCalendar } from "./account-calendar.mjs";
 
 // Personal routes use the authenticated ID; admin target IDs require the dev-only router guard.
 export const CALENDAR_LIMIT = 2000;
@@ -68,23 +70,22 @@ export function buildCalendar(documents, now) {
 }
 
 export function createAccountService(db, { now = () => Date.now() } = {}) {
-  const cache = new Map();
-  function cached(key, ttl, operation) {
-    const existing = cache.get(key);
-    if (existing && existing.expires > now()) return existing.promise;
-    if (cache.size >= 200) cache.delete(cache.keys().next().value);
-    const entry = { expires: now() + ttl, promise: null };
-    entry.promise = Promise.resolve().then(operation).catch(error => {
-      if (cache.get(key) === entry) cache.delete(key);
-      throw error;
-    });
-    cache.set(key, entry);
-    return entry.promise;
+  const cache = createReadCache({ name: "account-analytics", maxEntries: 400, maxBytes: 8 * 1024 * 1024, now });
+  const profiles = createReadCache({ name: "account-profiles", maxEntries: 250, maxBytes: 2 * 1024 * 1024, now, ttlMs: 15_000 });
+  const roster = createReadCache({ name: "tester-directory", maxEntries: 100, maxBytes: 4 * 1024 * 1024, now, ttlMs: 300_000 });
+  const calendars = createAccountCalendar(db, { now });
+  const cached = (key, ttlMs, operation) => cache.get(key, operation, { ttlMs });
+  function invalidateReports(userId) {
+    for (const prefix of ["stats", "calendar", "activity", "tester-header"]) userId ? cache.invalidate(`${prefix}:${userId}`) : cache.clear();
+  }
+  async function recordReportContribution(before, after) {
+    try { await calendars.record(before, after); }
+    finally { for (const user of new Set([before?.reporter?.discordId, after?.reporter?.discordId].filter(Boolean))) invalidateReports(user); }
   }
 
   async function ensureProfile(user) {
     const reference = db.doc(`websiteAccounts/${user.id}`);
-    return db.runTransaction(async transaction => {
+    return profiles.get(JSON.stringify([user.id, user.username, user.displayName, user.avatarUrl, user.role, user.roleCheckedAt]), () => db.runTransaction(async transaction => {
       const snapshot = await transaction.get(reference);
       const current = snapshot.data();
       const identity = { discordId: user.id, username: user.username, displayName: user.displayName, avatarUrl: user.avatarUrl };
@@ -94,22 +95,22 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
       }
       if (!snapshot.exists) {
         const profile = { ...identity, firstLoginAt: new Date(now()), activitySeenAt: null, schemaVersion: 1 };
-        transaction.set(reference, profile);
+        transaction.set(reference, profile); roster.clear(); cache.invalidate(`tester-header:${user.id}`);
         return serializeAccountValue(profile);
       }
       if (Object.entries(identity).some(([key, value]) => current[key] !== value)) {
-        transaction.set(reference, identity, { merge: true });
+        transaction.set(reference, identity, { merge: true }); roster.clear(); cache.invalidate(`tester-header:${user.id}`);
       }
       // Roles remain authoritative in Discord; a stored profile never grants permissions.
       return serializeAccountValue({ ...identity, roblox: current.roblox ? { userId: current.roblox.userId, username: current.roblox.username, linkedAt: current.roblox.linkedAt, verifiedAt: current.roblox.verifiedAt } : null, firstLoginAt: current.firstLoginAt, activitySeenAt: current.activitySeenAt ?? null, schemaVersion: 1 });
-    });
+    }));
   }
 
   function ownReports(userId) {
     return db.collection("bugReports").where("reporter.discordId", "==", userId);
   }
 
-  async function reports(userId, { cursor, status } = {}) {
+  async function reports(userId, { cursor, status, preview } = {}) {
     let query = ownReports(userId);
     if (status) {
       if (typeof status !== "string" || !/^[\w-]{1,150}$/.test(status)) throw Object.assign(new Error("Invalid status filter."), { status: 400 });
@@ -118,14 +119,15 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
     query = query.orderBy("createdAt", "desc").orderBy("__name__", "desc");
     const after = decodeCursor(cursor);
     if (after) query = query.startAfter(after.at, after.path);
-    const snapshot = await query.limit(21).select("displayId", "description", "status", "approval.state", "createdAt", "updatedAt", "submissionState", "commentsCount", "version", "priority").get();
-    const page = snapshot.docs.slice(0, 20);
+    const pageSize = preview === "1" && !cursor ? 3 : 20;
+    const snapshot = await query.limit(pageSize + 1).select("displayId", "description", "status", "approval.state", "createdAt", "updatedAt", "submissionState", "commentsCount", "version", "priority").get();
+    const page = snapshot.docs.slice(0, pageSize);
     return {
       reports: page.map(document => {
         const value = serializeAccountValue(document.data());
         return { ...value, id: document.id, description: value.description?.slice(0, 240) ?? "" };
       }),
-      nextCursor: snapshot.docs.length > 20 ? encodeCursor(page.at(-1)) : null,
+      nextCursor: snapshot.docs.length > pageSize ? encodeCursor(page.at(-1)) : null,
     };
   }
 
@@ -145,24 +147,18 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
   }
 
   async function calendar(userId) {
-    return cached(`calendar:${userId}`, 15 * 60_000, async () => {
-      const time = now();
-      const start = new Date(time);
-      start.setUTCHours(0, 0, 0, 0);
-      start.setUTCDate(start.getUTCDate() - 364);
-      const snapshot = await ownReports(userId).where("createdAt", ">=", start).where("createdAt", "<=", new Date(time))
-        .orderBy("createdAt", "desc").limit(CALENDAR_LIMIT + 1).select("createdAt", "submissionState").get();
-      return { ...buildCalendar(snapshot.docs, time), asOf: new Date(time).toISOString() };
-    });
+    return cached(`calendar:${userId}`, 60_000, () => calendars.read(userId));
   }
 
   async function activity(userId) {
+    return cached(`activity:${userId}`, 30_000, async () => {
     const snapshot = await db.collectionGroup("activity").where("recipientId", "==", userId).orderBy("createdAt", "desc").limit(30).get();
     return { events: snapshot.docs.map(document => {
       const event = serializeAccountValue(document.data());
       return { id: document.id, reportId: event.reportId, displayId: event.displayId, action: event.action, summary: event.accountSummary,
         actor: { displayName: event.actor?.displayName ?? "A team member", discordId: event.actor?.discordId }, createdAt: event.createdAt };
     }) };
+    });
   }
 
   async function markSeen(userId, value) {
@@ -180,26 +176,49 @@ export function createAccountService(db, { now = () => Date.now() } = {}) {
     });
   }
 
-  async function testers() {
-    const pages = await Promise.all(["qa", "pentester", "leadqa"].map(role => db.collection("websiteAccounts")
-      .where("verifiedRole", "==", role).limit(501)
-      .select("discordId", "username", "displayName", "avatarUrl", "verifiedRole", "roleVerifiedAt", "firstLoginAt").get()));
-    return { testers: pages.flatMap(page => page.docs.slice(0, 500).map(document => {
-      const value = serializeAccountValue(document.data());
-      return { discordId: document.id, username: value.username, displayName: value.displayName,
-        avatarUrl: value.avatarUrl, role: value.verifiedRole, roleVerifiedAt: value.roleVerifiedAt, firstLoginAt: value.firstLoginAt };
-    })).sort((a, b) => a.displayName.localeCompare(b.displayName)), limited: pages.some(page => page.docs.length > 500) };
+  async function testers(options = {}) {
+    const role = options.role ?? "", search = String(options.search ?? "").trim().toLowerCase();
+    if ((role && !["qa", "pentester", "leadqa"].includes(role)) || search.length > 100) throw Object.assign(new Error("Choose a valid tester search."), { status: 400 });
+    const scope = JSON.stringify([role, search]), key = `${scope}:${options.cursor ?? ""}`;
+    return roster.get(key, async () => {
+      const base = db.collection("websiteAccounts").where("verifiedRole", "in", role ? [role] : ["qa", "pentester", "leadqa"]).orderBy("displayName", "asc").orderBy("__name__", "asc")
+        .select("discordId", "username", "displayName", "avatarUrl", "verifiedRole", "roleVerifiedAt", "firstLoginAt");
+      let after;
+      if (options.cursor) {
+        try { const parsed = JSON.parse(Buffer.from(options.cursor, "base64url").toString()); if (parsed.scope !== scope || typeof parsed.name !== "string" || !/^[\w-]{1,150}$/.test(parsed.id)) throw Error(); after = [parsed.name, `websiteAccounts/${parsed.id}`]; }
+        catch { throw Object.assign(new Error("Invalid tester page. Return to the first page."), { status: 400 }); }
+      }
+      let documents;
+      if (search) {
+        const all = await roster.get(`search-corpus:${role}`, async () => {
+          const values = []; let cursor;
+          while (true) { const page = await (cursor ? base.startAfter(...cursor) : base).limit(250).get(); values.push(...page.docs.map(document => ({ id: document.id, ...serializeAccountValue(document.data()) }))); if (page.docs.length < 250) break; const last = page.docs.at(-1); cursor = [last.data().displayName, last.ref.path]; }
+          return values;
+        });
+        const matches = all.filter(item => `${item.displayName} ${item.username} ${item.id}`.toLowerCase().includes(search));
+        const offset = after ? matches.findIndex(item => item.id === after[1].split("/").at(-1)) + 1 : 0;
+        if (after && !offset) throw Object.assign(new Error("The directory changed. Return to the first page."), { status: 409 });
+        documents = matches.slice(offset, offset + 51);
+      } else documents = (await (after ? base.startAfter(...after) : base).limit(51).get()).docs.map(document => ({ id: document.id, ...serializeAccountValue(document.data()) }));
+      const page = documents.slice(0, 50), last = page.at(-1);
+      return { testers: page.map(value => ({ discordId: value.id, username: value.username, displayName: value.displayName, avatarUrl: value.avatarUrl, role: value.verifiedRole, roleVerifiedAt: value.roleVerifiedAt, firstLoginAt: value.firstLoginAt })), limited: false,
+        nextCursor: documents.length > 50 ? Buffer.from(JSON.stringify({ scope, name: last.displayName, id: last.id })).toString("base64url") : null };
+    });
   }
 
-  async function tester(userId, query = {}) {
+  async function testerHeader(userId) {
     if (!/^\d{5,25}$/.test(userId)) throw Object.assign(new Error("Invalid tester ID."), { status: 400 });
-    const profile = await db.doc(`websiteAccounts/${userId}`).get();
-    if (!profile.exists || !["qa", "pentester", "leadqa"].includes(profile.data().verifiedRole)) {
-      throw Object.assign(new Error("Tester account not found. Refresh the directory."), { status: 404 });
-    }
-    const [history, totals, updates] = await Promise.all([reports(userId, query), stats(userId), activity(userId)]);
-    return { ...history, stats: totals, activity: updates.events, onboarding: profile.data().onboarding ?? null };
+    return cached(`tester-header:${userId}`, 60_000, async () => {
+      const profile = await db.doc(`websiteAccounts/${userId}`).get();
+      if (!profile.exists || !["qa", "pentester", "leadqa"].includes(profile.data().verifiedRole)) throw Object.assign(new Error("Tester account not found. Refresh the directory."), { status: 404 });
+      const [totals, updates] = await Promise.all([stats(userId), activity(userId)]);
+      return { stats: totals, activity: updates.events, onboarding: profile.data().onboarding ?? null };
+    });
   }
+  async function tester(userId, query = {}) { const [header, history] = await Promise.all([testerHeader(userId), reports(userId, query)]); return { ...history, ...header }; }
+  async function testerReports(userId, query = {}) { await testerHeader(userId); return reports(userId, query); }
 
-  return { ensureProfile, reports, stats, calendar, activity, markSeen, testers, tester };
+  return { ensureProfile, reports, stats, calendar, activity, markSeen, testers, tester, testerReports, invalidateReports, recordReportContribution,
+    invalidateProfile() { profiles.clear(); roster.clear(); cache.clear(); },
+  };
 }

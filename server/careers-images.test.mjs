@@ -40,3 +40,16 @@ test("question images reuse storage, validate uploads, and survive replacement i
   await assert.rejects(service.saveForm(other.id, { action: "publish", revision: 1, draft: withImage }), { status: 409 });
   await assert.rejects(service.saveForm(other.id, { action: "publish", revision: 1, draft: { ...withImage, questions: [{ ...withImage.questions[0], image: { id: upload.uploadId, alt: "" } }] } }), /Image description/);
 });
+test("published image metadata is cached but signed URLs are refreshed and private uploads remain protected", async () => {
+  const memory = createMemoryDb({ "careerQuestionImages/published": { objectKey: "published-key", state: "ready", published: true }, "careerQuestionImages/private": { objectKey: "private-key", state: "ready", published: false } });
+  let reads = 0, signatures = 0;
+  const originalDoc = memory.db.doc;
+  memory.db.doc = path => { const reference = originalDoc(path); return { ...reference, get: async () => { reads++; return reference.get(); } }; };
+  const service = createCareersService(memory.db, { imageStorage: { policy: () => ({ enabled: true, maxFileSizeBytes: 5_000_000 }), download: key => `https://storage.example/${key}?signature=${++signatures}` } });
+  const [a, b] = await Promise.all([service.images.image("published", { role: "member" }), service.images.image("published", admin)]);
+  assert.notEqual(a, b); assert.equal(reads, 1);
+  await service.images.image("published", { role: "member" }); assert.equal(reads, 1);
+  assert.match(await service.images.image("private", admin), /private-key/);
+  await assert.rejects(service.images.image("private", { role: "member" }), { status: 404 });
+  assert.equal(reads, 3, "private metadata is not retained from an admin authorization");
+});
