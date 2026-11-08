@@ -100,7 +100,7 @@ export const CREDIT_GROUPS: CreditGroup[] = [
   {
     id: "development",
     title: "Developers",
-    subtitle: "The core team building Tower Eclipse",
+    subtitle: "People that work full time on Tower Eclipse",
     icon: "development",
     acknowledgements: ["Primary team", "Largest contributions"],
     accent: "#27b9ff",
@@ -238,7 +238,7 @@ export const CREDIT_GROUPS: CreditGroup[] = [
   {
     id: "testing",
     title: "QA Testers",
-    subtitle: "Helping every release reach a higher standard. (6+ months only)",
+    subtitle: "6+ months only",
     icon: "testing",
     accent: "#b682ff",
     acknowledgements: ["Bug hunting", "Balance feedback", "Release checks"],
@@ -309,7 +309,7 @@ export const CREDIT_GROUPS: CreditGroup[] = [
   {
     id: "lead-quality",
     title: "QA Lead",
-    subtitle: "Leading the testing team",
+    subtitle: "Leads the QA Team",
     icon: "quality",
     accent: "#ff4c8b",
     members: [
@@ -333,7 +333,7 @@ export const CREDIT_GROUPS: CreditGroup[] = [
   {
     id: "supporters",
     title: "Early Supporters",
-    subtitle: "Backing Tower Eclipse from its earliest stages",
+    subtitle: "People who have donated to support Tower Eclipse from early on in development. Thank you :)",
     icon: "supporters",
     accent: "#ffbb22",
     acknowledgements: ["Notable suggesters", "Patreon members", "Early donators"],

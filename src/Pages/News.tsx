@@ -60,7 +60,7 @@ export default function News() {
         <header className="news-heading">
           <div className="news-heading-copy">
             <h2>NEWS</h2>
-            <p>Game updates, balancing notes, fixes, and development commentary.</p>
+            <p>Update logs for previous updates and developer blogs.</p>
           </div>
           <dl className="news-summary" aria-label="Published update archive summary">
             <div><dt>Published posts</dt><dd>{loading ? "—" : publishedTotal}</dd></div>

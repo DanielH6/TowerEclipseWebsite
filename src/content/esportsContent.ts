@@ -2,7 +2,7 @@ export const ESPORTS_CONTENT = {
   eyebrow: "TOWER ECLIPSE COMPETITIVE",
   title: "ESPORTS",
   introduction:
-    "Track every active competition, follow updates throughout tournaments and watch players advance.",
+    "Follow active tournaments, updates and spectate top level players!",
   emptyTitle: "THE ARENA IS QUIET",
   emptyDescription:
     "No public tournaments match these filters yet. Check back when the next Eclipse event is announced.",
