@@ -11,7 +11,7 @@ import "./Careers.css";
 
 export function StatusBadge({ status }: { status: ApplicationStatus }) { return <span className={`career-status status-${status}`}>{applicationStatuses[status]}</span>; }
 export function MyApplications({ preview = false }: { preview?: boolean }) {
-  return <section className="career-card career-tracker"><div className="career-section-heading"><div><span className="career-eyebrow">YOUR NEXT CHAPTER</span><h3>{preview ? "Recent applications" : "My applications"}</h3></div><Link className="career-link" to="/careers">Explore openings ↗</Link></div><ApplicationList preview={preview} /></section>;
+  return <section className="career-card career-tracker"><div className="career-section-heading"><div><h3>{preview ? "Recent applications" : "My applications"}</h3></div><Link className="career-link" to="/careers">Explore openings ↗</Link></div><ApplicationList preview={preview} /></section>;
 }
 export function ApplicationList({ admin = false, formId = "", preview = false, refreshToken = 0 }: { admin?: boolean; formId?: string; preview?: boolean; refreshToken?: number }) {
   const [status, setStatus] = useState(() => { const value = admin ? new URLSearchParams(window.location.search).get("status") ?? "" : ""; return value in applicationStatuses ? value : ""; });

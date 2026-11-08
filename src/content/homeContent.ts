@@ -7,7 +7,7 @@ export interface HomeInfoSection {
 }
 
 export const HOME_INTRO = {
-  description: "Created by experienced Tower Defense players for Tower Defense players.",
+  description: "Making a Tower Defense game has always been my dream, thanks everyone for your support! :)",
   buttonLabel: "Play on Roblox",
   robloxUrl: "https://www.roblox.com/games/80787635946901/Tower-Eclipse",
 };
