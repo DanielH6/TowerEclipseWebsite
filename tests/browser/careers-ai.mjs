@@ -10,17 +10,17 @@ import { createMemoryDb } from "../../server/testing/careers-memory-db.mjs";
 // deterministic provider. This test never sends application data to OpenAI.
 const admin = { id: "admin", username: "admin", displayName: "Admin", role: "dev" };
 let actor = admin;
-const memory = createMemoryDb(), calls = [];
+const memory = createMemoryDb(), calls = [], reviewOptions = [];
 const provider = {
   enabled: true,
   async draftCriteria() { return { value: { criteria: [
     { name: "Reasoning", description: "Assess useful practical reasoning.", weight: 1, low: "Vague", middle: "Usable", high: "Specific and justified" },
     { name: "Clarity", description: "Assess actionable explanations rather than length.", weight: 1, low: "Unclear", middle: "Understandable", high: "Clear and actionable" },
   ] } }; },
-  async assess(input) {
-    calls.push(input); await new Promise(resolve => setTimeout(resolve, 10));
+  async assess(input, options) {
+    calls.push(input); reviewOptions.push({ model: options.model, reasoningEffort: options.reasoningEffort }); await new Promise(resolve => setTimeout(resolve, 10));
     const score = Number(input.questions[0].answerExcerpts[0].text.match(/\d/)[0]);
-    return { value: { summary: "Assessment of practical testing knowledge.", observations: "Consider discussing an example with the applicant.", grades: input.settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "Based on the submitted reproduction steps.", evidence: [input.questions[0].answerExcerpts[0].id] })) }, usage: { inputTokens: 100, outputTokens: 50 } };
+    return { value: { summary: "Assessment of practical testing knowledge.", observations: "Consider discussing an example with the applicant.", grades: input.settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "Based on the submitted reproduction steps.", evidence: [input.questions[0].answerExcerpts[0].id] })) }, usage: { inputTokens: 100, outputTokens: 50, reasoningTokens: 20, cachedInputTokens: 30 } };
   },
 };
 const service = createCareersService(memory.db, { aiProvider: provider });
@@ -28,6 +28,8 @@ const worker = createCareerAiWorker({ service: service.ai, intervalMs: 200 });
 const publicDraft = { title: "Tester November", category: "Quality assurance", description: "Help test Tower Eclipse.", commitment: "Volunteer", confirmation: "Thanks", closesAt: null, questions: [{ id: "answer", type: "paragraph", label: "How would you reproduce a bug?", help: "Explain your reasoning", required: true }] };
 async function form(draft) { const created = await service.createForm(); return service.saveForm(created.id, { action: "publish", revision: 1, draft }); }
 const testers = await form(publicDraft), developers = await form({ ...publicDraft, title: "Developer September", category: "Development" });
+memory.documents.set("careerAiRuns/legacy-run", { formId: testers.id, model: "gpt-6-luna", state: "cancelled", members: [], processed: 0, createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), criteriaRevision: 0, requestedBy: admin, usage: { inputTokens: 0, outputTokens: 0 } });
+memory.documents.get(`careerForms/${testers.id}`).aiRunIds = ["legacy-run"];
 for (let i = 0; i < 50; i++) {
   const opening = i < 47 ? testers : developers, id = `applicant${String(i).padStart(2, "0")}`;
   memory.documents.set(`careerApplications/${id}`, { formId: opening.id, versionId: opening.publishedVersion, title: opening.title, category: opening.category, applicantId: id,
@@ -49,7 +51,8 @@ try {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chrome", headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.setDefaultTimeout(20000);
-  const errors = [], violations = [], external = [];
+  const errors = [], violations = [], external = [], starts = [];
+  page.on("request", request => { if (request.url().endsWith(`/forms/${testers.id}/ai-reviews`) && request.method() === "POST") starts.push(request.postDataJSON()); });
   page.on("pageerror", error => errors.push(error.message));
   await page.exposeFunction("reportViolation", value => violations.push(value));
   await page.addInitScript(() => document.addEventListener("securitypolicyviolation", e => window.reportViolation(e.effectiveDirective)));
@@ -60,6 +63,8 @@ try {
   await expect(page.locator(".career-application-row")).toHaveCount(20);
   await expect(page.locator(".career-ai-score").first()).toContainText("-/10");
   await expect(page.getByRole("button", { name: "Run AI review", exact: true })).toBeDisabled();
+  await expect(page.getByRole("combobox", { name: "Review model", exact: true })).toHaveValue("gpt-6-luna");
+  await expect(page.getByRole("combobox", { name: "Reasoning effort", exact: true })).toHaveValue("medium");
   await page.getByRole("link", { name: "Edit AI criteria", exact: true }).click();
   await page.getByLabel("What makes a good application?", { exact: true }).fill("Reward useful testing reasoning and actionable explanations. Do not reward length alone.");
   await page.getByRole("button", { name: "Add sample answer", exact: false }).click();
@@ -78,8 +83,24 @@ try {
   await page.getByRole("link", { name: "Review applications ↗", exact: true }).click();
   await page.getByRole("combobox", { name: "Application status filter" }).selectOption("under_review");
   await expect(page.locator(".career-application-row")).toHaveCount(5);
+  await page.getByRole("combobox", { name: "Review model", exact: true }).selectOption("gpt-6.1-sol");
+  await page.getByRole("combobox", { name: "Reasoning effort", exact: true }).selectOption("high");
+  await expect(page.locator(".career-ai-pricing")).toContainText("$2.00 input / $10.00 output");
+  assert.equal(starts.length, 0); assert.equal(calls.length, 0, "Selecting settings never starts a paid review");
   await page.getByRole("button", { name: "Run AI review", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Review model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("combobox", { name: "Reasoning effort", exact: true })).toBeDisabled();
   await expect(page.locator(".career-ai-run")).toContainText("Review completed", { timeout: 30000 });
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].model, "gpt-6.1-sol"); assert.equal(starts[0].reasoningEffort, "high");
+  const completed = memory.documents.get(`careerForms/${testers.id}`).aiCompletedRun;
+  assert.equal(completed.model, "gpt-6.1-sol"); assert.equal(completed.reasoningEffort, "high");
+  assert.ok(reviewOptions.every(options => options.model === "gpt-6.1-sol" && options.reasoningEffort === "high"));
+  await expect(page.locator(".career-ai-run")).toContainText("GPT-6.1 Sol · High reasoning");
+  await expect(page.locator(".career-ai-run")).toContainText("940 reasoning");
+  await expect(page.locator(".career-ai-current-ranking")).toContainText("GPT-6.1 Sol · High reasoning");
+  await page.getByText("Previous review runs", { exact: true }).click();
+  await expect(page.locator(".career-ai-history")).toContainText("GPT-6 Luna · Low reasoning");
   await expect(page.getByRole("combobox", { name: "Application status filter" })).toHaveValue("under_review");
   await expect(page.locator(".career-application-row")).toHaveCount(5);
   assert.equal(calls.length, 47); assert.ok(calls.every(call => call.opening.title === "Tester November"));
@@ -96,6 +117,7 @@ try {
   await expect(page.locator(".career-application-row")).toHaveCount(1);
   await page.locator(".career-application-row").click();
   await expect(page.getByRole("region", { name: "AI assessment" })).toContainText("Criteria score:");
+  await expect(page.getByRole("region", { name: "AI assessment" })).toContainText("GPT-6.1 Sol · High reasoning");
   await expect(page.locator(".career-ai-grade-list")).toContainText("I describe 0 practical steps.");
   await page.getByRole("link", { name: "Review queue", exact: false }).click();
   await expect(page.getByRole("textbox", { name: "Search applicants" })).toHaveValue("Robloxapplicant00");
@@ -105,21 +127,33 @@ try {
   actor = { id: "lead", username: "lead", displayName: "QA Lead", role: "leadqa" };
   await page.goto(`${base}/admin/careers/review?formId=${testers.id}`);
   await expect(page.getByRole("button", { name: "Run AI review", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Review model", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Reasoning effort", exact: true })).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Select application form" }).locator("option")).toHaveCount(2);
   actor = { id: "applicant00", username: "applicant00", displayName: "Applicant", role: "member" };
   await page.goto(`${base}/applications/applicant00`);
   await expect(page.locator(".career-word-total")).toContainText("5 words");
   await expect(page.locator(".career-ai-assessment")).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Review model", exact: true })).toHaveCount(0);
   actor = admin;
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/admin/careers/review?formId=${testers.id}`);
+  await page.getByRole("combobox", { name: "Review model", exact: true }).selectOption("gpt-6.1-sol");
+  await page.getByRole("combobox", { name: "Reasoning effort", exact: true }).selectOption("xhigh");
+  await expect(page.locator(".career-ai-current-ranking")).toContainText("GPT-6.1 Sol · High reasoning");
+  assert.equal(starts.length, 1, "Changing the next settings leaves the completed ranking unchanged");
+  await page.getByRole("group", { name: "Next AI review settings", exact: true }).scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: "/tmp/careers-ai-settings-mobile.png" });
   await page.locator(".career-application-row").first().scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: "/tmp/careers-ai-review-mobile.png" });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("group", { name: "Next AI review settings", exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "/tmp/careers-ai-settings-desktop.png" });
   await page.getByRole("combobox", { name: "Sort applications" }).selectOption("ai_rank");
   await page.locator(".career-application-row").first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/careers-ai-review-desktop.png" });
   assert.deepEqual(errors, []); assert.deepEqual(violations, []); assert.deepEqual(external, []);
-  console.log("PASS: private criteria/examples/drafted guide/weights save without republishing; form selector, admin-only 47-application run despite status filter, atomic ranking, complete-page sorting, search/back navigation, score colours/unranked state, QA/member isolation, mobile layout and restrictive CSP. Deterministic provider only.");
+  console.log("PASS: per-run Sol/high selection and provider settings, no scan on selection, disabled active controls, run/ranking/legacy history metadata and token usage, private criteria/examples/drafted guide/weights save without republishing; admin-only 47-application run, atomic ranking, complete-page sorting, search/back navigation, QA/member isolation, mobile settings layout and restrictive CSP. Deterministic provider only.");
 } finally { await worker.stop(); await browser?.close(); await new Promise(resolve => server.close(resolve)); }

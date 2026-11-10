@@ -19,6 +19,14 @@ function expectRevision(data, revision) { if (!Number.isInteger(revision) || dat
 function expectDraftRevision(data, revision) {
   if (data ? !Number.isInteger(revision) || data.revision !== revision : revision !== null) fail("Your saved draft changed in another tab. Reload before saving; your answers have not been changed.", 409);
 }
+function applicationReadState(data, user) {
+  const readers = Object.values(data.readReceipts ?? {})
+    .filter(receipt => receipt.submissionRevision === (data.submissionRevision ?? 1))
+    .map(receipt => pick(receipt, ["id", "displayName", "readAt"]))
+    .sort((a, b) => a.readAt.localeCompare(b.readAt) || a.id.localeCompare(b.id));
+  return { readByYou: readers.some(reader => reader.id === user.id), readers };
+}
+const reviewerSummary = (data, user) => ({ ...pick(data, ["id", ...SUMMARY]), readState: applicationReadState(data, user) });
 function checkOpen(form, now) {
   if (form.state !== "open" || !form.publishedVersion || (form.closesAt && Date.parse(form.closesAt) <= now)) fail("This opening is closed to new applications.", 409);
 }
@@ -97,7 +105,7 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
     if (!admin && data.applicantId !== user.id) fail("This application could not be found.", 404);
     const form = await readVersion(data.versionId);
     const opening = (await ref("careerForms", data.formId).get()).data();
-    const visible = { ...pick(data, [...SUMMARY, "id", "answers", "history", "feedbackFormatting"]), ...(admin ? pick(data, ["internalNotes", "reviewer", "notesFormatting"]) : {}) };
+    const visible = { ...pick(data, [...SUMMARY, "id", "answers", "history", "feedbackFormatting"]), ...(admin ? { ...pick(data, ["internalNotes", "reviewer", "notesFormatting"]), readState: applicationReadState(data, user) } : {}) };
     return { application: admin ? (await ai.decorate([visible], { full: true }))[0] : visible, form, canResubmit: !admin && acceptsResubmissions(opening, data.status, now()), closesAt: opening?.closesAt ?? null,
       ...(!admin ? { draft: await applicantDraft(data.formId, user.id, data.versionId) } : {}) };
   }
@@ -245,7 +253,7 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         const savedDraft = await draftToRemove(tx, data.formId, user.id, input, data.versionId, answers);
         const updatedAt = stamp();
         const changes = { answers, status: "submitted", updatedAt, resubmittedAt: updatedAt, revision: data.revision + 1,
-          submissionRevision: (data.submissionRevision ?? 1) + 1, feedback: "", feedbackFormatting: {}, reviewer: null,
+          submissionRevision: (data.submissionRevision ?? 1) + 1, feedback: "", feedbackFormatting: {}, reviewer: null, readReceipts: {},
           consentAt: updatedAt, privacyNoticeVersion: "careers-2026-11-04",
           history: [...(data.history ?? []), { status: "submitted", at: updatedAt, feedback: "Application edited and resubmitted." }].slice(-50) };
         tx.update(target, changes);
@@ -257,6 +265,31 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
       applicationIndex.changed(changedApplication.before, changedApplication.after);
       ai.invalidateForm(changedApplication.after.formId);
       return result;
+    },
+    async setApplicationReadState(id, user, input) {
+      if (!["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to mark this application as read.", 403);
+      const reviewerId = identifier(user.id);
+      if (typeof input?.read !== "boolean" || !Number.isInteger(input?.submissionRevision) || input.submissionRevision < 1) fail("Choose a read status for the application you viewed.");
+      return db.runTransaction(async tx => {
+        const target = ref("careerApplications", id);
+        const data = snapshotData(await tx.get(target));
+        if (user.role === "leadqa" && !isQaApplication(data.category)) fail("This application could not be found.", 404);
+        const submissionRevision = data.submissionRevision ?? 1;
+        if (input.submissionRevision !== submissionRevision) fail("This application was resubmitted. Reload and read the updated answers before marking it as read.", 409);
+        const readReceipts = { ...data.readReceipts };
+        const previous = readReceipts[reviewerId];
+        if (input.read) {
+          if (previous?.submissionRevision === submissionRevision) return applicationReadState(data, user);
+          readReceipts[reviewerId] = { id: reviewerId, displayName: user.displayName || user.username || reviewerId, readAt: stamp(), submissionRevision };
+        } else {
+          if (!Object.hasOwn(readReceipts, reviewerId)) return applicationReadState(data, user);
+          delete readReceipts[reviewerId];
+        }
+        // Personal read markers must not change review revisions or applicant
+        // timestamps, and transactions preserve other reviewers' markers.
+        tx.update(target, { readReceipts });
+        return applicationReadState({ ...data, readReceipts }, user);
+      });
     },
     async listApplications(user, options = {}, admin = false) {
       const query = applicationQuery(user, options, admin);
@@ -295,12 +328,12 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         // Return fresh authorized rows, not cached private response objects. A
         // cached search/rank page reads at most the twenty selected documents.
         const snapshots = await Promise.all(selected.map(item => ref("careerApplications", item.id).get()));
-        const items = snapshots.filter(doc => doc.exists).map(snapshotData).filter(item => item.formId === options.formId && (user.role !== "leadqa" || isQaApplication(item.category)) && (!options.status || item.status === options.status)).map(item => pick(item, ["id", ...SUMMARY]));
+        const items = snapshots.filter(doc => doc.exists).map(snapshotData).filter(item => item.formId === options.formId && (user.role !== "leadqa" || isQaApplication(item.category)) && (!options.status || item.status === options.status)).map(item => reviewerSummary(item, user));
         return { items: await ai.decorate(items), nextCursor: offset + PAGE_SIZE < all.length ? Buffer.from(JSON.stringify({ scope, id: selected.at(-1).id })).toString("base64url") : null, asOf: corpus.asOf, maxAgeSeconds: 900 };
       }
       const scope = JSON.stringify([admin ? user.role : user.id, options.formId ?? "", options.status ?? "", sort]);
-      const result = await page(query, "careerApplications", options, SUMMARY, "createdAt", admin && sort === "oldest" ? "asc" : "desc", scope);
-      return admin ? { ...result, items: await ai.decorate(result.items) } : result;
+      const result = await page(query, "careerApplications", options, admin ? [...SUMMARY, "readReceipts"] : SUMMARY, "createdAt", admin && sort === "oldest" ? "asc" : "desc", scope);
+      return admin ? { ...result, items: await ai.decorate(result.items.map(item => reviewerSummary(item, user))) } : result;
     },
     async reviewForms(user, options = {}) {
       if (!["dev", "leadqa"].includes(user?.role)) fail("You do not have permission to view application forms.", 403);

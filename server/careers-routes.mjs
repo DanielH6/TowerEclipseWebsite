@@ -21,6 +21,7 @@ export function createCareersRouter({ service, auth = requireAuth, csrf = requir
   router.get("/admin/applications", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.listApplications(req.authUser, req.query, true)));
   router.get("/admin/application-stats", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.applicationStats(req.authUser, req.query)));
   router.get("/admin/applications/:id", requireRole("leadqa", "dev"), async (req, res) => res.json(await service.application(req.params.id, req.authUser, true)));
+  router.put("/admin/applications/:id/read-state", requireRole("leadqa", "dev"), ...writes, async (req, res) => res.json(await service.setApplicationReadState(req.params.id, req.authUser, req.body)));
   router.use("/admin", requireRole("dev"));
   const aiWrites = rateLimit({ windowMs: 60_000, limit: 5, standardHeaders: "draft-8", legacyHeaders: false, keyGenerator: req => req.authUser.id });
   router.get("/admin/ai-config", (_req, res) => res.json(service.ai.configuration()));
