@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { Link } from "../router";
-import { careerDate, careerRequest, useCareerResource, type AiReviewOverview, type AiRun } from "../careers";
+import { careerDate, careerRequest, useCareerResource, type AiReasoningEffort, type AiReviewOverview, type AiRun } from "../careers";
 import { CareerResourceState } from "./CareerFields";
+
+const reasoningLabels: Record<AiReasoningEffort, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum" };
+const reasoningOptions: Record<AiReasoningEffort, string> = { low: "Low · fastest", medium: "Medium · balanced", high: "High · deeper review", xhigh: "Extra high · more time and tokens", max: "Maximum · most time and tokens" };
 
 export default function CareerAiReviewPanel({ formId, onComplete }: { formId: string; onComplete: () => void }) {
   const { auth } = useAuth();
@@ -10,8 +13,19 @@ export default function CareerAiReviewPanel({ formId, onComplete }: { formId: st
   const [working, setWorking] = useState(false), [error, setError] = useState("");
   const [live, setLive] = useState<{ run: AiRun; completedRun: AiReviewOverview["completedRun"] } | null>(null);
   const [history, setHistory] = useState<AiRun[] | null>(null), [historyLoading, setHistoryLoading] = useState(false);
+  const [model, setModel] = useState(""), [reasoningEffort, setReasoningEffort] = useState<AiReasoningEffort | "">("");
   const lastCompleted = useRef<string | null | undefined>(undefined);
   const latest = live?.run ?? resource.data?.runs[0], active = latest?.state === "queued" || latest?.state === "running";
+  const selectedModel = model || resource.data?.model || "gpt-6-luna";
+  const selectedEffort = reasoningEffort || resource.data?.defaultReasoningEffort || "medium";
+  const modelOption = resource.data?.models.find(option => option.id === selectedModel);
+  const controlsDisabled = working || resource.loading || active || !resource.data?.configured;
+  const completedRun = live ? live.completedRun : resource.data?.completedRun;
+  const completedSettings = completedRun?.model ? completedRun : latest?.id === completedRun?.id ? latest : completedRun;
+  function runSettings(run: { model?: string; reasoningEffort?: AiReasoningEffort }) {
+    const label = resource.data?.models.find(option => option.id === run.model)?.label ?? run.model;
+    return label ? `${label} · ${reasoningLabels[run.reasoningEffort ?? "low"]} reasoning` : "Legacy run · model details unavailable";
+  }
   useEffect(() => { if (resource.data) setLive(null); }, [resource.data]);
   useEffect(() => {
     if (!active || !latest) return;
@@ -42,7 +56,7 @@ export default function CareerAiReviewPanel({ formId, onComplete }: { formId: st
   async function start() {
     if (!auth || !resource.data || working) return;
     setWorking(true); setError("");
-    try { await careerRequest(`/admin/forms/${formId}/ai-reviews`, { method: "POST", csrf: auth.csrfToken, body: { revision: resource.data.criteriaRevision } }); setHistory(null); resource.reload(); }
+    try { await careerRequest(`/admin/forms/${formId}/ai-reviews`, { method: "POST", csrf: auth.csrfToken, body: { revision: resource.data.criteriaRevision, model: selectedModel, reasoningEffort: selectedEffort } }); setHistory(null); resource.reload(); }
     catch (reason) { setError((reason as Error).message); }
     finally { setWorking(false); }
   }
@@ -61,15 +75,21 @@ export default function CareerAiReviewPanel({ formId, onComplete }: { formId: st
     finally { setHistoryLoading(false); }
   }
   return <section className="career-ai-panel" aria-label="AI application review">
-    <div className="career-section-heading"><div><span className="career-eyebrow">LUNA · PRIVATE REVIEW ASSISTANT</span><h3>Review this applicant pool</h3></div><div className="career-actions"><Link className="career-button" to={`/admin/careers/forms/${formId}#ai-review-guide`}>Edit AI criteria</Link><button type="button" className="career-button is-primary" disabled={working || resource.loading || active || !resource.data?.configured || !resource.data.hasCriteria} onClick={() => void start()}>{working ? "Working…" : active ? "Review in progress…" : "Run AI review"}</button><button type="button" className="career-link" disabled={working || resource.loading} onClick={resource.reload}>Refresh AI status</button></div></div>
+    <div className="career-section-heading"><div><span className="career-eyebrow">AI · PRIVATE REVIEW ASSISTANT</span><h3>Review this applicant pool</h3></div><div className="career-actions"><Link className="career-button" to={`/admin/careers/forms/${formId}#ai-review-guide`}>Edit AI criteria</Link><button type="button" className="career-button is-primary" disabled={controlsDisabled || !resource.data?.hasCriteria} onClick={() => void start()}>{working ? "Working…" : active ? "Review in progress…" : "Run AI review"}</button><button type="button" className="career-link" disabled={working || resource.loading} onClick={resource.reload}>Refresh AI status</button></div></div>
     <p className="career-help">Reviews every non-withdrawn application for this form, across all pages and statuses. Search and status filters only change the rows you see. A new run sends the current answers to OpenAI again; it never accepts, rejects or messages applicants.</p>
     <CareerResourceState {...resource} />
     {resource.data && <>
-      {!resource.data.configured && <div className="career-notice">Luna needs an OpenAI API key configured on the server. You can prepare the private criteria in the form editor now. Eligible subscription credits apply to the API organisation owning that key. <a href="https://developers.openai.com/api/docs/guides/chatgpt-api-credits" target="_blank" rel="noopener noreferrer">Subscription credit setup ↗</a></div>}
+      <div className="career-ai-run-options" role="group" aria-label="Next AI review settings">
+        <label>Review model<select aria-label="Review model" value={selectedModel} disabled={controlsDisabled} onChange={event => setModel(event.target.value)}>{resource.data.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label>Reasoning effort<select aria-label="Reasoning effort" value={selectedEffort} disabled={controlsDisabled} onChange={event => setReasoningEffort(event.target.value as AiReasoningEffort)}>{resource.data.reasoningEfforts.map(effort => <option key={effort} value={effort}>{reasoningOptions[effort]}</option>)}</select></label>
+      </div>
+      <p className="career-help">These settings apply to the next run. Higher effort allows more reasoning and may take longer and use more tokens.</p>
+      {modelOption && <p className="career-help career-ai-pricing">{modelOption.label} standard uncached prices (USD): ${modelOption.inputUsdPerMillion.toFixed(2)} input / ${modelOption.outputUsdPerMillion.toFixed(2)} output per million tokens. Reasoning tokens count toward output usage. Total cost depends on the answers, generated tokens and caching discounts.</p>}
+      {!resource.data.configured && <div className="career-notice">AI review needs an OpenAI API key configured on the server. You can prepare the private criteria in the form editor now. Eligible subscription credits apply to the API organisation owning that key. <a href="https://developers.openai.com/api/docs/guides/chatgpt-api-credits" target="_blank" rel="noopener noreferrer">Subscription credit setup ↗</a></div>}
       {!resource.data.hasCriteria && <p className="career-notice">Write your brief and save at least one criterion in the form editor before running a review.</p>}
-      {resource.data.completedRun && <p className="career-help">Current ranking: {resource.data.completedRun.total} applications · {careerDate(resource.data.completedRun.completedAt)}{resource.data.completedRun.criteriaRevision !== resource.data.criteriaRevision ? " · Criteria have changed; rerun to apply the saved guide." : ""}. New applications stay unranked until the next completed run.</p>}
-      {latest && <div className="career-ai-run" role="status"><strong>{latest.state === "completed" ? "Review completed" : latest.state === "failed" ? "Review failed" : latest.state === "cancelled" ? "Review cancelled" : latest.state === "queued" ? "Queued for review" : "Reviewing applications"}</strong><span>{latest.processed} / {latest.total} assessed · Requested {careerDate(latest.createdAt)} by {latest.requestedBy.displayName}</span>{active && <><progress aria-label="Applications reviewed" max={latest.total} value={latest.processed} /><button type="button" className="career-link" disabled={working} onClick={() => void cancel()}>Cancel review</button><small>Cancellation stops further requests. A request already in progress may still be billed.</small></>}{latest.error && <p>{latest.error}</p>}{["failed", "cancelled"].includes(latest.state) && <small>The last completed ranking remains visible.</small>}</div>}
-      {resource.data.hasHistory && <details onToggle={event => { if (event.currentTarget.open) void loadHistory(); }}><summary>Previous review runs</summary>{historyLoading ? <p role="status">Loading previous reviews…</p> : <ul className="career-ai-history">{history?.filter(run => run.id !== latest?.id).map(run => <li key={run.id}><span>{careerDate(run.createdAt)} · {run.state}</span><span>{run.processed}/{run.total} assessed · Criteria version {run.criteriaRevision}</span></li>)}</ul>}</details>}
+      {completedRun && <p className="career-help career-ai-current-ranking">Current ranking: {completedRun.total} applications · {careerDate(completedRun.completedAt)} · {completedSettings && runSettings(completedSettings)}{completedRun.criteriaRevision !== resource.data.criteriaRevision ? " · Criteria have changed; rerun to apply the saved guide." : ""}. New applications stay unranked until the next completed run.</p>}
+      {latest && <div className="career-ai-run" role="status"><strong>{latest.state === "completed" ? "Review completed" : latest.state === "failed" ? "Review failed" : latest.state === "cancelled" ? "Review cancelled" : latest.state === "queued" ? "Queued for review" : "Reviewing applications"}</strong><span>{runSettings(latest)}</span><span>{latest.processed} / {latest.total} assessed · Requested {careerDate(latest.createdAt)} by {latest.requestedBy.displayName}</span>{latest.usage && <small>{latest.usage.inputTokens.toLocaleString()} input tokens · {latest.usage.outputTokens.toLocaleString()} output tokens{latest.usage.reasoningTokens !== undefined ? ` (${latest.usage.reasoningTokens.toLocaleString()} reasoning)` : ""}{latest.usage.cachedInputTokens !== undefined ? ` · ${latest.usage.cachedInputTokens.toLocaleString()} cached input` : ""}</small>}{active && <><progress aria-label="Applications reviewed" max={latest.total} value={latest.processed} /><button type="button" className="career-link" disabled={working} onClick={() => void cancel()}>Cancel review</button><small>Cancellation stops further requests. A request already in progress may still be billed.</small></>}{latest.error && <p>{latest.error}</p>}{["failed", "cancelled"].includes(latest.state) && <small>The last completed ranking remains visible.</small>}</div>}
+      {resource.data.hasHistory && <details onToggle={event => { if (event.currentTarget.open) void loadHistory(); }}><summary>Previous review runs</summary>{historyLoading ? <p role="status">Loading previous reviews…</p> : <ul className="career-ai-history">{history?.filter(run => run.id !== latest?.id).map(run => <li key={run.id}><span>{careerDate(run.createdAt)} · {run.state}</span><span>{runSettings(run)} · {run.processed}/{run.total} assessed · Criteria version {run.criteriaRevision}</span></li>)}</ul>}</details>}
     </>}
     <div className="career-score-spectrum" aria-label="AI score colour guide"><div /><span>0 · Lower relative score</span><span>5 · Middle of pool</span><span>10 · Higher relative score</span></div>
     <p className="career-help">Colours show relative scores: red → orange → yellow → yellow-green → green. Grey and -/10 mean unranked. The weighted criteria score is shown separately. Equal scores stay tied; small pools will not form a smooth bell curve.</p>

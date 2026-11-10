@@ -9,10 +9,11 @@ const admin = { id: "admin", role: "dev", displayName: "Reviewer" };
 const settings = { brief: "Reward clear practical reasoning over length.", criteria: [{ id: "reasoning", name: "Reasoning", description: "Assess useful, justified reproduction steps.", weight: 2, low: "Vague", middle: "Usable with gaps", high: "Clear and specific" }, { id: "clarity", name: "Clarity", description: "Assess how actionable the explanation is.", weight: 1, low: "", middle: "", high: "" }], examples: [] };
 const draft = { title: "Tester round", category: "Quality assurance", description: "Help test", commitment: "Volunteer", confirmation: "Thanks", closesAt: null, questions: [{ id: "answer", type: "paragraph", label: "How would you reproduce this?", help: "Explain your approach", required: true }] };
 async function fixture({ provider: supplied } = {}) {
-  const memory = createMemoryDb(), calls = [];
+  const memory = createMemoryDb(), calls = [], optionCalls = [];
   let time = Date.parse("2026-11-04T00:00:00Z");
-  const provider = supplied ?? { enabled: true, draftCriteria: async () => ({ value: { criteria: settings.criteria } }), assess: async input => {
+  const provider = supplied ?? { enabled: true, draftCriteria: async () => ({ value: { criteria: settings.criteria } }), assess: async (input, options) => {
     calls.push(input);
+    optionCalls.push({ model: options?.model, reasoningEffort: options?.reasoningEffort });
     const score = Number(input.questions[0].answerExcerpts[0].text.match(/\d/)[0]);
     return { value: { summary: "Assessment based on the submitted example.", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score, explanation: "The answer supplies the stated level of detail.", evidence: [input.questions[0].answerExcerpts[0].id] })) }, usage: { inputTokens: 100, outputTokens: 40 } };
   } };
@@ -22,7 +23,7 @@ async function fixture({ provider: supplied } = {}) {
   const add = (id, score, extra = {}) => memory.documents.set(`careerApplications/${id}`, { formId: form.id, versionId: published.publishedVersion, title: draft.title, category: draft.category, applicantId: id,
     applicant: { discordId: `secret-${id}`, username: id, displayName: `Applicant ${id}`, roblox: { userId: "123", username: `Roblox${id}` } },
     answers: { answer: `I explain ${score} practical steps.` }, status: "submitted", revision: 1, createdAt: new Date(time).toISOString(), updatedAt: new Date(time).toISOString(), feedback: "Previous reviewer feedback", internalNotes: "Private reviewer note", history: [], ...extra });
-  return { ...memory, service, form: published, add, calls, advance: ms => { time += ms; } };
+  return { ...memory, service, form: published, add, calls, optionCalls, advance: ms => { time += ms; } };
 }
 async function finish(service, max = 100) { for (let n = 0; n < max; n++) if (!await service.ai.workNext({ owner: "worker", signal: new AbortController().signal })) return; throw new Error("Worker did not finish"); }
 
@@ -243,9 +244,101 @@ test("concurrent workers cannot assess the same applicant while a lease is activ
   assert.equal(requested.filter(result => result.status === "fulfilled").length, 1);
   const first = f.service.ai.workNext({ owner: "first" });
   while (calls === 0) await new Promise(resolve => setImmediate(resolve));
+  f.advance(180_000);
   assert.equal(await f.service.ai.workNext({ owner: "second" }), false);
   release(); await first;
   assert.equal(calls, 1);
+});
+
+test("new runs validate the model and reasoning effort before scanning applications or writing a job", async () => {
+  const f = await fixture(); f.add("one", 3);
+  const queries = f.queries.length, writes = f.writes();
+  for (const options of [
+    { model: "gpt-6-astra" }, { model: "untrusted-model" }, { model: null },
+    { reasoningEffort: "none" }, { reasoningEffort: "minimal" }, { reasoningEffort: "ultra" },
+    { reasoningEffort: ["high"] }, { reasoningEffort: null },
+  ]) await assert.rejects(f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision, ...options }), { status: 400 });
+  assert.equal(f.queries.length, queries, "invalid options do not scan the applicant pool");
+  assert.equal(f.writes(), writes);
+  assert.equal(f.calls.length, 0);
+  const started = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  const queued = f.documents.get(`careerAiRuns/${started.id}`);
+  assert.equal(queued.model, "gpt-6-luna");
+  assert.equal(queued.reasoningEffort, "medium");
+});
+
+test("each run freezes supported model and effort options and exposes them with completed results and history", async () => {
+  const f = await fixture(); f.add("one", 3);
+  const firstInput = { revision: f.form.aiRevision, model: "gpt-6.1-sol", reasoningEffort: "high" };
+  const first = await f.service.ai.start(f.form.id, admin, firstInput);
+  firstInput.model = "gpt-6-luna"; firstInput.reasoningEffort = "low";
+  await finish(f.service);
+  assert.deepEqual(f.optionCalls[0], { model: "gpt-6.1-sol", reasoningEffort: "high" });
+  const completed = await f.service.ai.runStatus(f.form.id, first.id, admin);
+  for (const metadata of [completed.run, completed.completedRun, f.documents.get(`careerForms/${f.form.id}`).aiCompletedRun]) {
+    assert.equal(metadata.model, "gpt-6.1-sol");
+    assert.equal(metadata.reasoningEffort, "high");
+  }
+  for (const model of ["gpt-6-luna", "gpt-6.1-sol"]) for (const reasoningEffort of ["low", "medium", "high", "xhigh", "max"]) {
+    f.advance(1);
+    await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision, model, reasoningEffort });
+    await finish(f.service);
+    assert.deepEqual(f.optionCalls.at(-1), { model, reasoningEffort });
+  }
+  const overview = await f.service.ai.overview(f.form.id, admin, { history: true });
+  assert.ok(overview.models.some(model => model.id === "gpt-6.1-sol"));
+  assert.deepEqual(overview.reasoningEfforts, ["low", "medium", "high", "xhigh", "max"]);
+  assert.equal(overview.defaultReasoningEffort, "medium");
+  assert.equal(overview.runs[0].model, "gpt-6.1-sol");
+  assert.equal(overview.runs[0].reasoningEffort, "max");
+  assert.equal(overview.runs.length, 10);
+  assert.deepEqual(f.documents.get(`careerAiRuns/${first.id}`).model, "gpt-6.1-sol", "later selections never rewrite an old run");
+  assert.equal(f.documents.get(`careerAiRuns/${first.id}`).reasoningEffort, "high");
+});
+
+test("legacy queued runs keep Luna low and aggregate new usage fields without dropping prior totals", async () => {
+  const f = await fixture(); f.add("one", 3);
+  const started = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision });
+  const queued = f.documents.get(`careerAiRuns/${started.id}`);
+  delete queued.reasoningEffort;
+  queued.usage = { inputTokens: 125, outputTokens: 50 };
+  await finish(f.service);
+  assert.deepEqual(f.optionCalls[0], { model: "gpt-6-luna", reasoningEffort: "low" });
+  const status = await f.service.ai.runStatus(f.form.id, started.id, admin);
+  assert.equal(status.run.reasoningEffort, "low");
+  assert.deepEqual(status.run.usage, { inputTokens: 225, outputTokens: 90, cachedInputTokens: 0, reasoningTokens: 0 });
+});
+
+test("run usage keeps cached input and reasoning breakdowns as subsets of total token counts", async () => {
+  const f = await fixture({ provider: { enabled: true, assess: async () => ({
+    value: { summary: "Assessment", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score: 3, explanation: "Explanation", evidence: [] })) },
+    usage: { inputTokens: 100, outputTokens: 70, cachedInputTokens: 40, reasoningTokens: 30 },
+  }) } });
+  f.add("one", 3); f.add("two", 4);
+  const started = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision, model: "gpt-6.1-sol", reasoningEffort: "high" });
+  await finish(f.service);
+  assert.deepEqual((await f.service.ai.runStatus(f.form.id, started.id, admin)).run.usage, { inputTokens: 200, outputTokens: 140, cachedInputTokens: 80, reasoningTokens: 60 });
+});
+
+test("an expired in-flight lease fails safely without issuing a second potentially billed request", async () => {
+  let release, started, calls = 0;
+  const waiting = new Promise(resolve => { release = resolve; }), assessing = new Promise(resolve => { started = resolve; });
+  const f = await fixture({ provider: { enabled: true, assess: async () => {
+    calls++; started(); await waiting;
+    return { value: { summary: "Assessment", observations: "", grades: settings.criteria.map(c => ({ criterionId: c.id, score: 3, explanation: "Explanation", evidence: [] })) } };
+  } } });
+  f.add("one", 3);
+  const run = await f.service.ai.start(f.form.id, admin, { revision: f.form.aiRevision, model: "gpt-6.1-sol", reasoningEffort: "high" });
+  const first = f.service.ai.workNext({ owner: "first" });
+  await assessing;
+  f.advance(600_001);
+  try { assert.equal(await f.service.ai.workNext({ owner: "second" }), true); }
+  finally { release(); }
+  await first;
+  assert.equal(calls, 1);
+  assert.equal(f.documents.get(`careerAiRuns/${run.id}`).state, "failed");
+  assert.match(f.documents.get(`careerAiRuns/${run.id}`).error, /interrupted/);
+  assert.equal(f.documents.has(`careerAiRuns/${run.id}/careerAiScores/one`), false);
 });
 
 test("a claimed run avoids queue rediscovery per applicant and reuses its immutable form version", async () => {

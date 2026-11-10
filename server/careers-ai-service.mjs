@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { fail, identifier, normalizeForm } from "./careers-domain.mjs";
-import { AI_MODEL, AI_PROMPT_VERSION, assessmentInput, aiFingerprint, normalizeAiReview, normalizeAssessment, rankAssessments } from "./careers-ai-domain.mjs";
+import { AI_MODEL, AI_PROMPT_VERSION, AI_DEFAULT_REASONING_EFFORT, AI_MODELS, AI_REASONING_EFFORTS, normalizeAiRunOptions, assessmentInput, aiFingerprint, normalizeAiReview, normalizeAssessment, rankAssessments } from "./careers-ai-domain.mjs";
 import { createReadCache } from "./read-cache.mjs";
 
-const MAX_APPLICANTS = 5000, LEASE_MS = 120_000;
+// A request may run for five minutes at higher reasoning settings. Keep the
+// ownership lease longer than that deadline so another worker cannot reclaim it.
+const MAX_APPLICANTS = 5000, LEASE_MS = 600_000;
 const activeStates = ["queued", "running"];
 const requireAdmin = user => { if (user?.role !== "dev") fail("Only administrators can request or configure AI reviews.", 403); };
 const summary = (id, data) => data ? { id, state: data.state, total: data.members.length, processed: data.processed, createdAt: data.createdAt,
-  completedAt: data.completedAt ?? null, error: data.error ?? "", requestedBy: data.requestedBy, criteriaRevision: data.criteriaRevision, model: data.model, usage: data.usage } : null;
+  completedAt: data.completedAt ?? null, error: data.error ?? "", requestedBy: data.requestedBy, criteriaRevision: data.criteriaRevision,
+  model: data.model ?? AI_MODEL, reasoningEffort: data.reasoningEffort ?? "low", usage: data.usage } : null;
 
 // Completed scores and published versions never change. Mutable form pointers have
 // a short bound and are invalidated by local writes; authority checks bypass them.
@@ -87,7 +90,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
     return run;
   }
   return {
-    configuration() { return { configured: provider.enabled, model: AI_MODEL, maxApplicants: MAX_APPLICANTS }; },
+    configuration() { return { configured: provider.enabled, model: AI_MODEL, defaultReasoningEffort: AI_DEFAULT_REASONING_EFFORT,
+      models: AI_MODELS.map(choice => ({ ...choice })), reasoningEfforts: [...AI_REASONING_EFFORTS], maxApplicants: MAX_APPLICANTS }; },
     invalidateForm(id) { forms.invalidate(identifier(id)); },
     setNotifier(callback) { notify = callback; },
     async draftCriteria(user, input, { signal } = {}) {
@@ -101,7 +105,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
     },
     async start(formId, user, input) {
       requireAdmin(user);
-      if (!provider.enabled) fail("Luna is not connected. Configure the server's OPENAI_API_KEY first.", 503);
+      if (!provider.enabled) fail("AI review is not connected. Configure the server's OPENAI_API_KEY first.", 503);
+      const runOptions = normalizeAiRunOptions(input);
       const form = await freshForm(formId), settings = normalizeAiReview(form.aiReview, true);
       if (input?.revision !== (form.aiRevision ?? 0)) fail("The scoring guide changed. Reload before starting a review.", 409);
       const createdAt = stamp();
@@ -116,8 +121,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
         if ((latest.applicationEditRevision ?? 0) !== (form.applicationEditRevision ?? 0)) fail("Applications changed. Reload before starting a review.", 409);
         if (previous && activeStates.includes(previous.state)) fail("A review is already queued or running for this opening.", 409);
         tx.set(runRef(id), { formId, settings, members, processed: 0, state: "queued", createdAt, criteriaRevision: form.aiRevision ?? 0, applicationEditRevision: form.applicationEditRevision ?? 0,
-          model: AI_MODEL, promptVersion: AI_PROMPT_VERSION, requestedBy: { id: user.id, displayName: user.displayName ?? user.username ?? "Administrator" },
-          owner: null, leaseUntil: 0, activeItem: null, previousCompletedRun: latest.aiCompletedRun ?? null, usage: { inputTokens: 0, outputTokens: 0 } });
+          ...runOptions, promptVersion: AI_PROMPT_VERSION, requestedBy: { id: user.id, displayName: user.displayName ?? user.username ?? "Administrator" },
+          owner: null, leaseUntil: 0, activeItem: null, previousCompletedRun: latest.aiCompletedRun ?? null, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 } });
         tx.update(formRef(formId), { aiActiveRunId: id, aiRunIds: [id, ...(latest.aiRunIds ?? (latest.aiActiveRunId ? [latest.aiActiveRunId] : []))].slice(0, 10) });
       });
       forms.invalidate(formId);
@@ -137,7 +142,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
       requireAdmin(user);
       const run = await readJob(runId);
       if (!run || run.formId !== identifier(formId)) fail("Review run not found.", 404);
-      return { run: summary(runId, run), completedRun: run.state === "completed" ? { id: runId, total: run.members.length, completedAt: run.completedAt, criteriaRevision: run.criteriaRevision } : run.previousCompletedRun ?? null };
+      return { run: summary(runId, run), completedRun: run.state === "completed" ? { id: runId, total: run.members.length, completedAt: run.completedAt, criteriaRevision: run.criteriaRevision,
+        model: run.model ?? AI_MODEL, reasoningEffort: run.reasoningEffort ?? "low" } : run.previousCompletedRun ?? null };
     },
     async cancel(formId, runId, user) {
       requireAdmin(user);
@@ -159,7 +165,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
         if (!completed || item.status === "withdrawn") return { ...item, aiReview: null };
         const result = full ? await details.get(`${completed.id}/${item.id}`, async () => (await scoreRef(completed.id, item.id).get()).data()) : await rowBadge(completed, item.id);
         const current = result && (result.submissionRevision ?? 1) === (item.submissionRevision ?? 1);
-        return { ...item, aiReview: current ? { ...result, runId: completed.id, reviewedAt: completed.completedAt, criteriaChanged: completed.criteriaRevision !== (form.aiRevision ?? 0) } : null };
+        return { ...item, aiReview: current ? { ...result, runId: completed.id, reviewedAt: completed.completedAt, model: completed.model ?? AI_MODEL,
+          reasoningEffort: completed.reasoningEffort ?? "low", criteriaChanged: completed.criteriaRevision !== (form.aiRevision ?? 0) } : null };
       }));
     },
     async scoreIndex(formId) {
@@ -191,6 +198,8 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
       if (!claimed) { claimedRuns.delete(owner); return true; }
       claimedRuns.set(owner, candidate.id);
       try {
+        // Jobs queued before model selection was added used Luna with low effort.
+        const runOptions = normalizeAiRunOptions({ model: claimed.model ?? AI_MODEL, reasoningEffort: claimed.reasoningEffort ?? "low" });
         const applicationId = claimed.members[claimed.processed];
         if (applicationId) {
           if (signal?.aborted) return false;
@@ -201,13 +210,13 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
           const input = assessmentInput(form, application, claimed.settings), imageInputs = [];
           for (const q of form.questions) if (q.image) imageInputs.push({ questionId: q.id, url: await images.image(q.image.id, { role: "dev" }) });
           await db.runTransaction(async tx => { await checkOwner(tx, reference, owner); tx.update(reference, { activeItem: applicationId, leaseUntil: now() + LEASE_MS }); });
-          const response = await provider.assess(input, { images: imageInputs, signal });
+          const response = await provider.assess(input, { images: imageInputs, signal, ...runOptions });
           const assessment = normalizeAssessment(response.value, claimed.settings, form, application);
           await db.runTransaction(async tx => {
             const run = await checkOwner(tx, reference, owner);
             tx.set(scoreRef(candidate.id, applicationId), { ...assessment, inputFingerprint: aiFingerprint(input), criteriaRevision: run.criteriaRevision, submissionRevision: application.submissionRevision ?? 1 });
             tx.update(reference, { processed: run.processed + 1, activeItem: null, leaseUntil: now() + LEASE_MS,
-              usage: { inputTokens: run.usage.inputTokens + (response.usage?.inputTokens ?? 0), outputTokens: run.usage.outputTokens + (response.usage?.outputTokens ?? 0) } });
+              usage: Object.fromEntries(["inputTokens", "outputTokens", "cachedInputTokens", "reasoningTokens"].map(key => [key, (run.usage?.[key] ?? 0) + (response.usage?.[key] ?? 0)])) });
           });
           jobs.invalidate(candidate.id);
           return true;
@@ -238,7 +247,7 @@ export function createCareerAiService(db, { provider, images, now = Date.now, re
           if (!current || current.aiActiveRunId !== candidate.id) throw new Error("This review was superseded. No new ranking was applied.");
           const completedAt = stamp();
           tx.update(reference, { state: "completed", completedAt, leaseUntil: 0 });
-          tx.update(formRef(run.formId), { aiCompletedRun: { id: candidate.id, criteriaRevision: run.criteriaRevision, completedAt, total: run.members.length } });
+          tx.update(formRef(run.formId), { aiCompletedRun: { id: candidate.id, criteriaRevision: run.criteriaRevision, completedAt, total: run.members.length, ...runOptions } });
         });
         await indexes.set(candidate.id, ranked.map(({ id, qualityScore, relativeScore, rank, poolSize, submissionRevision }) => [id, { qualityScore, relativeScore, rank, poolSize, submissionRevision }]));
         forms.invalidate(claimed.formId);

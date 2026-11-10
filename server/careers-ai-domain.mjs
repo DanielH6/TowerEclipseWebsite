@@ -7,6 +7,22 @@ const text = (value, label, max, required = false) => {
 };
 export const AI_MODEL = "gpt-6-luna";
 export const AI_PROMPT_VERSION = "careers-2026-11-04-v2";
+export const AI_DEFAULT_REASONING_EFFORT = "medium";
+// Supported review choices; prices are Standard USD per million text tokens,
+// checked against the model documentation on 2026-11-10.
+export const AI_MODELS = [
+  { id: AI_MODEL, label: "GPT-6 Luna", inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5 },
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", inputUsdPerMillion: 2, outputUsdPerMillion: 10 },
+];
+export const AI_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export function normalizeAiRunOptions(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail("Choose a supported AI model and reasoning effort.");
+  const model = input.model === undefined ? AI_MODEL : input.model;
+  const reasoningEffort = input.reasoningEffort === undefined ? AI_DEFAULT_REASONING_EFFORT : input.reasoningEffort;
+  if (!AI_MODELS.some(choice => choice.id === model)) fail("Choose GPT-6 Luna or GPT-6.1 Sol for this review.");
+  if (!AI_REASONING_EFFORTS.includes(reasoningEffort)) fail("Choose Low, Medium, High, Extra high or Maximum reasoning effort.");
+  return { model, reasoningEffort };
+}
 export const emptyAiReview = () => ({ brief: "", criteria: [], examples: [] });
 export function normalizeAiReview(input = emptyAiReview(), ready = false) {
   if (!input || typeof input !== "object" || Array.isArray(input) || Buffer.byteLength(JSON.stringify(input), "utf8") > 100_000) fail("AI review settings must fit within 100 KB.");
