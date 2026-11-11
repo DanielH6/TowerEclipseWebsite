@@ -109,8 +109,8 @@ try {
   await page.getByRole("combobox", { name: "Sort applications" }).selectOption("ai_rank");
   await expect(page.locator(".career-application-row")).toHaveCount(20);
   await expect(page.locator(".career-ai-score").first()).not.toContainText("Unranked");
-  await page.getByRole("button", { name: "Next →", exact: true }).click();
-  await page.getByRole("button", { name: "Next →", exact: true }).click();
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(page.locator(".career-application-row")).toHaveCount(7);
   await expect(page.locator(".career-ai-score").last()).toContainText("of 47");
   await page.getByRole("textbox", { name: "Search applicants" }).fill("Robloxapplicant00");
