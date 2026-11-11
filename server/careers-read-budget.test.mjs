@@ -33,6 +33,57 @@ test("oldest-first uses ascending 21-document cursors across tied timestamps", a
   assert.equal(first.items[0].id, "app0000");
   assert.ok(applicationQueries(f).every(query => query.maximum === 21 && query.order.every(([, direction]) => direction === "asc")));
 });
+test("numbered pages jump directly and reuse the count corpus with twenty fresh row reads", async () => {
+  const f = await fixture(123);
+  await f.service.applicationStats(admin, { formId: f.form.id });
+  assert.equal(applicationQueries(f).length, 1);
+  const options = { formId: f.form.id, sort: "newest" };
+  const first = await f.service.listApplications(admin, { ...options, page: "1" }, true);
+  const sixth = await f.service.listApplications(admin, { ...options, page: "6" }, true);
+  const back = await f.service.listApplications(admin, { ...options, page: 1 }, true);
+  assert.deepEqual(first.pagination, { page: 1, pageSize: 20, total: 123, totalPages: 7 });
+  assert.equal(first.items[0].id, "app0122");
+  assert.equal(sixth.items[0].id, "app0022");
+  assert.deepEqual(back.items, first.items);
+  assert.equal(first.nextCursor, null, "numbered responses use pagination instead of legacy cursors");
+  assert.equal(applicationQueries(f).length, 1, "jumping pages never walks skipped pages or rescans the corpus");
+  assert.equal(f.lookups.filter(path => path.startsWith("careerApplications/")).length, 60);
+  assert.ok(applicationQueries(f).every(query => !query.fields.includes("applicant") && !query.fields.includes("answers") && !query.fields.includes("internalNotes")));
+  const last = await f.service.listApplications(admin, { ...options, page: 999 }, true);
+  assert.deepEqual(last.pagination, { page: 7, pageSize: 20, total: 123, totalPages: 7 });
+  assert.deepEqual(last.items.map(item => item.id), ["app0002", "app0001", "app0000"]);
+});
+test("numbered overview and form pages apply status and QA permissions before counting and slicing", async () => {
+  const f = await fixture(123);
+  const other = structuredClone(f.documents.get("careerApplications/app0001"));
+  f.documents.set("careerForms/other-form", structuredClone(f.documents.get(`careerForms/${f.form.id}`)));
+  f.documents.set("careerApplications/other", { ...other, formId: "other-form" });
+  const overview = await f.service.listApplications(admin, { page: 1 }, true);
+  assert.equal(overview.pagination.total, 124);
+  const filtered = await f.service.listApplications(lead, { formId: f.form.id, status: "submitted", page: 99, sort: "oldest" }, true);
+  assert.deepEqual(filtered.pagination, { page: 3, pageSize: 20, total: 41, totalPages: 3 });
+  assert.equal(filtered.items.length, 1);
+  assert.ok(filtered.items.every(item => item.formId === f.form.id && item.status === "submitted" && item.category === "Quality assurance"));
+  assert.equal(JSON.stringify(filtered).includes("Private notes"), false);
+  const qaOverview = await f.service.listApplications(lead, { page: 1 }, true);
+  assert.equal(qaOverview.pagination.total, 83);
+  assert.ok(qaOverview.items.every(item => item.category === "Quality assurance"));
+  const empty = await f.service.listApplications(admin, { formId: f.form.id, status: "accepted", page: 5 }, true);
+  assert.deepEqual(empty.pagination, { page: 1, pageSize: 20, total: 0, totalPages: 1 });
+  assert.deepEqual(empty.items, []);
+});
+test("numbered pages validate input and preserve applicant cursor behavior", async () => {
+  const f = await fixture(23);
+  for (const value of [0, -1, 1.5, "", "0", "01", "-2", "1.2", "1e2", " 1", "9007199254740992", null, ["1"], {}]) {
+    await assert.rejects(f.service.listApplications(admin, { page: value }, true), { status: 400 });
+  }
+  await assert.rejects(f.service.listApplications(admin, { page: 1, cursor: "cursor" }, true), { status: 400 });
+  await assert.rejects(f.service.listApplications({ id: "member", role: "member" }, { page: 1 }, true), { status: 403 });
+  await assert.rejects(f.service.listApplications(admin, { page: 1, sort: "ai_rank_asc" }, true), { status: 400 });
+  const applicantPage = await f.service.listApplications(applicant, { page: "irrelevant" });
+  assert.equal(applicantPage.pagination, undefined);
+  assert.ok(applicantPage.items.every(item => item.applicantId === applicant.id));
+});
 test("statistics coalesce, retain exact distinct counts, share status filters and update incrementally without note-only rescans", async () => {
   const f = await fixture(523);
   const [first, concurrent] = await Promise.all([f.service.applicationStats(admin), f.service.applicationStats(admin)]);

@@ -294,27 +294,38 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
     async listApplications(user, options = {}, admin = false) {
       const query = applicationQuery(user, options, admin);
       const sort = options.sort ?? "newest", search = String(options.search ?? "").trim().toLowerCase();
-      if (admin && (!["newest", "oldest", "ai_rank", "quality"].includes(sort) || search.length > 100)) fail("Choose a supported sort and a search of up to 100 characters.");
-      if (admin && (["ai_rank", "quality"].includes(sort) || search)) {
-        if (!options.formId) fail("Choose one application form before searching or sorting its applications.");
-        const corpus = await applicationIndex.rows(user, { formId: options.formId, searchable: true, refresh: options.refresh });
+      const ranked = ["ai_rank", "ai_rank_asc", "quality"].includes(sort), numbered = admin && options.page !== undefined;
+      if (admin && (!["newest", "oldest", "ai_rank", "ai_rank_asc", "quality"].includes(sort) || search.length > 100)) fail("Choose a supported sort and a search of up to 100 characters.");
+      let requestedPage;
+      if (numbered) {
+        if (!((typeof options.page === "number" && Number.isSafeInteger(options.page)) || (typeof options.page === "string" && /^[1-9]\d*$/.test(options.page)))) fail("Choose a positive page number.");
+        requestedPage = Number(options.page);
+        if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) fail("Choose a positive page number.");
+        if (options.cursor) fail("Choose a page number or a cursor, not both.");
+      }
+      if (admin && (numbered || ranked || search)) {
+        if ((ranked || search) && !options.formId) fail("Choose one application form before searching or sorting its applications.");
+        const corpus = await applicationIndex.rows(user, { formId: options.formId, searchable: Boolean(ranked || search), refresh: options.refresh });
         let all = corpus.rows.filter(item => !options.status || item.status === options.status);
-        if (!all.length) return { items: [], nextCursor: null };
-        const index = ["ai_rank", "quality"].includes(sort) ? await ai.scoreIndex(options.formId) : { runId: null, scores: new Map() };
+        const index = ranked ? await ai.scoreIndex(options.formId) : { runId: null, scores: new Map() };
         const scope = JSON.stringify([user.role, options.formId, options.status ?? "", sort, search, index.runId, corpus.asOf, corpus.revision]);
         if (search) all = all.filter(item => [item.applicant?.username, item.applicant?.displayName, item.applicant?.roblox?.username].some(value => String(value ?? "").toLowerCase().includes(search)));
         all.sort((a, b) => {
-          if (["ai_rank", "quality"].includes(sort)) {
+          if (ranked) {
             const key = sort === "quality" ? "qualityScore" : "relativeScore";
             const score = item => {
               const saved = index.scores.get(item.id);
-              return item.status === "withdrawn" || (saved?.submissionRevision ?? 1) !== (item.submissionRevision ?? 1) ? -1 : saved?.[key] ?? -1;
+              return item.status === "withdrawn" || (saved?.submissionRevision ?? 1) !== (item.submissionRevision ?? 1) || !Number.isFinite(saved?.[key]) ? null : saved[key];
             };
-            if (score(a) !== score(b)) return score(b) - score(a);
+            const left = score(a), right = score(b);
+            if ((left === null) !== (right === null)) return left === null ? 1 : -1;
+            if (left !== right) return (left - right) * (sort === "ai_rank_asc" ? 1 : -1);
           }
           return (a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)) * (sort === "oldest" ? 1 : -1);
         });
-        let offset = 0;
+        const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+        const currentPage = numbered ? Math.min(requestedPage, totalPages) : null;
+        let offset = numbered ? (currentPage - 1) * PAGE_SIZE : 0;
         if (options.cursor) {
           try {
             if (typeof options.cursor !== "string" || options.cursor.length > 1000) throw new Error();
@@ -326,10 +337,11 @@ export function createCareersService(db, { now = Date.now, imageStorage, aiProvi
         }
         const selected = all.slice(offset, offset + PAGE_SIZE);
         // Return fresh authorized rows, not cached private response objects. A
-        // cached search/rank page reads at most the twenty selected documents.
+        // cached numbered/search/rank page reads at most twenty selected documents.
         const snapshots = await Promise.all(selected.map(item => ref("careerApplications", item.id).get()));
-        const items = snapshots.filter(doc => doc.exists).map(snapshotData).filter(item => item.formId === options.formId && (user.role !== "leadqa" || isQaApplication(item.category)) && (!options.status || item.status === options.status)).map(item => reviewerSummary(item, user));
-        return { items: await ai.decorate(items), nextCursor: offset + PAGE_SIZE < all.length ? Buffer.from(JSON.stringify({ scope, id: selected.at(-1).id })).toString("base64url") : null, asOf: corpus.asOf, maxAgeSeconds: 900 };
+        const items = snapshots.filter(doc => doc.exists).map(snapshotData).filter(item => (!options.formId || item.formId === options.formId) && (user.role !== "leadqa" || isQaApplication(item.category)) && (!options.status || item.status === options.status)).map(item => reviewerSummary(item, user));
+        return { items: await ai.decorate(items), nextCursor: !numbered && offset + PAGE_SIZE < all.length ? Buffer.from(JSON.stringify({ scope, id: selected.at(-1).id })).toString("base64url") : null, asOf: corpus.asOf, maxAgeSeconds: 900,
+          ...(numbered ? { pagination: { page: currentPage, pageSize: PAGE_SIZE, total: all.length, totalPages } } : {}) };
       }
       const scope = JSON.stringify([admin ? user.role : user.id, options.formId ?? "", options.status ?? "", sort]);
       const result = await page(query, "careerApplications", options, admin ? [...SUMMARY, "readReceipts"] : SUMMARY, "createdAt", admin && sort === "oldest" ? "asc" : "desc", scope);

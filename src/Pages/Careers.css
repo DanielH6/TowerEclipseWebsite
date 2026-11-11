@@ -44,6 +44,21 @@
 .career-opening-bottom > a { flex-shrink: 0; }
 .career-opening > .career-actions { margin-top: 20px; }
 .career-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 25px; color: #99acc0; font-size: .72rem; }
+.career-numbered-pagination { flex-direction: column; padding-top: 20px; border-top: 1px solid var(--career-border); }
+.career-page-summary { text-align: center; }
+.career-page-controls { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; }
+.career-page-direction, .career-page-numbers, .career-page-item { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.career-page-direction { flex-shrink: 0; }
+.career-page-numbers { flex-wrap: wrap; min-width: 0; }
+.career-page-controls .career-button { min-height: 42px; padding: 9px 11px; }
+.career-page-numbers .career-button { min-width: 38px; }
+.career-page-ellipsis { padding-inline: 3px; }
+@media (max-width: 800px) {
+  .career-page-controls { display: grid; grid-template-columns: 1fr 1fr; }
+  .career-page-numbers { grid-column: 1 / -1; grid-row: 1; }
+  .career-page-direction { justify-content: flex-start; }
+  .career-page-direction:last-child { justify-content: flex-end; }
+}
 .career-empty { padding: 45px 24px; text-align: center; }
 .career-empty p { max-width: 550px; margin-inline: auto; }
 .career-empty > a { margin-top: 12px; }
